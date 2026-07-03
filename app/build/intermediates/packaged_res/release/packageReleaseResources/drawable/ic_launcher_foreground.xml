@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- spotui launcher foreground: a simple green equalizer mark. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M40.5,49 L40.5,59"
+        android:strokeColor="#1ED760"
+        android:strokeWidth="6"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M50,41 L50,67"
+        android:strokeColor="#1ED760"
+        android:strokeWidth="6"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M59.5,45 L59.5,63"
+        android:strokeColor="#1ED760"
+        android:strokeWidth="6"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M69,50 L69,58"
+        android:strokeColor="#1ED760"
+        android:strokeWidth="6"
+        android:strokeLineCap="round" />
+</vector>
