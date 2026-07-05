@@ -665,30 +665,36 @@ object SongPlayer {
             val durOk = wantSec != null && d != null && kotlin.math.abs(d - wantSec) <= 4
             return artistOk || durOk
         }
-        // Only ever fall back to OTHER verified matches (e.g. a same-artist reupload
-        // when the official upload is age-locked) — NEVER to a random title-only hit,
-        // which is what was playing the completely wrong song. Ranked best-first.
+        // Prefer verified matches (right artist, or right duration) and put them
+        // first so a same-artist reupload is tried before anything doubtful. But
+        // when NOTHING can be verified — common when we have no duration and the
+        // artist is tagged differently on YouTube — still fall back to the best
+        // title-scored hit rather than returning nothing: silence is worse than a
+        // best-effort guess (the verified ones just get priority in the walk).
         val verifiedRanked = scored
             .filter { verified(it.first) }
             .sortedByDescending { it.second }
             .map { it.first }
+        val restRanked = scored
+            .filter { !verified(it.first) }
+            .sortedByDescending { it.second }
+            .map { it.first }
         val wantExplicit = explicitRegistry[query]
-        val ordered = if (wantExplicit != null)
-            verifiedRanked.sortedByDescending { it.explicit == wantExplicit } else verifiedRanked
+        fun explicitFirst(list: List<SongItem>) =
+            if (wantExplicit != null) list.sortedByDescending { it.explicit == wantExplicit } else list
+        val ordered = (explicitFirst(verifiedRanked) + explicitFirst(restRanked)).distinctBy { it.id }
 
-        if (ordered.isEmpty()) {
-            // Nothing could be confirmed as the right recording. Playing a
-            // title-only guess is exactly the wrong-song trap — refuse instead.
-            Log.w(TAG, "resolveVideoId: NO verified match for: $query (${hits.size} hits, want=${wantSec}s) — refusing to guess")
-            return emptyList()
-        }
+        if (ordered.isEmpty()) return emptyList()
         val chosen = ordered.first()
+        if (verifiedRanked.isEmpty()) {
+            Log.w(TAG, "resolveVideoId: no verified match for: $query (want=${wantSec}s) — best-effort '${chosen.title}'")
+        }
         Log.d(
             TAG,
             "resolveVideoId: '$query' -> '${chosen.title}' by " +
                 chosen.artists.joinToString { it.name } +
                 " [explicit=${chosen.explicit} dur=${chosen.duration}s want=${wantSec}s id=${chosen.id}] " +
-                "(${ordered.size} verified)",
+                "(${verifiedRanked.size} verified/${ordered.size})",
         )
         return ordered.map { it.id }.distinct()
     }
