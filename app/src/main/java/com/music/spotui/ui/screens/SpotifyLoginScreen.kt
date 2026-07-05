@@ -103,11 +103,7 @@ fun SpotifyLoginScreen(navController: NavController) {
         // The hidden playback WebView was created (logged out) before this login —
         // reload it with the new session so playback doesn't show Spotify's "Oops".
         com.music.spotui.di.SpotifyWebPlayer.refreshLogin(context)
-        // Spotify first, then the optional YouTube sign-in (unlocks age-restricted
-        // tracks on the fallback engine); it has its own Skip → Home.
-        val next = if (com.music.spotui.data.preferences.isYoutubeLoggedIn(context))
-            Routes.Home.route else Routes.YoutubeLogin.route
-        navController.navigate(next) {
+        navController.navigate(Routes.Home.route) {
             popUpTo(Routes.Login.route) { inclusive = true }
         }
     }

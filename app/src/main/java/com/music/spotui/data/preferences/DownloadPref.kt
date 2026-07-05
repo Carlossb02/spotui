@@ -20,6 +20,9 @@ private fun SongsModel.toJson(filePath: String): String = JSONObject().apply {
     put("singer", singer)
     put("coverUri", coverUri)
     put("url", url)
+    put("spotifyTrackId", spotifyTrackId)
+    put("explicit", explicit)
+    put("durationMs", durationMs)
     put("filePath", filePath)
 }.toString()
 
@@ -32,6 +35,9 @@ private fun parse(json: String): Pair<SongsModel, String>? = runCatching {
         singer = o.getString("singer"),
         coverUri = o.optString("coverUri"),
         url = o.getString("url"),
+        spotifyTrackId = o.optString("spotifyTrackId"),
+        explicit = o.optBoolean("explicit", false),
+        durationMs = o.optInt("durationMs", 0),
     ) to o.optString("filePath")
 }.getOrNull()
 

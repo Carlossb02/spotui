@@ -2,7 +2,11 @@ package com.music.spotui.ui.screens
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.util.Log
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
@@ -39,6 +43,8 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderColors
@@ -56,6 +62,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -80,10 +87,15 @@ import com.music.spotui.R
 import com.music.spotui.data.api.Response
 import com.music.spotui.data.entity.SongsModel
 import com.music.spotui.data.preferences.addLikedSongId
+import com.music.spotui.data.preferences.alternativeStreamKey
+import com.music.spotui.data.preferences.clearAlternativeStream
+import com.music.spotui.data.preferences.getAlternativeStream
 import com.music.spotui.data.preferences.getLikedSongIds
 import com.music.spotui.data.preferences.getSongsByIds
 import com.music.spotui.data.preferences.isSongLiked
 import com.music.spotui.data.preferences.removeLikedSongId
+import com.music.spotui.data.preferences.setLocalAlternativeStream
+import com.music.spotui.data.preferences.setYouTubeAlternativeStream
 import com.music.spotui.di.Palette
 import com.music.spotui.di.SongPlayer
 import com.music.spotui.ui.components.Snackbar
@@ -222,7 +234,7 @@ fun PlayerScreen(navController: NavController) {
         }
     }
 
-    // Load the current track's Spotify Canvas (looping video behind the artwork).
+    // Load the current track's Spotify Canvas (full-screen looping video background).
     LaunchedEffect(playerViewModel.currentSongId.value, queueSongs) {
         val track = queueSongs.firstOrNull { it.id == playerViewModel.currentSongId.value }
         playerViewModel.loadCanvas(track?.spotifyTrackId.orEmpty())
@@ -272,6 +284,7 @@ fun PlayerScreen(navController: NavController) {
 
 
 
+    val canvasUrl = playerViewModel.canvasUrl.value
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -282,6 +295,29 @@ fun PlayerScreen(navController: NavController) {
                 )
             )
     ) {
+        if (canvasUrl != null) {
+            // Spotify Canvas: the looping video fills the whole now-playing screen
+            // edge-to-edge behind the controls (the "immersive" treatment), with a
+            // scrim on top so the title, slider and buttons stay readable.
+            CanvasVideo(
+                url = canvasUrl,
+                modifier = Modifier.fillMaxSize(),
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Black.copy(alpha = 0.50f),
+                                Color.Black.copy(alpha = 0.10f),
+                                Color.Black.copy(alpha = 0.35f),
+                                Color.Black.copy(alpha = 0.80f),
+                            )
+                        )
+                    )
+            )
+        }
         androidx.compose.foundation.lazy.LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -306,23 +342,16 @@ fun PlayerScreen(navController: NavController) {
             // HorizontalPager makes the artwork follow the finger and snap, syncing the
             // change with the track (Spotify's now-playing gesture) instead of an abrupt
             // swipe-then-switch. When the queue is empty fall back to a static image.
-            val canvasUrl = playerViewModel.canvasUrl.value
-            if (canvasUrl != null) {
-                // Spotify Canvas: the looping video plays in place of the artwork,
-                // muted, exactly like the Spotify app's now-playing screen.
-                CanvasVideo(
-                    url = canvasUrl,
-                    modifier = Modifier
-                        .size(385.dp)
-                        .padding(20.dp)
-                        .clip(RoundedCornerShape(10.dp)),
-                )
-            } else if (queueSongs.isEmpty()) {
+            // When a Canvas is playing it fills the screen behind this column, so the
+            // artwork is hidden (alpha 0) rather than removed — the pager stays in
+            // the layout so the swipe-to-skip gesture keeps working over the video.
+            if (queueSongs.isEmpty()) {
                 GlideImage(
                     modifier = Modifier
                         .size(385.dp)
                         .padding(20.dp)
-                        .clip(RoundedCornerShape(10.dp)),
+                        .clip(RoundedCornerShape(10.dp))
+                        .alpha(if (canvasUrl != null) 0f else 1f),
                     model = songCoverUri,
                     contentScale = ContentScale.Crop,
                     contentDescription = "")
@@ -335,7 +364,8 @@ fun PlayerScreen(navController: NavController) {
                         modifier = Modifier
                             .size(385.dp)
                             .padding(20.dp)
-                            .clip(RoundedCornerShape(10.dp)),
+                            .clip(RoundedCornerShape(10.dp))
+                            .alpha(if (canvasUrl != null) 0f else 1f),
                         model = queueSongs.getOrNull(page)?.coverUri ?: songCoverUri,
                         contentScale = ContentScale.Crop,
                         contentDescription = "")
@@ -1005,6 +1035,7 @@ fun PlayerOptionsSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showSleep by remember { mutableStateOf(false) }
     var showSavedIn by remember { mutableStateOf(false) }
+    var showAlternativeStream by remember { mutableStateOf(false) }
 
     val title = playerViewModel.currentSongTitle.value
     val singer = playerViewModel.currentSongSinger.value
@@ -1016,6 +1047,24 @@ fun PlayerOptionsSheet(
     val currentSong = playerViewModel.queue.value.firstOrNull { it.id == songId }
     var downloaded by remember(songId) { mutableStateOf(com.music.spotui.data.preferences.isDownloaded(context, songId.toString())) }
     var downloadingNow by remember(songId) { mutableStateOf(currentSong != null && SongPlayer.isDownloading(currentSong.url)) }
+    val alternativeKey = currentSong?.let { alternativeStreamKey(it) }.orEmpty()
+    var currentAlternative by remember(songId, alternativeKey) {
+        mutableStateOf(alternativeKey.takeIf { it.isNotBlank() }?.let { getAlternativeStream(context, it) })
+    }
+    val localFileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        val song = currentSong ?: return@rememberLauncherForActivityResult
+        val picked = uri ?: return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                picked,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
+        setLocalAlternativeStream(context, alternativeKey, picked, picked.lastPathSegment.orEmpty())
+        SongPlayer.invalidateResolvedStream(song.url)
+        currentAlternative = getAlternativeStream(context, alternativeKey)
+        Toast.makeText(context, "Alternative stream set to local file", Toast.LENGTH_SHORT).show()
+    }
 
     if (showSavedIn && currentSong != null) {
         com.music.spotui.ui.components.SavedInSheet(
@@ -1039,7 +1088,35 @@ fun PlayerOptionsSheet(
                 .navigationBarsPadding()
                 .padding(bottom = 12.dp)
         ) {
-            if (!showSleep) {
+            if (showAlternativeStream) {
+                AlternativeStreamEditor(
+                    currentAlternative = currentAlternative,
+                    enabled = currentSong != null,
+                    onBack = { showAlternativeStream = false },
+                    onUseYouTube = { text ->
+                        val song = currentSong ?: return@AlternativeStreamEditor
+                        val videoId = SongPlayer.videoIdFromYouTubeLink(text)
+                        if (videoId == null) {
+                            Toast.makeText(context, "Paste a YouTube video link or video ID", Toast.LENGTH_SHORT).show()
+                        } else {
+                            setYouTubeAlternativeStream(context, alternativeKey, videoId)
+                            SongPlayer.invalidateResolvedStream(song.url)
+                            currentAlternative = getAlternativeStream(context, alternativeKey)
+                            Toast.makeText(context, "Alternative stream set to YouTube", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onPickLocal = {
+                        localFileLauncher.launch(arrayOf("audio/*"))
+                    },
+                    onClear = {
+                        val song = currentSong ?: return@AlternativeStreamEditor
+                        clearAlternativeStream(context, alternativeKey)
+                        SongPlayer.invalidateResolvedStream(song.url)
+                        currentAlternative = null
+                        Toast.makeText(context, "Alternative stream cleared", Toast.LENGTH_SHORT).show()
+                    },
+                )
+            } else if (!showSleep) {
                 // ── Now-playing header ──
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -1099,6 +1176,15 @@ fun PlayerOptionsSheet(
                             downloaded = ok
                         }
                     }
+                }
+                PlayerMenuRow(
+                    icon = Icons.Default.PlayArrow,
+                    iconTint = if (currentAlternative != null) Color(AppPalette.toArgb()) else Color.White,
+                    label = if (currentAlternative == null) "Alternative stream" else "Alternative stream set",
+                    enabled = currentSong != null,
+                    trailingArrow = true,
+                ) {
+                    showAlternativeStream = true
                 }
                 PlayerMenuRow(
                     icon = if (isLiked.value) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
@@ -1186,6 +1272,87 @@ fun PlayerOptionsSheet(
 }
 
 @Composable
+fun AlternativeStreamEditor(
+    currentAlternative: com.music.spotui.data.preferences.AlternativeStream?,
+    enabled: Boolean,
+    onBack: () -> Unit,
+    onUseYouTube: (String) -> Unit,
+    onPickLocal: () -> Unit,
+    onClear: () -> Unit,
+) {
+    var youtubeText by remember { mutableStateOf("") }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Icon(
+                imageVector = Icons.Default.KeyboardArrowDown,
+                tint = Color.White,
+                modifier = Modifier
+                    .size(24.dp)
+                    .clickable { onBack() },
+                contentDescription = null,
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                "Alternative stream",
+                color = Color.White,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = when {
+                currentAlternative == null -> "No alternative stream set"
+                currentAlternative.isYouTube -> "Current: YouTube video ${currentAlternative.value}"
+                currentAlternative.isLocal -> "Current: local file ${currentAlternative.label.ifBlank { currentAlternative.value }}"
+                else -> "Current alternative stream"
+            },
+            color = if (currentAlternative == null) Color(0xFFB3B3B3) else Color(AppPalette.toArgb()),
+            fontSize = 13.sp,
+            maxLines = 2,
+        )
+        Spacer(Modifier.height(16.dp))
+        OutlinedTextField(
+            value = youtubeText,
+            onValueChange = { youtubeText = it },
+            enabled = enabled,
+            singleLine = true,
+            textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp),
+            label = { Text("YouTube link or video ID", color = Color(0xFFB3B3B3)) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(enabled = enabled && youtubeText.isNotBlank(), onClick = { onUseYouTube(youtubeText) }) {
+                Text("Use YouTube", color = if (enabled && youtubeText.isNotBlank()) AppPalette else Color.Gray)
+            }
+        }
+        PlayerMenuRow(
+            icon = Icons.Default.Add,
+            label = "Use local audio file",
+            enabled = enabled,
+        ) {
+            onPickLocal()
+        }
+        PlayerMenuRow(
+            icon = Icons.Default.CheckCircle,
+            label = "Clear alternative stream",
+            enabled = enabled && currentAlternative != null,
+            iconTint = Color(0xFFE57373),
+        ) {
+            onClear()
+        }
+    }
+}
+
+@Composable
 fun PlayerMenuRow(
     icon: ImageVector,
     label: String,
@@ -1225,9 +1392,9 @@ fun PlayerMenuRow(
     }
 }
 /**
- * Plays a Spotify Canvas clip: a short, muted, looping video shown in place of
- * the album art. Uses a dedicated ExoPlayer (separate from the audio engine)
- * released when the composable leaves. Falls back to nothing if the URL fails.
+ * Plays a Spotify Canvas clip: a short, muted, looping video filling the
+ * now-playing background. Uses a dedicated ExoPlayer (separate from the audio
+ * engine) released when the composable leaves. Falls back to nothing if the URL fails.
  */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable

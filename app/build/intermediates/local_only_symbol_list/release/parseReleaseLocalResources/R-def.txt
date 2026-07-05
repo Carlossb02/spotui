@@ -31,6 +31,8 @@ drawable ic_repeat
 drawable ic_search_big
 drawable ic_settings
 drawable ic_share
+drawable ic_view_grid
+drawable ic_view_list
 drawable logo
 drawable placeholder
 drawable play_svgrepo_com

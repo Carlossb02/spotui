@@ -17,8 +17,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -46,6 +51,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -58,7 +65,10 @@ import com.music.spotui.data.api.Api
 import com.music.spotui.data.api.Response
 import com.music.spotui.data.api.SpotifySession
 import com.music.spotui.data.entity.AccountModel
+import com.music.spotui.R
 import com.music.spotui.data.entity.LibraryEntry
+import com.music.spotui.data.preferences.isLibraryGridView
+import com.music.spotui.data.preferences.setLibraryGridView
 import com.music.spotui.ui.components.Loader
 import com.music.spotui.ui.components.Snackbar
 import com.music.spotui.ui.navigation.Routes
@@ -76,6 +86,9 @@ fun LibraryScreen(navController: NavController) {
     val entries by libraryViewModel.entries.collectAsState()
     val account by libraryViewModel.account.collectAsState()
     var showAccount by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    // Spotify-style layout toggle: rows or a 3-column grid, persisted across runs.
+    var gridView by remember { mutableStateOf(isLibraryGridView(context)) }
 
     if (showAccount) {
         AccountSheet(
@@ -123,10 +136,36 @@ fun LibraryScreen(navController: NavController) {
             }
         }
 
+        // Grid/list switch, like the icon at the top-right of Spotify's library.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp, 0.dp, 16.dp, 4.dp)
+        ) {
+            Spacer(modifier = Modifier.weight(1f))
+            Icon(
+                painter = painterResource(if (gridView) R.drawable.ic_view_list else R.drawable.ic_view_grid),
+                contentDescription = if (gridView) "Show as list" else "Show as grid",
+                tint = Color.White,
+                modifier = Modifier
+                    .size(18.dp)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        gridView = !gridView
+                        setLibraryGridView(context, gridView)
+                    }
+            )
+        }
+
         val followedArtists by libraryViewModel.followedArtists.collectAsState()
         when (entries) {
             is Response.Loading -> LibrarySkeleton(PaddingValues(0.dp))
-            is Response.Success -> SumUpLibraryScreen(PaddingValues(0.dp), (entries as Response.Success).data, followedArtists, navController)
+            is Response.Success ->
+                if (gridView) LibraryGridScreen(PaddingValues(0.dp), (entries as Response.Success).data, followedArtists, navController)
+                else SumUpLibraryScreen(PaddingValues(0.dp), (entries as Response.Success).data, followedArtists, navController)
             else -> Box(modifier = Modifier.padding(20.dp, 100.dp)) { Snackbar(showMessage = "Couldn't load your library") }
         }
     }
@@ -199,12 +238,7 @@ fun SumUpLibraryScreen(
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
-                    ) {
-                        if (entry.spotifyId == Api.HomeCache.LIKED_SONGS_ID) navController.navigate(Routes.Liked.route)
-                        else if (entry.spotifyId == Api.HomeCache.DOWNLOADS_ID) navController.navigate(Routes.Downloads.route)
-                        else if (entry.isPlaylist) navController.navigate(playlistRoute(entry.spotifyId, entry.name))
-                        else navController.navigate(albumRoute(entry.name, entry.artists))
-                    }
+                    ) { openLibraryEntry(entry, navController) }
             ) {
                 GlideImage(
                     modifier = Modifier
@@ -258,6 +292,120 @@ fun SumUpLibraryScreen(
             }
         }
         item { Spacer(modifier = Modifier.height(130.dp)) }
+    }
+}
+
+private fun openLibraryEntry(entry: LibraryEntry, navController: NavController) {
+    if (entry.spotifyId == Api.HomeCache.LIKED_SONGS_ID) navController.navigate(Routes.Liked.route)
+    else if (entry.spotifyId == Api.HomeCache.DOWNLOADS_ID) navController.navigate(Routes.Downloads.route)
+    else if (entry.isPlaylist) navController.navigate(playlistRoute(entry.spotifyId, entry.name))
+    else navController.navigate(albumRoute(entry.name, entry.artists))
+}
+
+/**
+ * Grid layout of the same library content: 3 columns of square covers with the
+ * title/subtitle underneath, like Spotify's "Grid" library view. Followed
+ * artists render as circles under their own full-width header.
+ */
+@OptIn(ExperimentalGlideComposeApi::class)
+@Composable
+fun LibraryGridScreen(
+    padding: PaddingValues,
+    entries: List<LibraryEntry>,
+    followedArtists: List<com.music.spotui.data.entity.ArtistsModel>,
+    navController: NavController
+) {
+    if (entries.isEmpty() && followedArtists.isEmpty()) {
+        Box(modifier = Modifier.padding(20.dp, 40.dp)) { Snackbar(showMessage = "Library is Empty") }
+        return
+    }
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(3),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(padding)
+            .background(Color(0xFF0E0E13)),
+        contentPadding = PaddingValues(16.dp, 10.dp, 16.dp, 130.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        // Listening history & stats entry, as a tile.
+        item {
+            Column(
+                modifier = Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { navController.navigate(Routes.History.route) }
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFF27856A)),
+                ) {
+                    Icon(Icons.Default.DateRange, contentDescription = null, tint = Color.White, modifier = Modifier.size(32.dp))
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(text = "Listening history", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(text = "Your plays and stats", color = Color.Gray, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        items(entries) { entry ->
+            Column(
+                modifier = Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { openLibraryEntry(entry, navController) }
+            ) {
+                GlideImage(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(if (entry.isPlaylist) 6.dp else 4.dp)),
+                    model = entry.coverUri,
+                    contentScale = ContentScale.Crop,
+                    contentDescription = ""
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(text = entry.name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(text = entry.subtitle, color = Color.Gray, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (followedArtists.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Text(
+                    text = "Artists you follow",
+                    color = Color.White,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+            items(followedArtists) { artist ->
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { navController.navigate(artistRoute(artist.name, artist.id)) }
+                ) {
+                    GlideImage(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(1f)
+                            .clip(CircleShape),
+                        model = artist.coverUri,
+                        contentScale = ContentScale.Crop,
+                        contentDescription = ""
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(text = artist.name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                    Text(text = "Artist", color = Color.Gray, fontSize = 11.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
+                }
+            }
+        }
     }
 }
 

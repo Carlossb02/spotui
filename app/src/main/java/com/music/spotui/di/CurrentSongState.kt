@@ -40,11 +40,24 @@ class CurrentSongState @Inject constructor() {
         // Seed the lossless resolver: map each track's play query → its Spotify id so
         // SongPlayer can resolve a FLAC stream from a play site that only has the query.
         SongPlayer.registerLossless(songs.map { it.url to it.spotifyTrackId })
+        SongPlayer.registerAlternativeKeys(songs.map {
+            it.url to com.music.spotui.data.preferences.alternativeStreamKey(it)
+        })
         // Seed explicit flags so the YouTube fallback picks the matching edit.
         SongPlayer.registerExplicit(songs.map { it.url to it.explicit })
         // Seed durations so the YouTube match can reject same-title wrong-artist
         // songs (they almost always have a different length).
         SongPlayer.registerDuration(songs.mapNotNull { s -> if (s.durationMs > 0) s.url to s.durationMs else null })
+        // Seed exact title/artist/album metadata so the YouTube fallback can score
+        // candidates against the actual Spotify track instead of only the search
+        // query string.
+        SongPlayer.registerMetadata(songs.map {
+            it.url to SongPlayer.TrackMatchMetadata(
+                title = it.title,
+                artist = it.singer,
+                album = it.album,
+            )
+        })
         // Seed the lyrics resolver with track ids so it can use Spotify's own
         // color-lyrics endpoint (exact synced lyrics) instead of LRCLIB matching.
         com.music.spotui.data.api.LyricsApi.registerTracks(songs)

@@ -162,7 +162,7 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
             true,
             nextSong.id,
             nextIdx,
-            currentSongAlbum.value
+            nextSong.album
         )
         SongPlayer.playSong(nextSong.url, context)
     }
@@ -219,7 +219,7 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
                     if (q.size > queueSongs.size) {
                         val next = q[queueSongs.size]
                         withContext(Dispatchers.Main) {
-                            updateSongState(next.coverUri, next.title, next.singer, true, next.id, queueSongs.size, currentSongAlbum.value)
+                            updateSongState(next.coverUri, next.title, next.singer, true, next.id, queueSongs.size, next.album)
                             SongPlayer.playSong(next.url, context)
                         }
                         return@launch
@@ -229,7 +229,7 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
                 // Radio never arrived (offline / no seed id) — loop like before.
                 val first = queueSongs.first()
                 withContext(Dispatchers.Main) {
-                    updateSongState(first.coverUri, first.title, first.singer, true, first.id, 0, currentSongAlbum.value)
+                    updateSongState(first.coverUri, first.title, first.singer, true, first.id, 0, first.album)
                     SongPlayer.playSong(first.url, context)
                 }
             } finally {
@@ -249,7 +249,7 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
         val song = queueSongs[index]
         if (song.id == currentSongId.value) return
         maybeExtendRadio(queueSongs, index)
-        updateSongState(song.coverUri, song.title, song.singer, true, song.id, index, currentSongAlbum.value)
+        updateSongState(song.coverUri, song.title, song.singer, true, song.id, index, song.album)
         SongPlayer.playSong(song.url, context)
     }
 
@@ -259,7 +259,7 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
         val cur = currentPositionIn(queueSongs)
         val prevIdx = if (cur > 0) cur - 1 else queueSongs.size - 1
         val previousSong = queueSongs[prevIdx]
-        updateSongState(previousSong.coverUri, previousSong.title, previousSong.singer, true, previousSong.id, prevIdx, currentSongAlbum.value)
+        updateSongState(previousSong.coverUri, previousSong.title, previousSong.singer, true, previousSong.id, prevIdx, previousSong.album)
         SongPlayer.playSong(previousSong.url, context)
     }
 

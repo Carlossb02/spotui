@@ -29,7 +29,8 @@ import javax.inject.Inject
  *
  * Metadata (albums, artists, songs) comes from Spotify's web API; actual audio
  * is resolved from YouTube at playback time (see SongPlayer), so [SongsModel.url]
- * carries a "title artist" search query rather than a direct stream URL.
+ * carries a stable playback key with the Spotify id plus the title/artist search
+ * text, rather than a direct stream URL.
  */
 class Api @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -68,8 +69,10 @@ class Api @Inject constructor(
             album = album?.name ?: "",
             singer = singer,
             coverUri = cover,
-            // Playback resolves this query against YouTube (see SongPlayer).
-            url = listOf(name, singer).filter { it.isNotBlank() }.joinToString(" "),
+            // Playback resolves the search text in this key against YouTube, but
+            // keeps the Spotify id in the cache key so same-named tracks do not
+            // reuse each other's stream.
+            url = com.music.spotui.di.SongPlayer.buildSpotifyPlayQuery(id, name, singer),
             spotifyTrackId = id,
             explicit = explicit,
             durationMs = durationMs,

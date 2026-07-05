@@ -21,6 +21,7 @@ fun saveLastPlayback(context: Context, song: SongsModel) {
         put("id", song.id); put("title", song.title); put("album", song.album)
         put("singer", song.singer); put("coverUri", song.coverUri)
         put("url", song.url); put("spotifyTrackId", song.spotifyTrackId)
+        put("explicit", song.explicit); put("durationMs", song.durationMs)
     }
     p.edit().apply {
         putString(KEY_SONG, json.toString())
@@ -49,6 +50,8 @@ fun loadLastPlayback(context: Context): Pair<SongsModel, Long>? {
             coverUri = o.optString("coverUri"),
             url = o.optString("url"),
             spotifyTrackId = o.optString("spotifyTrackId"),
+            explicit = o.optBoolean("explicit", false),
+            durationMs = o.optInt("durationMs", 0),
         )
         if (song.title.isBlank() || song.url.isBlank()) null
         else song to p.getLong(KEY_POSITION, 0L)

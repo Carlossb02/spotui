@@ -192,14 +192,28 @@ fun SumUpSearchScreen(
                         onClick = {
                             when (item.type) {
                                 "song" -> {
+                                    val songUrl = item.songUrl.ifBlank {
+                                        SongPlayer.buildSpotifyPlayQuery(item.spotifyTrackId, item.name, item.singer)
+                                    }.let { savedUrl ->
+                                        if (
+                                            item.spotifyTrackId.isNotBlank() &&
+                                            !savedUrl.startsWith("spotify:track:")
+                                        ) {
+                                            SongPlayer.buildSpotifyPlayQuery(item.spotifyTrackId, item.name, item.singer)
+                                        } else {
+                                            savedUrl
+                                        }
+                                    }
                                     val song = SongsModel(
                                         item.songId, item.name, item.songAlbum, item.singer,
-                                        item.image, item.songUrl, item.spotifyTrackId,
+                                        item.image, songUrl, item.spotifyTrackId,
+                                        explicit = item.explicit,
+                                        durationMs = item.durationMs,
                                     )
                                     searchViewModel.startRadioFromSong(song)
                                     SongPlayer.playSong(song.url, context)
                                     searchViewModel.updateSongState(
-                                        song.coverUri, song.title, song.singer, true, song.id, 0)
+                                        song.coverUri, song.title, song.singer, true, song.id, 0, song.album)
                                 }
                                 "artist" -> navController.navigate(artistRoute(item.name, item.key.takeIf { it != item.name }.orEmpty()))
                                 "album" -> navController.navigate(albumRoute(item.name, item.singer))
@@ -320,6 +334,8 @@ private fun SongsModel.toRecentItem() = com.music.spotui.data.preferences.Recent
     songAlbum = album,
     songUrl = url,
     spotifyTrackId = spotifyTrackId,
+    explicit = explicit,
+    durationMs = durationMs,
 )
 
 /** A recent item row (song/artist/album/show the user opened), with remove (x). */
@@ -417,6 +433,7 @@ fun SearchSongRow(
                     true,
                     song.id,
                     0,
+                    song.album,
                 )
             },
     ) {

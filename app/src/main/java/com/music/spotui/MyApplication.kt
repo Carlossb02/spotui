@@ -47,10 +47,9 @@ class MyApplication : Application(){
         appScope.launch {
             YouTube.visitorData = YouTube.visitorData().getOrNull() ?: YouTube.visitorData
         }
-        // Restore a saved YouTube login so age-restricted / login-required videos
-        // resolve. Anonymous (empty cookie) otherwise.
-        com.music.spotui.data.preferences.getYoutubeCookie(this).takeIf { it.isNotBlank() }
-            ?.let { YouTube.cookie = it }
+        // YouTube playback runs anonymously; age-gated official audio falls back
+        // to matching normal YouTube uploads instead of requiring sign-in.
+        YouTube.cookie = null
 
         // Warm the Home feed cache so the first navigation to Home is instant.
         // No-op (gracefully) until a Spotify token is available.
@@ -60,4 +59,3 @@ class MyApplication : Application(){
         appScope.launch { runCatching { api.getArtists().collect {} } }
     }
 }
-

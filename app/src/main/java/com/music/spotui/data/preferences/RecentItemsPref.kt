@@ -20,6 +20,8 @@ data class RecentItem(
     val songAlbum: String = "",
     val songUrl: String = "",
     val spotifyTrackId: String = "",
+    val explicit: Boolean = false,
+    val durationMs: Int = 0,
 )
 
 private const val PREF = "RecentItems"
@@ -30,6 +32,7 @@ private fun RecentItem.toJson(): JSONObject = JSONObject().apply {
     put("type", type); put("key", key); put("name", name); put("singer", singer)
     put("image", image); put("songId", songId); put("songAlbum", songAlbum)
     put("songUrl", songUrl); put("spotifyTrackId", spotifyTrackId)
+    put("explicit", explicit); put("durationMs", durationMs)
 }
 
 private fun JSONObject.toRecentItem(): RecentItem = RecentItem(
@@ -37,6 +40,7 @@ private fun JSONObject.toRecentItem(): RecentItem = RecentItem(
     singer = optString("singer"), image = optString("image"),
     songId = optInt("songId", -1), songAlbum = optString("songAlbum"),
     songUrl = optString("songUrl"), spotifyTrackId = optString("spotifyTrackId"),
+    explicit = optBoolean("explicit", false), durationMs = optInt("durationMs", 0),
 )
 
 fun getRecentItems(context: Context): List<RecentItem> {

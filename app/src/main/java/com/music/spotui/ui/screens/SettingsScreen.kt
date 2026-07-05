@@ -49,9 +49,11 @@ import com.music.spotui.data.preferences.getCellularQuality
 import com.music.spotui.data.preferences.getCrossfadeMs
 import com.music.spotui.data.preferences.setCrossfadeMs
 import com.music.spotui.data.preferences.getDownloadQuality
+import com.music.spotui.data.preferences.isVideoFallbackEnabled
 import com.music.spotui.data.preferences.getWifiQuality
 import com.music.spotui.data.preferences.setCellularQuality
 import com.music.spotui.data.preferences.setDownloadQuality
+import com.music.spotui.data.preferences.setVideoFallbackEnabled
 import com.music.spotui.data.preferences.setWifiQuality
 import com.music.spotui.ui.theme.AppBackground
 import com.music.spotui.ui.theme.AppPalette
@@ -66,6 +68,7 @@ fun SettingsScreen(navController: NavController) {
     var cellQ by remember { mutableStateOf(getCellularQuality(context)) }
     var dlQ by remember { mutableStateOf(getDownloadQuality(context)) }
     var crossfadeMs by remember { mutableStateOf(getCrossfadeMs(context).toFloat()) }
+    var videoFallback by remember { mutableStateOf(isVideoFallbackEnabled(context)) }
 
     Scaffold(
         containerColor = AppBackground,
@@ -114,6 +117,17 @@ fun SettingsScreen(navController: NavController) {
             ) { dlQ = it; setDownloadQuality(context, it) }
 
             Spacer(Modifier.height(12.dp))
+            SectionTitle("Matching")
+            SettingsSwitchRow(
+                title = "Allow video fallback",
+                subtitle = "Use regular YouTube videos only after Music song results fail",
+                checked = videoFallback,
+            ) {
+                videoFallback = it
+                setVideoFallbackEnabled(context, it)
+            }
+
+            Spacer(Modifier.height(12.dp))
             SectionTitle("Crossfade")
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -146,25 +160,6 @@ fun SettingsScreen(navController: NavController) {
             )
             Spacer(Modifier.height(12.dp))
             SectionTitle("Account")
-            val ytLoggedIn = com.music.spotui.data.preferences.isYoutubeLoggedIn(context)
-            Text(
-                text = if (ytLoggedIn) "YouTube — signed in (tap to sign out)" else "Sign in to YouTube (unlock age-restricted)",
-                color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable {
-                        if (ytLoggedIn) {
-                            com.music.spotui.data.preferences.setYoutubeCookie(context, "")
-                            com.metrolist.innertube.YouTube.cookie = null
-                        } else {
-                            navController.navigate(com.music.spotui.ui.navigation.Routes.YoutubeLogin.route)
-                        }
-                    }
-                    .padding(vertical = 14.dp)
-            )
             Text(
                 text = "Log out",
                 color = Color(0xFFE57373),
@@ -196,6 +191,36 @@ private fun SectionTitle(text: String) {
         fontWeight = FontWeight.Bold,
         modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
     )
+}
+
+@Composable
+private fun SettingsSwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, color = Color(0xFFB3B3B3), fontSize = 12.sp)
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = AppPalette,
+                uncheckedThumbColor = Color(0xFFB3B3B3),
+                uncheckedTrackColor = Color(0xFF333333),
+            ),
+        )
+    }
 }
 
 @Composable

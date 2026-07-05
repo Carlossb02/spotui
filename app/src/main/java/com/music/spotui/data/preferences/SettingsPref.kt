@@ -28,6 +28,8 @@ private const val KEY_PRELOAD = "preload_enabled"
 private const val KEY_CROSSFADE_MS = "crossfade_duration_ms"
 private const val KEY_CROSSFADE_DJ = "crossfade_dj_mode"
 private const val KEY_WEB_PLAYBACK = "web_playback_enabled"
+private const val KEY_VIDEO_FALLBACK = "video_fallback_enabled"
+private const val KEY_LIBRARY_GRID = "library_grid_view"
 
 /** Off (0s) … 12s. 0 disables crossfade. */
 const val CROSSFADE_MIN_MS = 0
@@ -51,6 +53,10 @@ fun setCellularQuality(c: Context, q: StreamQuality) = writeQ(c, KEY_CELL_Q, q)
 fun getDownloadQuality(c: Context): StreamQuality = readQ(c, KEY_DL_Q, StreamQuality.LOSSLESS)
 fun setDownloadQuality(c: Context, q: StreamQuality) = writeQ(c, KEY_DL_Q, q)
 
+/** Library layout: false = rows (default), true = Spotify-style 3-column grid. */
+fun isLibraryGridView(c: Context): Boolean = prefs(c).getBoolean(KEY_LIBRARY_GRID, false)
+fun setLibraryGridView(c: Context, v: Boolean) = prefs(c).edit().putBoolean(KEY_LIBRARY_GRID, v).apply()
+
 fun isPreloadEnabled(c: Context): Boolean = prefs(c).getBoolean(KEY_PRELOAD, true)
 fun setPreloadEnabled(c: Context, v: Boolean) = prefs(c).edit().putBoolean(KEY_PRELOAD, v).apply()
 
@@ -72,6 +78,10 @@ fun isYoutubeLoggedIn(c: Context): Boolean = getYoutubeCookie(c).contains("SAPIS
  */
 fun isWebPlaybackEnabled(c: Context): Boolean = prefs(c).getBoolean(KEY_WEB_PLAYBACK, false)
 fun setWebPlaybackEnabled(c: Context, v: Boolean) = prefs(c).edit().putBoolean(KEY_WEB_PLAYBACK, v).apply()
+
+fun isVideoFallbackEnabled(c: Context): Boolean = prefs(c).getBoolean(KEY_VIDEO_FALLBACK, true)
+fun setVideoFallbackEnabled(c: Context, v: Boolean) =
+    prefs(c).edit().putBoolean(KEY_VIDEO_FALLBACK, v).apply()
 
 /**
  * Crossfade overlap length in ms (0 = off). When > 0, the end of each track is blended
