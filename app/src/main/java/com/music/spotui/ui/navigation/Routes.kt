@@ -22,6 +22,7 @@ sealed class Routes(
     object Downloads : Routes(0, "Downloads", "downloads")
     object Category : Routes(0, "Category", "category")
     object Login : Routes(0, "Login", "login")
+    object YoutubeLogin : Routes(0, "YoutubeLogin", "youtubelogin")
     object Settings : Routes(0, "Settings", "settings")
     object History : Routes(0, "History", "history")
 }

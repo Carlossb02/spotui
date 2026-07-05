@@ -55,6 +55,16 @@ fun isPreloadEnabled(c: Context): Boolean = prefs(c).getBoolean(KEY_PRELOAD, tru
 fun setPreloadEnabled(c: Context, v: Boolean) = prefs(c).edit().putBoolean(KEY_PRELOAD, v).apply()
 
 /**
+ * YouTube account cookie (captured from an in-app WebView login). Passed to the
+ * InnerTube client so age-restricted / login-required videos resolve. Empty when
+ * not signed in — the app then uses anonymous YouTube access.
+ */
+private const val KEY_YT_COOKIE = "youtube_cookie"
+fun getYoutubeCookie(c: Context): String = prefs(c).getString(KEY_YT_COOKIE, "").orEmpty()
+fun setYoutubeCookie(c: Context, v: String) = prefs(c).edit().putString(KEY_YT_COOKIE, v).apply()
+fun isYoutubeLoggedIn(c: Context): Boolean = getYoutubeCookie(c).contains("SAPISID")
+
+/**
  * Play audio through Spotify's own web player in a hidden WebView (real Spotify
  * streaming, no decryption/bypass). DEFAULT OFF (and hidden from Settings) — the
  * YouTube/FLAC engine is the primary source; this path is real-time only with no

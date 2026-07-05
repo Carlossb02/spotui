@@ -47,6 +47,13 @@ object SongPlayer {
     @Volatile var losslessStreaming = true
     @Volatile var losslessHiRes = true
 
+    // Source kill-switches. The Spotify web player is currently broken (off).
+    // YouTube is the last-resort fallback, kept on so tracks SpotiFLAC misses or
+    // can't serve during a proxy cooldown still play — with the wrong-song guards
+    // (videoId match check + artist/title scoring + candidate fallback).
+    @Volatile var webPlayerEnabled = false
+    @Volatile var youtubeEnabled = true
+
     // Which engine is feeding the CURRENT track, for the on-screen source badge.
     // "Lossless" (SpotiFLAC: Tidal/Qobuz/Amazon) is NOT Spotify — surfaced so the
     // user knows real Spotify vs a lossless mirror vs the YouTube fallback.
@@ -79,6 +86,17 @@ object SongPlayer {
             if (query.isNotBlank()) explicitRegistry[query] = explicit
         }
     }
+
+    // Expected track length (ms) per query, from Spotify — lets the YouTube match
+    // reject a same-title song by a different artist (different duration).
+    private val durationRegistry = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    /** Register query→durationMs pairs (populated whenever the queue changes). */
+    fun registerDuration(pairs: List<Pair<String, Int>>) {
+        pairs.forEach { (query, ms) ->
+            if (query.isNotBlank() && ms > 0) durationRegistry[query] = ms
+        }
+    }
     // Tracks which query is the latest play request so a slow resolve for an old
     // tap doesn't clobber a newer one (fast switching).
     @Volatile private var currentRequest: String = ""
@@ -105,7 +123,7 @@ object SongPlayer {
 
         // Podcast episodes are encoded as "episode:<id>" queries — play them via the
         // Spotify web player's episode page (same engine as tracks).
-        if (song.startsWith("episode:") && SpotifyWebPlayer.canPlay &&
+        if (song.startsWith("episode:") && webPlayerEnabled && SpotifyWebPlayer.canPlay &&
             com.music.spotui.data.preferences.isWebPlaybackEnabled(appContext)
         ) {
             runCatching { player?.pause() }
@@ -119,7 +137,7 @@ object SongPlayer {
         // playback on. (Web is now the default and used to run first, so a
         // downloaded track streamed from Spotify instead of playing offline.)
         val downloadedPath = com.music.spotui.data.preferences.downloadedPathForQuery(appContext, song)
-        if (downloadedPath == null &&
+        if (downloadedPath == null && webPlayerEnabled &&
             // Experimental: stream through Spotify's own web player (real Spotify audio,
             // no bypass) when enabled AND the device WebView has Widevine. Otherwise
             // fall through to the normal YouTube/FLAC engine so playback is never silent.
@@ -138,7 +156,16 @@ object SongPlayer {
         }
         scope.launch {
             try {
-                val streamUrl = resolveStreamUrl(song, appContext, forPlayback = true) ?: return@launch
+                val streamUrl = resolveStreamUrl(song, appContext, forPlayback = true) ?: run {
+                    // Tell the user instead of silently leaving the previous track on.
+                    if (currentRequest == song) withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(
+                            appContext, "Couldn't find a playable stream for this track",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                    return@launch
+                }
                 // A newer tap superseded this one while we were resolving — drop it.
                 if (currentRequest != song) return@launch
                 withContext(Dispatchers.Main) {
@@ -281,12 +308,14 @@ object SongPlayer {
         }
         // Quality for the current network (Wi-Fi vs cellular), from Settings.
         val quality = com.music.spotui.data.preferences.currentStreamingQuality(appContext)
-        // Lossless first (only when the chosen quality is Lossless): if we know this query's
-        // Spotify id, try SpotiFLAC for a FLAC stream. Tidal/Amazon resolve from the Spotify
-        // id alone (no ISRC needed); on a miss or proxy cooldown fall through to YouTube.
-        if (quality.lossless) {
+        // SpotiFLAC first at EVERY quality level, not just Lossless: it resolves by
+        // the track's Spotify id (exact match — no fuzzy text search like YouTube),
+        // so it can never play the wrong song. Hi-res is only requested when the
+        // user chose Lossless; on a miss or proxy cooldown fall through to YouTube.
+        run {
             trackIdRegistry[song]?.let { spotifyId ->
-                when (val r = com.metrolist.spotify.SpotiFlac.resolve(spotifyId, isrc = null, preferHiRes = losslessHiRes)) {
+                when (val r = com.metrolist.spotify.SpotiFlac.resolve(
+                    spotifyId, isrc = null, preferHiRes = quality.lossless && losslessHiRes)) {
                     is com.metrolist.spotify.SpotiFlac.Result.Success -> {
                         Log.d(TAG, "lossless ${r.track.provider} ${r.track.quality}-bit for: $song")
                         val flacQuality = "FLAC ${r.track.quality}-bit"
@@ -306,21 +335,17 @@ object SongPlayer {
                 }
             }
         }
-        val videoId = resolveVideoId(song) ?: run {
-            Log.w(TAG, "No YouTube match for query: $song")
+        if (!youtubeEnabled) {
+            Log.w(TAG, "YouTube fallback disabled — no stream for: $song")
             return null
         }
-        if (forPlayback) currentSource = "YouTube"
-        val connectivityManager =
-            appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val playback = YTPlayerUtils.playerResponseForPlayback(
-            videoId = videoId,
-            audioQuality = quality.audioQuality,
-            connectivityManager = connectivityManager,
-        ).getOrElse {
-            Log.e(TAG, "Failed to resolve stream for $videoId", it)
-            return null
+        if (forPlayback) {
+            currentSource = "YouTube"
+            // Clear the previous track's quality so a failed resolve can't leave
+            // a stale "FLAC 24-bit" badge on a YouTube stream.
+            currentQuality = ""
         }
+        val playback = resolveYtPlayback(song, quality.audioQuality, appContext) ?: return null
         // e.g. "OPUS 141 kbps" from the chosen adaptive format.
         val codec = playback.format.mimeType
             .substringAfter("codecs=\"", "").substringBefore('"').substringBefore('.')
@@ -520,26 +545,21 @@ object SongPlayer {
         // Lossless and we have a Spotify id, but bound it with a timeout — the community
         // proxies are often slow/on-cooldown and must NOT stall the whole download. On any
         // miss/timeout fall back to the YouTube m4a path at the chosen quality.
-        if (dlQuality.lossless && song.spotifyTrackId.isNotBlank()) {
+        if (song.spotifyTrackId.isNotBlank()) {
             val flacOk = kotlinx.coroutines.withTimeoutOrNull(30_000) {
                 runCatching { downloadFlacToFile(song, appContext) }.getOrDefault(false)
             } ?: false
             if (flacOk) return true
         }
-
-        val query = song.url
-        // Resolve a fresh network stream URL (bypass any local-file short-circuit).
-        val videoId = resolveVideoId(query) ?: run {
-            lastDownloadError = "No YouTube match found"
+        if (!youtubeEnabled) {
+            lastDownloadError = "Track not available on lossless providers"
             return false
         }
-        val connectivityManager =
-            appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val playback = com.metrolist.music.utils.YTPlayerUtils.playerResponseForPlayback(
-            videoId = videoId,
-            audioQuality = dlQuality.audioQuality,
-            connectivityManager = connectivityManager,
-        ).getOrNull() ?: run {
+
+        val query = song.url
+        // Resolve a fresh network stream URL (bypass any local-file short-circuit),
+        // walking the ranked video candidates like playback does.
+        val playback = resolveYtPlayback(query, dlQuality.audioQuality, appContext) ?: run {
             lastDownloadError = "Couldn't resolve a stream"
             return false
         }
@@ -601,10 +621,13 @@ object SongPlayer {
         return true
     }
 
-    private suspend fun resolveVideoId(query: String): String? {
+    private suspend fun resolveVideoCandidates(
+        query: String,
+        filter: YouTube.SearchFilter = YouTube.SearchFilter.FILTER_SONG,
+    ): List<String> {
         // A raw YouTube videoId is 11 chars with no spaces — accept it directly.
-        if (query.length == 11 && !query.contains(' ')) return query
-        val hits = YouTube.search(query, YouTube.SearchFilter.FILTER_SONG)
+        if (query.length == 11 && !query.contains(' ')) return listOf(query)
+        val hits = YouTube.search(query, filter)
             .onFailure { Log.w(TAG, "resolveVideoId: YouTube search failed for: $query", it) }
             .getOrNull()
             ?.items
@@ -612,20 +635,98 @@ object SongPlayer {
             .orEmpty()
         if (hits.isEmpty()) {
             Log.w(TAG, "resolveVideoId: no YouTube song results for: $query")
+            return emptyList()
+        }
+        // YouTube's top hit is NOT always the requested song (worst for
+        // non-English titles). Score every hit against the query — the query is
+        // "title artist1, artist2":
+        //   +2 artist match, +1 title match, +2 duration match.
+        // Duration is the key disambiguator for same-title/different-artist: a
+        // wrong-artist song with the same name almost always has a different
+        // length, so it never ties the real track once duration is in the score.
+        fun norm(s: String) = s.lowercase().filter { it.isLetterOrDigit() }
+        val qn = norm(query)
+        val wantSec = durationRegistry[query]?.let { it / 1000 }
+        val scored = hits.map { h ->
+            val cleanTitle = norm(h.title.substringBefore('(').substringBefore('['))
+            var s = 0
+            if (cleanTitle.isNotEmpty() && qn.contains(cleanTitle)) s += 1
+            if (h.artists.any { a -> norm(a.name).let { it.isNotEmpty() && qn.contains(it) } }) s += 2
+            // Within ~4s of the Spotify track length → very likely the same recording.
+            val hDur = h.duration
+            if (wantSec != null && hDur != null && kotlin.math.abs(hDur - wantSec) <= 4) s += 2
+            h to s
+        }
+        // A hit is "verified" as the right recording when its artist matches the
+        // query, OR (when we know the Spotify length) its duration is within ~4s.
+        fun verified(h: SongItem): Boolean {
+            val artistOk = h.artists.any { a -> norm(a.name).let { it.isNotEmpty() && qn.contains(it) } }
+            val d = h.duration
+            val durOk = wantSec != null && d != null && kotlin.math.abs(d - wantSec) <= 4
+            return artistOk || durOk
+        }
+        // Only ever fall back to OTHER verified matches (e.g. a same-artist reupload
+        // when the official upload is age-locked) — NEVER to a random title-only hit,
+        // which is what was playing the completely wrong song. Ranked best-first.
+        val verifiedRanked = scored
+            .filter { verified(it.first) }
+            .sortedByDescending { it.second }
+            .map { it.first }
+        val wantExplicit = explicitRegistry[query]
+        val ordered = if (wantExplicit != null)
+            verifiedRanked.sortedByDescending { it.explicit == wantExplicit } else verifiedRanked
+
+        if (ordered.isEmpty()) {
+            // Nothing could be confirmed as the right recording. Playing a
+            // title-only guess is exactly the wrong-song trap — refuse instead.
+            Log.w(TAG, "resolveVideoId: NO verified match for: $query (${hits.size} hits, want=${wantSec}s) — refusing to guess")
+            return emptyList()
+        }
+        val chosen = ordered.first()
+        Log.d(
+            TAG,
+            "resolveVideoId: '$query' -> '${chosen.title}' by " +
+                chosen.artists.joinToString { it.name } +
+                " [explicit=${chosen.explicit} dur=${chosen.duration}s want=${wantSec}s id=${chosen.id}] " +
+                "(${ordered.size} verified)",
+        )
+        return ordered.map { it.id }.distinct()
+    }
+
+    /**
+     * Resolves a playable YouTube stream for [query], falling back through up to
+     * 3 ranked video candidates when one has no obtainable stream.
+     */
+    private suspend fun resolveYtPlayback(
+        query: String,
+        audioQuality: com.metrolist.music.constants.AudioQuality,
+        appContext: Context,
+    ): YTPlayerUtils.PlaybackData? {
+        val connectivityManager =
+            appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val tried = mutableSetOf<String>()
+        suspend fun tryIds(ids: List<String>): YTPlayerUtils.PlaybackData? {
+            for (videoId in ids) {
+                if (!tried.add(videoId)) continue
+                YTPlayerUtils.playerResponseForPlayback(
+                    videoId = videoId,
+                    audioQuality = audioQuality,
+                    connectivityManager = connectivityManager,
+                ).fold(
+                    onSuccess = { return it },
+                    onFailure = { Log.w(TAG, "stream failed for $videoId (${it.message}) — trying next candidate for: $query") },
+                )
+            }
             return null
         }
-        // Prefer the version whose explicit flag matches the real Spotify track,
-        // so an explicit track doesn't silently play as the clean edit.
-        val wantExplicit = explicitRegistry[query]
-        val match = if (wantExplicit != null) hits.firstOrNull { it.explicit == wantExplicit } else null
-        if (wantExplicit != null && match == null) {
-            Log.w(
-                TAG,
-                "resolveVideoId: no ${if (wantExplicit) "explicit" else "clean"} match in " +
-                    "${hits.size} hits for: $query — using first hit",
-            )
-        }
-        return (match ?: hits.first()).id
+        tryIds(resolveVideoCandidates(query).take(3))?.let { return it }
+        // Song results exhausted (e.g. every official upload is age-restricted and
+        // we're not signed in to YouTube). Regular video uploads — lyric videos,
+        // reuploads — usually aren't age-gated: last-resort pass over those.
+        Log.w(TAG, "song candidates exhausted, trying video search for: $query")
+        tryIds(resolveVideoCandidates(query, YouTube.SearchFilter.FILTER_VIDEO).take(3))?.let { return it }
+        Log.e(TAG, "All YouTube candidates failed for: $query")
+        return null
     }
 
     private fun buildAudioAttributes() =
@@ -700,6 +801,7 @@ object SongPlayer {
     }
 
     fun webPlaybackActive(): Boolean {
+        if (!webPlayerEnabled) return false
         val ctx = appCtx ?: return false
         // Spotify web playback needs: user hasn't opted out, the WebView actually has
         // Widevine, AND the user is logged into Spotify (sp_dc). Missing any of these

@@ -89,6 +89,13 @@ fun MyNavHost(
             }
             SpotifyLoginScreen(navHostController)
         }
+        composable(Routes.YoutubeLogin.route){
+            LaunchedEffect(Unit) {
+                bottomBarState.value = false
+                bottomBarPlayerState.value = false
+            }
+            com.music.spotui.ui.screens.YoutubeLoginScreen(navHostController, onDone = {})
+        }
         composable(Routes.Home.route){
             LaunchedEffect(playerState) {
                 bottomBarState.value = true

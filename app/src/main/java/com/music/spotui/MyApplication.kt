@@ -31,6 +31,9 @@ class MyApplication : Application(){
         com.metrolist.spotify.Spotify.logger = { level, msg ->
             android.util.Log.d("SpotifyREST", "[$level] $msg")
         }
+        com.metrolist.spotify.SpotifyCanvas.setLogger { level, msg ->
+            android.util.Log.d("SpotifyCanvas", "[$level] $msg")
+        }
         // Required by the ported YouTube streaming flow (cipher/PoToken WebViews).
         CipherDeobfuscator.initialize(this)
 
@@ -44,6 +47,10 @@ class MyApplication : Application(){
         appScope.launch {
             YouTube.visitorData = YouTube.visitorData().getOrNull() ?: YouTube.visitorData
         }
+        // Restore a saved YouTube login so age-restricted / login-required videos
+        // resolve. Anonymous (empty cookie) otherwise.
+        com.music.spotui.data.preferences.getYoutubeCookie(this).takeIf { it.isNotBlank() }
+            ?.let { YouTube.cookie = it }
 
         // Warm the Home feed cache so the first navigation to Home is instant.
         // No-op (gracefully) until a Spotify token is available.

@@ -2036,6 +2036,12 @@ object Spotify {
         }
 
     fun isAuthenticated(): Boolean = accessToken != null
+
+    /** The looping Canvas video URL for a track, or null when it has none. */
+    suspend fun canvasUrl(trackId: String): String? {
+        val token = accessToken ?: return null
+        return SpotifyCanvas.canvasUrl(trackId, token)
+    }
 }
 
 @kotlinx.serialization.Serializable

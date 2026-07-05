@@ -72,6 +72,7 @@ class Api @Inject constructor(
             url = listOf(name, singer).filter { it.isNotBlank() }.joinToString(" "),
             spotifyTrackId = id,
             explicit = explicit,
+            durationMs = durationMs,
         )
     }
 
@@ -613,6 +614,24 @@ class Api @Inject constructor(
         val merged = listOf(liked, downloaded) + playlists + albums
         HomeCache.library = merged
         emit(Response.Success(merged))
+    }
+
+    /**
+     * The looping Spotify Canvas video URL for a track (or null). Process-cached
+     * per track id — including negative results — so the player only fetches once.
+     */
+    suspend fun getCanvasUrl(trackId: String): String? {
+        if (trackId.isBlank()) return null
+        CanvasCache.map[trackId]?.let { return it.value }
+        if (!SpotifyTokenProvider.ensureToken(context)) return null
+        val url = runCatching { Spotify.canvasUrl(trackId) }.getOrNull()
+        CanvasCache.map[trackId] = CanvasCache.Entry(url)
+        return url
+    }
+
+    private object CanvasCache {
+        class Entry(val value: String?)
+        val map = java.util.concurrent.ConcurrentHashMap<String, Entry>()
     }
 
     /** The user's Spotify "Liked Songs" (saved tracks) as playable songs. */

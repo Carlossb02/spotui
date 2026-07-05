@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.music.spotui.app-mergeReleaseResources-56:/values-as/values-as.xml",
+            "outputFile": "com.music.spotui.app-mergeReleaseResources-58:/values-as/values-as.xml",
             "map": [
                 {
                     "source": "/home/tim/.gradle/caches/transforms-4/bba59d99cbde3d3d29dd2b50a7063b4a/transformed/play-services-basement-16.0.1/res/values-as/values.xml",

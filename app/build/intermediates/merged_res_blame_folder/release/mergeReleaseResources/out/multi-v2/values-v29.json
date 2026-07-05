@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.music.spotui.app-mergeReleaseResources-56:/values-v29/values-v29.xml",
+            "outputFile": "com.music.spotui.app-mergeReleaseResources-58:/values-v29/values-v29.xml",
             "map": [
                 {
                     "source": "/home/tim/.gradle/caches/transforms-4/5e012176013edcb89b419cf6143f7cf8/transformed/core-splashscreen-1.0.1/res/values-v29/values-v29.xml",

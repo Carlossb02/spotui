@@ -146,6 +146,25 @@ fun SettingsScreen(navController: NavController) {
             )
             Spacer(Modifier.height(12.dp))
             SectionTitle("Account")
+            val ytLoggedIn = com.music.spotui.data.preferences.isYoutubeLoggedIn(context)
+            Text(
+                text = if (ytLoggedIn) "YouTube — signed in (tap to sign out)" else "Sign in to YouTube (unlock age-restricted)",
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable {
+                        if (ytLoggedIn) {
+                            com.music.spotui.data.preferences.setYoutubeCookie(context, "")
+                            com.metrolist.innertube.YouTube.cookie = null
+                        } else {
+                            navController.navigate(com.music.spotui.ui.navigation.Routes.YoutubeLogin.route)
+                        }
+                    }
+                    .padding(vertical = 14.dp)
+            )
             Text(
                 text = "Log out",
                 color = Color(0xFFE57373),

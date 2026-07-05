@@ -12,7 +12,10 @@ data class SongsModel(
     val spotifyTrackId : String = "",
     // Whether the Spotify track is the explicit version, so the YouTube fallback
     // can pick the matching (explicit vs clean) edit.
-    val explicit : Boolean = false
+    val explicit : Boolean = false,
+    // Track length in ms (from Spotify). Used to disambiguate the YouTube match:
+    // a same-title-different-artist song almost always has a different duration.
+    val durationMs : Int = 0
 ){
     constructor() : this(-1 ,"" ,"" ,"" ,"" ,"", "")
 }

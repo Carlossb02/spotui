@@ -42,4 +42,6 @@ class AppRepository @Inject constructor(private val api : Api) {
     suspend fun provideLikedSongs() = api.getLikedSongs()
 
     suspend fun provideAccount() = api.getAccount()
+
+    suspend fun provideCanvasUrl(trackId: String) = api.getCanvasUrl(trackId)
 }

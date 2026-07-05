@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.music.spotui.app-mergeReleaseResources-56:/values-or/values-or.xml",
+            "outputFile": "com.music.spotui.app-mergeReleaseResources-58:/values-or/values-or.xml",
             "map": [
                 {
                     "source": "/home/tim/.gradle/caches/transforms-4/a8157931d39ee15990e4b50a6e537fdf/transformed/material3-release/res/values-or/values-or.xml",

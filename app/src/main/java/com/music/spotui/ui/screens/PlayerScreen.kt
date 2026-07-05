@@ -222,6 +222,12 @@ fun PlayerScreen(navController: NavController) {
         }
     }
 
+    // Load the current track's Spotify Canvas (looping video behind the artwork).
+    LaunchedEffect(playerViewModel.currentSongId.value, queueSongs) {
+        val track = queueSongs.firstOrNull { it.id == playerViewModel.currentSongId.value }
+        playerViewModel.loadCanvas(track?.spotifyTrackId.orEmpty())
+    }
+
 
 
 
@@ -230,7 +236,9 @@ fun PlayerScreen(navController: NavController) {
             SongPlayer.seekTo(0)
         }
         else{
-            playerViewModel.playNextSongs(queueSongs, context)
+            // Debounced: this block re-runs every recomposition until the next
+            // track's stream actually starts, so it must not skip repeatedly.
+            playerViewModel.autoAdvance(queueSongs, context)
         }
     }
 
@@ -298,7 +306,18 @@ fun PlayerScreen(navController: NavController) {
             // HorizontalPager makes the artwork follow the finger and snap, syncing the
             // change with the track (Spotify's now-playing gesture) instead of an abrupt
             // swipe-then-switch. When the queue is empty fall back to a static image.
-            if (queueSongs.isEmpty()) {
+            val canvasUrl = playerViewModel.canvasUrl.value
+            if (canvasUrl != null) {
+                // Spotify Canvas: the looping video plays in place of the artwork,
+                // muted, exactly like the Spotify app's now-playing screen.
+                CanvasVideo(
+                    url = canvasUrl,
+                    modifier = Modifier
+                        .size(385.dp)
+                        .padding(20.dp)
+                        .clip(RoundedCornerShape(10.dp)),
+                )
+            } else if (queueSongs.isEmpty()) {
                 GlideImage(
                     modifier = Modifier
                         .size(385.dp)
@@ -1204,4 +1223,45 @@ fun PlayerMenuRow(
             )
         }
     }
+}
+/**
+ * Plays a Spotify Canvas clip: a short, muted, looping video shown in place of
+ * the album art. Uses a dedicated ExoPlayer (separate from the audio engine)
+ * released when the composable leaves. Falls back to nothing if the URL fails.
+ */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable
+private fun CanvasVideo(url: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val exo = remember(url) {
+        androidx.media3.exoplayer.ExoPlayer.Builder(context).build().apply {
+            setMediaItem(androidx.media3.common.MediaItem.fromUri(url))
+            repeatMode = androidx.media3.common.Player.REPEAT_MODE_ALL
+            volume = 0f
+            playWhenReady = true
+            prepare()
+        }
+    }
+    androidx.compose.runtime.DisposableEffect(url) {
+        onDispose { exo.release() }
+    }
+    androidx.compose.ui.viewinterop.AndroidView(
+        modifier = modifier,
+        factory = { ctx ->
+            androidx.media3.ui.PlayerView(ctx).apply {
+                player = exo
+                // Strip ALL chrome: no controller, no buffering spinner, and no
+                // artwork/placeholder icon (that "play icon" overlay) — just video.
+                useController = false
+                controllerAutoShow = false
+                setShowBuffering(androidx.media3.ui.PlayerView.SHOW_BUFFERING_NEVER)
+                setArtworkDisplayMode(androidx.media3.ui.PlayerView.ARTWORK_DISPLAY_MODE_OFF)
+                setUseArtwork(false)
+                setDefaultArtwork(null)
+                hideController()
+                resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            }
+        },
+    )
 }

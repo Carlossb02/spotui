@@ -125,6 +125,19 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
         }
     }
 
+    // End-of-track autoplay fires from the UI on every recomposition while the
+    // finished track's position still equals its duration (the next stream takes
+    // seconds to resolve), so without a debounce it advances 30+ tracks in a
+    // burst. Allow ONE auto-advance, then hold until the new track takes over.
+    @Volatile private var lastAutoAdvanceMs = 0L
+
+    fun autoAdvance(queueSongs: List<SongsModel>, context: Context) {
+        val now = System.currentTimeMillis()
+        if (now - lastAutoAdvanceMs < 4000) return
+        lastAutoAdvanceMs = now
+        playNextSongs(queueSongs, context)
+    }
+
     // Function to play the next song in the album
     fun playNextSongs(queueSongs : List<SongsModel>, context: Context) {
         if (queueSongs.isEmpty()) return
@@ -159,6 +172,23 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
      * from the track's Spotify id when available, so a display name like "RAM"
      * can't fuzzy-match to "Rammstein". Falls back to the display name.
      */
+    // Spotify Canvas (looping video) URL for the current track, or null. Fetched
+    // per track; null means no canvas / not resolved yet.
+    private val _canvasUrl = mutableStateOf<String?>(null)
+    val canvasUrl: State<String?> get() = _canvasUrl
+    @Volatile private var canvasRequestId: String = ""
+
+    fun loadCanvas(trackId: String) {
+        _canvasUrl.value = null
+        canvasRequestId = trackId
+        if (trackId.isBlank()) return
+        viewModelScope.launch {
+            val url = withContext(Dispatchers.IO) { repository.provideCanvasUrl(trackId) }
+            // Ignore a slow fetch for a track the user already skipped past.
+            if (canvasRequestId == trackId) _canvasUrl.value = url
+        }
+    }
+
     fun goToArtist(trackId: String, fallbackName: String, navigate: (route: String) -> Unit) {
         viewModelScope.launch {
             val route = withContext(Dispatchers.IO) {

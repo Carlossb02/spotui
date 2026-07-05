@@ -225,6 +225,19 @@ object YTPlayerUtils {
                     YouTube.player(videoId, playlistId, client, clientSigTimestamp, clientPoToken).getOrNull()
             }
 
+            // YouTube content substitution guard: a client with a mismatched
+            // session can return a playable response for a DIFFERENT video (the
+            // classic "plays the wrong song" bug). Never accept streams whose
+            // videoId doesn't match what we asked for.
+            val returnedVideoId = streamPlayerResponse?.videoDetails?.videoId
+            if (returnedVideoId != null && returnedVideoId != videoId) {
+                Timber.tag(TAG).w(
+                    "Client ${if (clientIndex == -1) MAIN_CLIENT.clientName else STREAM_FALLBACK_CLIENTS[clientIndex].clientName} " +
+                        "returned WRONG video: $returnedVideoId != $videoId — skipping",
+                )
+                continue
+            }
+
             // process current client response
             if (streamPlayerResponse?.playabilityStatus?.status == "OK") {
                 Timber.tag(logTag).d("Player response status OK for client: ${if (clientIndex == -1) MAIN_CLIENT.clientName else STREAM_FALLBACK_CLIENTS[clientIndex].clientName}")

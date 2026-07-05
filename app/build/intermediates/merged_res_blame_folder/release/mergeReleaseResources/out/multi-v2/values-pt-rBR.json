@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.music.spotui.app-mergeReleaseResources-56:/values-pt-rBR/values-pt-rBR.xml",
+            "outputFile": "com.music.spotui.app-mergeReleaseResources-58:/values-pt-rBR/values-pt-rBR.xml",
             "map": [
                 {
                     "source": "/home/tim/.gradle/caches/transforms-4/79e6d0dd6ee6d0c3cfdf42e9f44f8be0/transformed/ui-release/res/values-pt-rBR/values-pt-rBR.xml",

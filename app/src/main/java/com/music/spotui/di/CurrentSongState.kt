@@ -42,6 +42,9 @@ class CurrentSongState @Inject constructor() {
         SongPlayer.registerLossless(songs.map { it.url to it.spotifyTrackId })
         // Seed explicit flags so the YouTube fallback picks the matching edit.
         SongPlayer.registerExplicit(songs.map { it.url to it.explicit })
+        // Seed durations so the YouTube match can reject same-title wrong-artist
+        // songs (they almost always have a different length).
+        SongPlayer.registerDuration(songs.mapNotNull { s -> if (s.durationMs > 0) s.url to s.durationMs else null })
         // Seed the lyrics resolver with track ids so it can use Spotify's own
         // color-lyrics endpoint (exact synced lyrics) instead of LRCLIB matching.
         com.music.spotui.data.api.LyricsApi.registerTracks(songs)
