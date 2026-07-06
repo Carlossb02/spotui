@@ -12,6 +12,8 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -345,30 +347,44 @@ fun PlayerScreen(navController: NavController) {
             // When a Canvas is playing it fills the screen behind this column, so the
             // artwork is hidden (alpha 0) rather than removed — the pager stays in
             // the layout so the swipe-to-skip gesture keeps working over the video.
-            if (queueSongs.isEmpty()) {
-                GlideImage(
-                    modifier = Modifier
-                        .size(385.dp)
-                        .padding(20.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .alpha(if (canvasUrl != null) 0f else 1f),
-                    model = songCoverUri,
-                    contentScale = ContentScale.Crop,
-                    contentDescription = "")
-            } else {
-                HorizontalPager(
-                    state = artworkPagerState,
-                    modifier = Modifier.size(385.dp),
-                ) { page ->
+            // The artwork is the FLEXIBLE part of the screen (weight), capped at its
+            // old 385dp size. On short/scaled displays the fixed-size version pushed
+            // the slider and playback buttons off the bottom of the screen; now the
+            // artwork shrinks instead and the controls always fit.
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                if (queueSongs.isEmpty()) {
                     GlideImage(
                         modifier = Modifier
-                            .size(385.dp)
+                            .sizeIn(maxWidth = 385.dp, maxHeight = 385.dp)
+                            .aspectRatio(1f)
                             .padding(20.dp)
                             .clip(RoundedCornerShape(10.dp))
                             .alpha(if (canvasUrl != null) 0f else 1f),
-                        model = queueSongs.getOrNull(page)?.coverUri ?: songCoverUri,
+                        model = songCoverUri,
                         contentScale = ContentScale.Crop,
                         contentDescription = "")
+                } else {
+                    HorizontalPager(
+                        state = artworkPagerState,
+                        modifier = Modifier
+                            .sizeIn(maxWidth = 385.dp, maxHeight = 385.dp)
+                            .aspectRatio(1f),
+                    ) { page ->
+                        GlideImage(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(20.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .alpha(if (canvasUrl != null) 0f else 1f),
+                            model = queueSongs.getOrNull(page)?.coverUri ?: songCoverUri,
+                            contentScale = ContentScale.Crop,
+                            contentDescription = "")
+                    }
                 }
             }
             //Spacer(modifier = Modifier.padding(30.dp))
