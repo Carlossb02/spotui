@@ -12,6 +12,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -65,6 +66,25 @@ object SpotiFlac {
     private const val DL_PATH = "/api/dl"
     private const val UA = "SpotiFLAC"
 
+    // ── Monochrome / squid.wtf TIDAL backends (public, no login required) ────
+    // These proxy TIDAL and return a lossless FLAC URL for a TIDAL track id —
+    // no user account or subscription needed. Instances are frequently up/down,
+    // so we fail over across the list. (github.com/monochrome-music/monochrome)
+    private val TIDAL_MONOCHROME_INSTANCES = listOf(
+        "https://api.monochrome.tf",
+        "https://eu-central.monochrome.tf",
+        "https://us-west.monochrome.tf",
+        "https://arran.monochrome.tf",
+        "https://triton.squid.wtf",
+        "https://maus.qqdl.site",
+        "https://vogel.qqdl.site",
+        "https://katze.qqdl.site",
+        "https://hund.qqdl.site",
+        "https://wolf.qqdl.site",
+        "https://tidal.kinoplus.online",
+        "https://monochrome-api.samidy.com",
+    )
+
     // ── Qobuz public API (for ISRC -> qobuz track id) ────────────────────────
     private const val QOBUZ_APP_ID = "712109809"
     private const val QOBUZ_APP_SECRET = "589be88e4538daea11f509d29e4a23b1"
@@ -108,6 +128,18 @@ object SpotiFlac {
 
         var sawCooldown: String? = null
         var sawMatch = false
+
+        // PRIMARY login-free path: resolve the TIDAL id (via Odesli) to a FLAC URL
+        // through the monochrome / squid.wtf public backends. No account needed.
+        ids.tidalId?.takeIf { it.isNotBlank() }?.let { tidalId ->
+            sawMatch = true
+            when (val r = resolveTidalMonochrome(tidalId, preferHiRes)) {
+                is Result.Success -> return r
+                is Result.Cooldown -> sawCooldown = r.message
+                is Result.Error -> log("W", "tidal (monochrome) error: ${r.message}")
+                is Result.NotFound -> Unit
+            }
+        }
 
         // Order: Tidal & Amazon need only Odesli; Qobuz needs an ISRC match.
         val attempts = listOf(
@@ -231,6 +263,81 @@ object SpotiFlac {
         val q = if (quality == "24") "24-bit" else "16-bit"
         log("D", "$provider FLAC resolved ($q)")
         return Result.Success(LosslessTrack(url = url, provider = provider, quality = quality))
+    }
+
+    /**
+     * Resolve a TIDAL track id to a direct FLAC URL via the monochrome / squid.wtf
+     * public backends. Tries hi-res first (falls back to CD-quality LOSSLESS, which
+     * yields a single-file FLAC URL), failing over across instances.
+     */
+    private suspend fun resolveTidalMonochrome(tidalId: String, preferHiRes: Boolean): Result {
+        val qualities = if (preferHiRes) listOf("HI_RES_LOSSLESS", "LOSSLESS") else listOf("LOSSLESS")
+        var sawError = false
+        for (base in TIDAL_MONOCHROME_INSTANCES) {
+            for (quality in qualities) {
+                val resp = runCatching {
+                    client.get("$base/track/") {
+                        parameter("id", tidalId)
+                        parameter("quality", quality)
+                        parameter("country", "US")
+                        header("User-Agent", UA)
+                        header("Accept", "application/json")
+                    }
+                }.getOrNull()
+                if (resp == null || resp.status.value !in 200..299) {
+                    sawError = true
+                    continue
+                }
+                val body = runCatching { resp.bodyAsText() }.getOrDefault("")
+                val url = extractTidalFlacUrl(body)
+                if (url != null) {
+                    val q = if (quality == "HI_RES_LOSSLESS") "24" else "16"
+                    log("D", "tidal (monochrome) FLAC resolved via $base ($quality)")
+                    return Result.Success(LosslessTrack(url = url, provider = "tidal", quality = q))
+                }
+            }
+        }
+        return if (sawError) Result.Error("Tidal backends unavailable") else Result.NotFound
+    }
+
+    /**
+     * Pull a single FLAC URL out of a monochrome `/track` response: either a direct
+     * `OriginalTrackUrl`, or a base64 `manifest` that decodes to `{"urls":[...]}`.
+     * Segmented DASH (`<MPD…`) manifests can't be used as a single URL, so we skip
+     * them (the caller then falls back to CD-quality LOSSLESS).
+     */
+    private fun extractTidalFlacUrl(body: String): String? {
+        if (body.isBlank()) return null
+        val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return null
+        val data = (root["data"] as? JsonObject) ?: root
+        fun JsonObject.httpUrl(key: String) =
+            this[key]?.jsonPrimitive?.contentOrNull?.takeIf { it.startsWith("http") }
+
+        data.httpUrl("OriginalTrackUrl")?.let { return it }
+        data.httpUrl("originalTrackUrl")?.let { return it }
+        data.httpUrl("url")?.let { return it }
+
+        val manifest = (data["manifest"] ?: root["manifest"])?.jsonPrimitive?.contentOrNull
+            ?: return null
+        val decoded = runCatching {
+            String(java.util.Base64.getMimeDecoder().decode(manifest))
+        }.getOrElse { manifest }
+        if (decoded.contains("<MPD")) return null // segmented DASH — not a single URL
+        val urls = runCatching {
+            (json.parseToJsonElement(decoded).jsonObject["urls"] as? JsonArray)
+                ?.mapNotNull { it.jsonPrimitive.contentOrNull }
+        }.getOrNull().orEmpty()
+        if (urls.isNotEmpty()) return pickBestLosslessUrl(urls)
+        return Regex("https?://[^\"\\s]+").find(decoded)?.value
+    }
+
+    /** Prefer FLAC / lossless URLs when a manifest offers several. */
+    private fun pickBestLosslessUrl(urls: List<String>): String {
+        val keywords = listOf("flac", "lossless", "hi-res", "high")
+        return urls.minByOrNull { url ->
+            val low = url.lowercase()
+            keywords.indexOfFirst { low.contains(it) }.let { if (it == -1) 999 else it }
+        } ?: urls.first()
     }
 
     /** Pull a streamable URL out of the varied community-response shapes. */
