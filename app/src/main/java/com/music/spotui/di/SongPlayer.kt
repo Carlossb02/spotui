@@ -247,7 +247,7 @@ object SongPlayer {
                 withContext(Dispatchers.Main) {
                     if (currentRequest != song) return@withContext
                     ensurePlayer(appContext)
-                    player!!.setMediaItem(buildMediaItem(streamUrl))
+                    player!!.setMediaItem(buildMediaItem(streamUrl, flac = isFlacStream(streamUrl)))
                     player!!.prepare()
                     // Restored session: continue from where the last run stopped.
                     if (song == restoreQuery && restorePositionMs > 0) {
@@ -265,7 +265,7 @@ object SongPlayer {
 
     // Build a MediaItem carrying the current track's metadata so the system media
     // notification (MediaSession) shows the right title / artist / artwork.
-    private fun buildMediaItem(streamUrl: String): MediaItem {
+    private fun buildMediaItem(streamUrl: String, flac: Boolean = false): MediaItem {
         val metadata = androidx.media3.common.MediaMetadata.Builder()
             .setTitle(metaTitle)
             .setArtist(metaArtist)
@@ -273,9 +273,17 @@ object SongPlayer {
             .build()
         return MediaItem.Builder()
             .setUri(streamUrl)
+            // Hint the FLAC container so ExoPlayer uses the FLAC extractor directly
+            // even when the URL has no .flac extension / audio/flac content-type.
+            .apply { if (flac) setMimeType(androidx.media3.common.MimeTypes.AUDIO_FLAC) }
             .setMediaMetadata(metadata)
             .build()
     }
+
+    /** True when the resolved stream is a FLAC (lossless source or a .flac URL/file). */
+    private fun isFlacStream(streamUrl: String): Boolean =
+        currentSource.startsWith("Lossless") ||
+            streamUrl.substringBefore('?').endsWith(".flac", ignoreCase = true)
 
     /** Warm the cache for an upcoming track (e.g. the next/previous queue item). */
     fun prefetch(song: String, context: Context) {
@@ -284,6 +292,10 @@ object SongPlayer {
         // No point resolving YouTube streams while Spotify web is the engine — it's
         // wasted network/CPU that competes with the streaming audio (caused stutter).
         if (webPlaybackActive()) return
+        // Lossless FLAC URLs from the backends are short-lived / single-use. Caching
+        // one now + preloading a partial intro makes playback stop after ~30s when the
+        // continuation hits a stale URL, so resolve those fresh at play time instead.
+        if (losslessStreaming && com.music.spotui.data.preferences.currentStreamingQuality(appContext).lossless) return
         scope.launch {
             val url = runCatching { resolveStreamUrl(song, appContext) }.getOrNull()
             if (url != null) cacheIntro(url, appContext)

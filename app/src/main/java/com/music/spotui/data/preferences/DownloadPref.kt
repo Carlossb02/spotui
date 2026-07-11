@@ -103,44 +103,45 @@ private fun sanitizeFileName(name: String): String =
 fun exportDownloads(context: Context): Pair<Int, String> {
     val entries = getDownloadedEntries(context).filter { it.second.isNotBlank() && File(it.second).exists() }
     if (entries.isEmpty()) return 0 to "No downloaded files to export"
-
-    val relDir = "${Environment.DIRECTORY_MUSIC}/spotui"
-    var count = 0
-    for ((song, path) in entries) {
-        val src = File(path)
-        val ext = src.extension.ifBlank { "flac" }
-        val mime = when (ext.lowercase()) {
-            "flac" -> "audio/flac"
-            "m4a", "mp4" -> "audio/mp4"
-            "mp3" -> "audio/mpeg"
-            else -> "audio/*"
-        }
-        val displayName = "${sanitizeFileName("${song.singer} - ${song.title}")}.$ext"
-        runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val values = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-                    put(MediaStore.MediaColumns.MIME_TYPE, mime)
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, relDir)
-                }
-                val uri = context.contentResolver.insert(
-                    MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values,
-                ) ?: return@runCatching
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    src.inputStream().use { it.copyTo(out) }
-                } ?: return@runCatching
-                count++
-            } else {
-                val dir = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
-                    "spotui",
-                ).apply { mkdirs() }
-                src.inputStream().use { input ->
-                    File(dir, displayName).outputStream().use { input.copyTo(it) }
-                }
-                count++
-            }
-        }
-    }
+    val count = entries.count { (song, path) -> exportFile(context, song, path) }
     return count to "Music/spotui"
 }
+
+/** Export a single downloaded track to public Music/spotui. Returns true on success. */
+fun exportDownload(context: Context, song: SongsModel): Boolean {
+    val path = getDownloadedEntries(context).firstOrNull { it.first.id == song.id }?.second
+        ?.takeIf { it.isNotBlank() && File(it).exists() } ?: return false
+    return exportFile(context, song, path)
+}
+
+/** Copy one private download file into shared Music/spotui as "Artist - Title.<ext>". */
+private fun exportFile(context: Context, song: SongsModel, path: String): Boolean = runCatching {
+    val src = File(path)
+    if (!src.exists()) return false
+    val ext = src.extension.ifBlank { "flac" }
+    val mime = when (ext.lowercase()) {
+        "flac" -> "audio/flac"
+        "m4a", "mp4" -> "audio/mp4"
+        "mp3" -> "audio/mpeg"
+        else -> "audio/*"
+    }
+    val displayName = "${sanitizeFileName("${song.singer} - ${song.title}")}.$ext"
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+            put(MediaStore.MediaColumns.MIME_TYPE, mime)
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/spotui")
+        }
+        val uri = context.contentResolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
+            ?: return false
+        context.contentResolver.openOutputStream(uri)?.use { out ->
+            src.inputStream().use { it.copyTo(out) }
+        } ?: return false
+    } else {
+        val dir = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "spotui",
+        ).apply { mkdirs() }
+        src.inputStream().use { input -> File(dir, displayName).outputStream().use { input.copyTo(it) } }
+    }
+    true
+}.getOrDefault(false)

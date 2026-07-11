@@ -40,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.music.spotui.R
 import androidx.compose.ui.res.vectorResource
+import kotlinx.coroutines.launch
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -174,6 +175,27 @@ fun SongOptionsSheet(
                     com.music.spotui.di.SongPlayer.downloadSong(song, context) { ok ->
                         downloadingNow = false
                         downloaded = ok
+                    }
+                }
+            }
+            if (downloaded) {
+                SongMenuRow(
+                    icon = ImageVector.vectorResource(R.drawable.ic_download),
+                    label = "Export to Music",
+                ) {
+                    onDismiss()
+                    // Detached scope + app context so the copy + toast survive the
+                    // sheet closing (a rememberCoroutineScope would be cancelled).
+                    val app = context.applicationContext
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        val ok = com.music.spotui.data.preferences.exportDownload(app, song)
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            android.widget.Toast.makeText(
+                                app,
+                                if (ok) "Saved to Music/spotui" else "Export failed",
+                                android.widget.Toast.LENGTH_SHORT,
+                            ).show()
+                        }
                     }
                 }
             }
