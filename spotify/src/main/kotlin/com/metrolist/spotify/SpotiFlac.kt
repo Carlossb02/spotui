@@ -14,6 +14,7 @@ import io.ktor.http.contentType
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -70,7 +71,11 @@ object SpotiFlac {
     // These proxy TIDAL and return a lossless FLAC URL for a TIDAL track id —
     // no user account or subscription needed. Instances are frequently up/down,
     // so we fail over across the list. (github.com/monochrome-music/monochrome)
-    // Hi-Fi API instances (from monochrome INSTANCES.md).
+    // Live JSON list of currently-up Hi-Fi API instances (fetched at runtime).
+    private const val HIFI_UPTIME_URL = "https://tidal-uptime.geeked.wtf"
+
+    // Static fallback Hi-Fi API instances (from monochrome INSTANCES.md + community).
+    // The live uptime list is merged in front of this so the pool stays fresh/large.
     private val TIDAL_MONOCHROME_INSTANCES = listOf(
         "https://api.monochrome.tf",
         "https://monochrome-api.samidy.com",
@@ -81,7 +86,47 @@ object SpotiFlac {
         "https://katze.qqdl.site",
         "https://hund.qqdl.site",
         "https://tidal.kinoplus.online",
+        "https://eu-central.monochrome.tf",
+        "https://us-west.monochrome.tf",
+        "https://arran.monochrome.tf",
+        "https://triton.squid.wtf",
     )
+
+    // Cache the live instance list for a few minutes so we don't refetch per track.
+    @Volatile private var cachedInstances: List<String>? = null
+    @Volatile private var cachedInstancesAt: Long = 0L
+
+    /**
+     * Current Hi-Fi API instances: the live "up" list from the uptime tracker merged
+     * in front of the static fallback. Cached for 5 minutes. This is what lets the
+     * resolver reach as many working providers as possible without a rebuild.
+     */
+    private suspend fun monochromeInstances(): List<String> {
+        cachedInstances?.let {
+            if (System.currentTimeMillis() - cachedInstancesAt < 5 * 60_000L) return it
+        }
+        val live = runCatching {
+            val resp = client.get(HIFI_UPTIME_URL) { header("User-Agent", UA) }
+            if (resp.status.value !in 200..299) return@runCatching emptyList<String>()
+            val root = json.parseToJsonElement(resp.bodyAsText()).jsonObject
+            val arr = (root["api"] as? JsonArray) ?: (root["apis"] as? JsonArray)
+                ?: (root["instances"] as? JsonArray) ?: JsonArray(emptyList())
+            arr.mapNotNull { el ->
+                when (el) {
+                    is JsonObject -> {
+                        val up = el["up"]?.jsonPrimitive?.booleanOrNull
+                            ?: el["online"]?.jsonPrimitive?.booleanOrNull ?: true
+                        if (up) el["url"]?.jsonPrimitive?.contentOrNull else null
+                    }
+                    else -> el.jsonPrimitive.contentOrNull
+                }
+            }.mapNotNull { it.takeIf { u -> u.startsWith("http") }?.trimEnd('/') }
+        }.getOrNull().orEmpty()
+        return (live + TIDAL_MONOCHROME_INSTANCES).distinct().also {
+            cachedInstances = it
+            cachedInstancesAt = System.currentTimeMillis()
+        }
+    }
 
     // ── Qobuz public API (for ISRC -> qobuz track id) ────────────────────────
     private const val QOBUZ_APP_ID = "712109809"
@@ -274,7 +319,7 @@ object SpotiFlac {
      */
     private suspend fun resolveTidalMonochrome(tidalId: String, @Suppress("UNUSED_PARAMETER") preferHiRes: Boolean): Result {
         var sawError = false
-        for (base in TIDAL_MONOCHROME_INSTANCES) {
+        for (base in monochromeInstances()) {
             // Instances run one of two API versions, so try both endpoint styles.
             flacViaTrackManifests(base, tidalId)?.let {
                 log("D", "tidal FLAC via $base/trackManifests")
