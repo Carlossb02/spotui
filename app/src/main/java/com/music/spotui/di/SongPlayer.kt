@@ -727,7 +727,7 @@ object SongPlayer {
         }.getOrNull()
         val flac = when (
             val r = com.metrolist.spotify.SpotiFlac.resolve(
-                song.spotifyTrackId, isrc, preferHiRes = losslessHiRes, singleFileOnly = true,
+                song.spotifyTrackId, isrc, preferHiRes = losslessHiRes,
             )
         ) {
             is com.metrolist.spotify.SpotiFlac.Result.Success -> r.track
@@ -737,13 +737,18 @@ object SongPlayer {
             }
             else -> return false
         }
-        // Segmented DASH can't be saved as a single .flac — let the caller fall back.
-        if (flac.container == "dash") return false
 
         val dir = java.io.File(appContext.filesDir, "downloads").apply { mkdirs() }
         val outFile = java.io.File(dir, "${song.id}.flac")
         val tmpFile = java.io.File(dir, "${song.id}.flacpart")
-        if (!httpDownloadRanged(flac.url, tmpFile, song.url)) {
+        // TIDAL lossless is segmented DASH — remux the segments into a real .flac;
+        // single-file providers (Qobuz) download directly.
+        val ok = if (flac.container == "dash") {
+            com.metrolist.spotify.SpotiFlac.downloadDashFlacToFile(flac.url, tmpFile)
+        } else {
+            httpDownloadRanged(flac.url, tmpFile, song.url)
+        }
+        if (!ok) {
             Log.e(TAG, "FLAC download failed for ${song.title}: $lastDownloadError")
             runCatching { tmpFile.delete() }
             return false

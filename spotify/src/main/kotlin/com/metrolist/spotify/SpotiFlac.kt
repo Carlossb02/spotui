@@ -9,6 +9,7 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
+import io.ktor.client.statement.readBytes
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import kotlinx.serialization.json.Json
@@ -161,9 +162,6 @@ object SpotiFlac {
         spotifyTrackId: String,
         isrc: String?,
         preferHiRes: Boolean = true,
-        // Downloads need one saveable file, so skip segmented DASH results (TIDAL
-        // lossless) and let a single-file community proxy answer instead.
-        singleFileOnly: Boolean = false,
     ): Result {
         val quality = if (preferHiRes) "24" else "16"
         val ids = runCatching { resolveProviderIds(spotifyTrackId, isrc) }
@@ -180,9 +178,7 @@ object SpotiFlac {
         ids.tidalId?.takeIf { it.isNotBlank() }?.let { tidalId ->
             sawMatch = true
             when (val r = resolveTidalMonochrome(tidalId, preferHiRes)) {
-                // For downloads, a DASH result isn't a single saveable file — fall
-                // through to a single-file community proxy instead of returning it.
-                is Result.Success -> if (!(singleFileOnly && r.track.container == "dash")) return r
+                is Result.Success -> return r
                 is Result.Cooldown -> sawCooldown = r.message
                 is Result.Error -> log("W", "tidal (monochrome) error: ${r.message}")
                 is Result.NotFound -> Unit
@@ -199,8 +195,7 @@ object SpotiFlac {
             if (id.isNullOrBlank()) continue
             sawMatch = true
             when (val r = communityDownload(provider, base, id, quality)) {
-                // Downloads need a single saveable file — skip DASH (TIDAL) results.
-                is Result.Success -> if (!(singleFileOnly && r.track.container == "dash")) return r
+                is Result.Success -> return r
                 is Result.Cooldown -> sawCooldown = r.message
                 is Result.NotFound -> Unit
                 is Result.Error -> log("W", "$provider error: ${r.message}")
@@ -525,6 +520,111 @@ object SpotiFlac {
             }
         }
         return null
+    }
+
+    /**
+     * Download a TIDAL DASH-FLAC stream and remux it into a real single `.flac` file
+     * — no ffmpeg. The DASH segments are fragmented MP4 carrying raw FLAC frames, so:
+     *   1. take STREAMINFO from the init segment's `dfLa` box,
+     *   2. concatenate every media segment's `mdat` payload (the FLAC frames),
+     *   3. write `fLaC` + STREAMINFO metadata block + frames.
+     * [streamUrl] is the `data:application/dash+xml;base64,…` URI the resolver returns
+     * for TIDAL. Returns true on success.
+     */
+    suspend fun downloadDashFlacToFile(streamUrl: String, outFile: java.io.File): Boolean = runCatching {
+        val mpd = dashMpdFromUrl(streamUrl) ?: return false
+        val initUrl = htmlUnescape(Regex("initialization=\"([^\"]+)\"").find(mpd)?.groupValues?.get(1) ?: return false)
+        val mediaTmpl = htmlUnescape(Regex("media=\"([^\"]+)\"").find(mpd)?.groupValues?.get(1) ?: return false)
+        val startNumber = Regex("startNumber=\"(\\d+)\"").find(mpd)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+        val segCount = dashSegmentCount(mpd)
+        if (segCount <= 0) return false
+
+        val initBytes = httpBytes(initUrl) ?: return false
+        val streamInfo = flacStreamInfoFromInit(initBytes) ?: return false
+
+        java.io.BufferedOutputStream(java.io.FileOutputStream(outFile)).use { out ->
+            out.write(byteArrayOf(0x66, 0x4c, 0x61, 0x43)) // "fLaC"
+            // metadata block header: last-block(0x80) | STREAMINFO(0) + 24-bit length
+            out.write(0x80)
+            out.write((streamInfo.size ushr 16) and 0xFF)
+            out.write((streamInfo.size ushr 8) and 0xFF)
+            out.write(streamInfo.size and 0xFF)
+            out.write(streamInfo)
+            for (n in startNumber until startNumber + segCount) {
+                val seg = httpBytes(mediaTmpl.replace("\$Number\$", n.toString())) ?: return false
+                writeMdatPayloads(seg, out)
+            }
+        }
+        log("D", "tidal DASH remuxed to FLAC (${segCount} segments)")
+        true
+    }.getOrElse { log("W", "DASH remux failed: ${it.message}"); runCatching { outFile.delete() }; false }
+
+    private fun dashMpdFromUrl(url: String): String? = when {
+        url.startsWith("data:application/dash+xml;base64,") ->
+            runCatching { String(java.util.Base64.getMimeDecoder().decode(url.substringAfter("base64,"))) }.getOrNull()
+        url.contains("<MPD") -> url
+        else -> null
+    }
+
+    /** Segment count from a SegmentTimeline (`<S d= r=/>`; r is a repeat count). */
+    private fun dashSegmentCount(mpd: String): Int {
+        var total = 0
+        for (m in Regex("<S\\b[^>]*/?>").findAll(mpd)) {
+            total += 1 + (Regex("\\br=\"(\\d+)\"").find(m.value)?.groupValues?.get(1)?.toIntOrNull() ?: 0)
+        }
+        return total
+    }
+
+    /** Pull the 34-byte STREAMINFO out of an init segment's `dfLa` box. */
+    private fun flacStreamInfoFromInit(init: ByteArray): ByteArray? {
+        val tag = byteArrayOf(0x64, 0x66, 0x4c, 0x61) // "dfLa"
+        val k = indexOf(init, tag)
+        if (k < 0 || k + 12 > init.size) return null
+        // after dfLa(4) + FullBox(4): metadata block header(4) then STREAMINFO
+        val len = ((init[k + 9].toInt() and 0xFF) shl 16) or
+            ((init[k + 10].toInt() and 0xFF) shl 8) or (init[k + 11].toInt() and 0xFF)
+        if (len <= 0 || k + 12 + len > init.size) return null
+        return init.copyOfRange(k + 12, k + 12 + len)
+    }
+
+    /** Append every `mdat` box payload (the FLAC frames) from an MP4 fragment. */
+    private fun writeMdatPayloads(seg: ByteArray, out: java.io.OutputStream) {
+        var i = 0
+        while (i + 8 <= seg.size) {
+            var size = ((seg[i].toLong() and 0xFF) shl 24) or ((seg[i + 1].toLong() and 0xFF) shl 16) or
+                ((seg[i + 2].toLong() and 0xFF) shl 8) or (seg[i + 3].toLong() and 0xFF)
+            var hdr = 8
+            if (size == 1L) {
+                if (i + 16 > seg.size) break
+                size = (0..7).fold(0L) { acc, b -> (acc shl 8) or (seg[i + 8 + b].toLong() and 0xFF) }
+                hdr = 16
+            } else if (size == 0L) {
+                size = (seg.size - i).toLong()
+            }
+            if (size < hdr) break
+            if (seg[i + 4] == 0x6D.toByte() && seg[i + 5] == 0x64.toByte() &&
+                seg[i + 6] == 0x61.toByte() && seg[i + 7] == 0x74.toByte() // "mdat"
+            ) {
+                out.write(seg, i + hdr, (size - hdr).toInt())
+            }
+            i += size.toInt()
+        }
+    }
+
+    private suspend fun httpBytes(url: String): ByteArray? = runCatching {
+        val r = client.get(url) { header("User-Agent", UA) }
+        if (r.status.value !in 200..299) null else r.readBytes()
+    }.getOrNull()
+
+    private fun htmlUnescape(s: String): String =
+        s.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
+
+    private fun indexOf(haystack: ByteArray, needle: ByteArray): Int {
+        outer@ for (i in 0..haystack.size - needle.size) {
+            for (j in needle.indices) if (haystack[i + j] != needle[j]) continue@outer
+            return i
+        }
+        return -1
     }
 
     private fun md5Hex(s: String): String =
