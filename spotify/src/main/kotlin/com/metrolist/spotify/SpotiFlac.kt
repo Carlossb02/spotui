@@ -199,7 +199,8 @@ object SpotiFlac {
             if (id.isNullOrBlank()) continue
             sawMatch = true
             when (val r = communityDownload(provider, base, id, quality)) {
-                is Result.Success -> return r
+                // Downloads need a single saveable file — skip DASH (TIDAL) results.
+                is Result.Success -> if (!(singleFileOnly && r.track.container == "dash")) return r
                 is Result.Cooldown -> sawCooldown = r.message
                 is Result.NotFound -> Unit
                 is Result.Error -> log("W", "$provider error: ${r.message}")
@@ -325,11 +326,11 @@ object SpotiFlac {
             return Result.Error("$provider HTTP ${response.status.value}")
         }
 
-        val url = extractStreamUrl(bodyText)
-            ?: return Result.NotFound.also { log("W", "$provider: no url in response") }
+        val track = communityTrackFrom(bodyText, provider, quality)
+            ?: return Result.NotFound.also { log("W", "$provider: no usable url in response") }
         val q = if (quality == "24") "24-bit" else "16-bit"
-        log("D", "$provider FLAC resolved ($q)")
-        return Result.Success(LosslessTrack(url = url, provider = provider, quality = quality))
+        log("D", "$provider FLAC resolved ($q, ${track.container})")
+        return Result.Success(track)
     }
 
     /**
@@ -485,15 +486,43 @@ object SpotiFlac {
     }
 
     /** Pull a streamable URL out of the varied community-response shapes. */
-    private fun extractStreamUrl(body: String): String? {
+    /**
+     * Turn a community `/api/dl` response into a playable track. The `url` field is
+     * either a direct http(s) FLAC URL, or `MANIFEST:<base64>` carrying a TIDAL
+     * manifest — a BTS JSON (single-file FLAC) or a DASH `<MPD>` (segmented). For
+     * DASH we hand ExoPlayer a `data:application/dash+xml` URI (its segment URLs are
+     * absolute CDN links), skipping <45s previews.
+     */
+    private fun communityTrackFrom(body: String, provider: String, quality: String): LosslessTrack? {
         if (body.isBlank()) return null
         val obj = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return null
-        fun JsonObject.url(key: String) = this[key]?.jsonPrimitive?.contentOrNull?.takeIf { it.startsWith("http") }
-        obj.url("url")?.let { return it }
-        obj.url("download_url")?.let { return it }
-        obj["data"]?.let { it as? JsonObject }?.let { data ->
-            data.url("url")?.let { return it }
-            data.url("download_url")?.let { return it }
+        fun JsonObject.raw(key: String) = this[key]?.jsonPrimitive?.contentOrNull
+        val rawUrl = obj.raw("url") ?: obj.raw("download_url")
+            ?: (obj["data"] as? JsonObject)?.let { it.raw("url") ?: it.raw("download_url") }
+            ?: return null
+
+        if (rawUrl.startsWith("http")) {
+            return LosslessTrack(url = rawUrl, provider = provider, quality = quality, container = "flac")
+        }
+        if (rawUrl.startsWith("MANIFEST:")) {
+            val b64 = rawUrl.substring("MANIFEST:".length).trim()
+            val decoded = runCatching {
+                String(java.util.Base64.getMimeDecoder().decode(b64))
+            }.getOrNull() ?: return null
+            if (decoded.contains("<MPD")) {
+                val durSec = mpdDurationSeconds(decoded)
+                if (durSec != null && durSec < 45.0) {
+                    log("W", "$provider manifest is a ${durSec.toInt()}s preview — skipping")
+                    return null
+                }
+                return LosslessTrack(
+                    url = "data:application/dash+xml;base64,$b64",
+                    provider = provider, quality = quality, container = "dash",
+                )
+            }
+            return flacUrlFromManifest(decoded)?.let {
+                LosslessTrack(url = it, provider = provider, quality = quality, container = "flac")
+            }
         }
         return null
     }

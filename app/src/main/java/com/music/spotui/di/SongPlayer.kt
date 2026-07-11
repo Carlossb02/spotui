@@ -285,7 +285,8 @@ object SongPlayer {
     private fun streamMimeType(streamUrl: String): String? {
         val bare = streamUrl.substringBefore('?').lowercase()
         return when {
-            bare.endsWith(".mpd") || streamUrl.contains("manifest.tidal.com") || streamUrl.contains("/manifests/") ->
+            streamUrl.startsWith("data:application/dash+xml") ||
+                bare.endsWith(".mpd") || streamUrl.contains("manifest.tidal.com") || streamUrl.contains("/manifests/") ->
                 androidx.media3.common.MimeTypes.APPLICATION_MPD
             bare.endsWith(".flac") || currentSource.startsWith("Lossless") ->
                 androidx.media3.common.MimeTypes.AUDIO_FLAC
