@@ -70,19 +70,17 @@ object SpotiFlac {
     // These proxy TIDAL and return a lossless FLAC URL for a TIDAL track id —
     // no user account or subscription needed. Instances are frequently up/down,
     // so we fail over across the list. (github.com/monochrome-music/monochrome)
+    // Hi-Fi API instances (from monochrome INSTANCES.md).
     private val TIDAL_MONOCHROME_INSTANCES = listOf(
         "https://api.monochrome.tf",
-        "https://eu-central.monochrome.tf",
-        "https://us-west.monochrome.tf",
-        "https://arran.monochrome.tf",
-        "https://triton.squid.wtf",
+        "https://monochrome-api.samidy.com",
+        "https://hifi.geeked.wtf",
+        "https://wolf.qqdl.site",
         "https://maus.qqdl.site",
         "https://vogel.qqdl.site",
         "https://katze.qqdl.site",
         "https://hund.qqdl.site",
-        "https://wolf.qqdl.site",
         "https://tidal.kinoplus.online",
-        "https://monochrome-api.samidy.com",
     )
 
     // ── Qobuz public API (for ISRC -> qobuz track id) ────────────────────────
@@ -266,69 +264,112 @@ object SpotiFlac {
     }
 
     /**
-     * Resolve a TIDAL track id to a direct FLAC URL via the monochrome / squid.wtf
-     * public backends. Tries hi-res first (falls back to CD-quality LOSSLESS, which
-     * yields a single-file FLAC URL), failing over across instances.
+     * Resolve a TIDAL track id to a direct FLAC URL via the monochrome Hi-Fi API,
+     * failing over across instances. Two-step flow (matches monochrome's client):
+     *   1. GET /trackManifests/?id=&quality=LOSSLESS&adaptive=false&formats=FLAC
+     *      → JSON with `data.data.attributes.uri` = a signed manifest URL.
+     *   2. GET that uri → a BTS manifest (`{"urls":[...]}`) whose first url is a
+     *      single-file FLAC. (Hi-res returns a segmented DASH `<MPD>` we can't use
+     *      as one URL, so we request LOSSLESS for a directly-playable stream.)
      */
-    private suspend fun resolveTidalMonochrome(tidalId: String, preferHiRes: Boolean): Result {
-        val qualities = if (preferHiRes) listOf("HI_RES_LOSSLESS", "LOSSLESS") else listOf("LOSSLESS")
+    private suspend fun resolveTidalMonochrome(tidalId: String, @Suppress("UNUSED_PARAMETER") preferHiRes: Boolean): Result {
         var sawError = false
         for (base in TIDAL_MONOCHROME_INSTANCES) {
-            for (quality in qualities) {
-                val resp = runCatching {
-                    client.get("$base/track/") {
-                        parameter("id", tidalId)
-                        parameter("quality", quality)
-                        parameter("country", "US")
-                        header("User-Agent", UA)
-                        header("Accept", "application/json")
-                    }
-                }.getOrNull()
-                if (resp == null || resp.status.value !in 200..299) {
-                    sawError = true
-                    continue
-                }
-                val body = runCatching { resp.bodyAsText() }.getOrDefault("")
-                val url = extractTidalFlacUrl(body)
-                if (url != null) {
-                    val q = if (quality == "HI_RES_LOSSLESS") "24" else "16"
-                    log("D", "tidal (monochrome) FLAC resolved via $base ($quality)")
-                    return Result.Success(LosslessTrack(url = url, provider = "tidal", quality = q))
-                }
+            // Instances run one of two API versions, so try both endpoint styles.
+            flacViaTrackManifests(base, tidalId)?.let {
+                log("D", "tidal FLAC via $base/trackManifests")
+                return Result.Success(LosslessTrack(url = it, provider = "tidal", quality = "16"))
             }
+            flacViaTrack(base, tidalId)?.let {
+                log("D", "tidal FLAC via $base/track")
+                return Result.Success(LosslessTrack(url = it, provider = "tidal", quality = "16"))
+            }
+            sawError = true
         }
         return if (sawError) Result.Error("Tidal backends unavailable") else Result.NotFound
     }
 
-    /**
-     * Pull a single FLAC URL out of a monochrome `/track` response: either a direct
-     * `OriginalTrackUrl`, or a base64 `manifest` that decodes to `{"urls":[...]}`.
-     * Segmented DASH (`<MPD…`) manifests can't be used as a single URL, so we skip
-     * them (the caller then falls back to CD-quality LOSSLESS).
-     */
-    private fun extractTidalFlacUrl(body: String): String? {
-        if (body.isBlank()) return null
+    /** New Hi-Fi API: /trackManifests → signed manifest uri → FLAC url. */
+    private suspend fun flacViaTrackManifests(base: String, tidalId: String): String? {
+        val lookup = runCatching {
+            client.get("$base/trackManifests/") {
+                parameter("id", tidalId)
+                parameter("quality", "LOSSLESS")
+                parameter("adaptive", "false")
+                parameter("formats", "FLAC")
+                header("User-Agent", UA)
+                header("Accept", "application/json")
+            }
+        }.getOrNull() ?: return null
+        if (lookup.status.value !in 200..299) return null
+        val manifestUri = extractManifestUri(runCatching { lookup.bodyAsText() }.getOrDefault("")) ?: return null
+        val manifestResp = runCatching { client.get(manifestUri) { header("User-Agent", UA) } }.getOrNull() ?: return null
+        if (manifestResp.status.value !in 200..299) return null
+        return flacUrlFromManifest(runCatching { manifestResp.bodyAsText() }.getOrDefault(""))
+    }
+
+    /** Older hifi-api: /track/?id=&quality=LOSSLESS → OriginalTrackUrl or inline manifest. */
+    private suspend fun flacViaTrack(base: String, tidalId: String): String? {
+        val resp = runCatching {
+            client.get("$base/track/") {
+                parameter("id", tidalId)
+                parameter("quality", "LOSSLESS")
+                parameter("country", "US")
+                header("User-Agent", UA)
+                header("Accept", "application/json")
+            }
+        }.getOrNull() ?: return null
+        if (resp.status.value !in 200..299) return null
+        val body = runCatching { resp.bodyAsText() }.getOrDefault("")
         val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return null
         val data = (root["data"] as? JsonObject) ?: root
         fun JsonObject.httpUrl(key: String) =
             this[key]?.jsonPrimitive?.contentOrNull?.takeIf { it.startsWith("http") }
-
         data.httpUrl("OriginalTrackUrl")?.let { return it }
         data.httpUrl("originalTrackUrl")?.let { return it }
         data.httpUrl("url")?.let { return it }
+        val manifest = (data["manifest"] ?: root["manifest"])?.jsonPrimitive?.contentOrNull ?: return null
+        val decoded = runCatching { String(java.util.Base64.getMimeDecoder().decode(manifest)) }.getOrElse { manifest }
+        return flacUrlFromManifest(decoded)
+    }
 
-        val manifest = (data["manifest"] ?: root["manifest"])?.jsonPrimitive?.contentOrNull
-            ?: return null
-        val decoded = runCatching {
-            String(java.util.Base64.getMimeDecoder().decode(manifest))
-        }.getOrElse { manifest }
-        if (decoded.contains("<MPD")) return null // segmented DASH — not a single URL
-        val urls = runCatching {
-            (json.parseToJsonElement(decoded).jsonObject["urls"] as? JsonArray)
+    /** Pull `attributes.uri` (the signed manifest URL) out of a /trackManifests response. */
+    private fun extractManifestUri(body: String): String? {
+        if (body.isBlank()) return null
+        val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return null
+        val candidates = listOf(
+            root["data"]?.let { it as? JsonObject }?.get("data")?.let { it as? JsonObject },
+            root["data"]?.let { it as? JsonObject },
+            root,
+        )
+        for (node in candidates) {
+            val uri = (node?.get("attributes") as? JsonObject)
+                ?.get("uri")?.jsonPrimitive?.contentOrNull
+            if (!uri.isNullOrBlank() && uri.startsWith("http")) return uri
+        }
+        return null
+    }
+
+    /**
+     * Extract a single FLAC URL from a fetched TIDAL manifest. LOSSLESS uses a BTS
+     * JSON manifest `{"mimeType":"audio/flac","urls":[...]}`; segmented DASH (`<MPD>`)
+     * can't be a single URL so we skip it. Some instances base64-wrap the JSON.
+     */
+    private fun flacUrlFromManifest(manifestText: String): String? {
+        if (manifestText.isBlank() || manifestText.contains("<MPD")) return null
+        fun urlsFrom(text: String): List<String> = runCatching {
+            (json.parseToJsonElement(text).jsonObject["urls"] as? JsonArray)
                 ?.mapNotNull { it.jsonPrimitive.contentOrNull }
         }.getOrNull().orEmpty()
-        if (urls.isNotEmpty()) return pickBestLosslessUrl(urls)
-        return Regex("https?://[^\"\\s]+").find(decoded)?.value
+
+        urlsFrom(manifestText).takeIf { it.isNotEmpty() }?.let { return pickBestLosslessUrl(it) }
+        val decoded = runCatching {
+            String(java.util.Base64.getMimeDecoder().decode(manifestText.trim()))
+        }.getOrNull()
+        if (decoded != null && !decoded.contains("<MPD")) {
+            urlsFrom(decoded).takeIf { it.isNotEmpty() }?.let { return pickBestLosslessUrl(it) }
+        }
+        return Regex("https?://[^\"\\s]+").find(manifestText)?.value
     }
 
     /** Prefer FLAC / lossless URLs when a manifest offers several. */
