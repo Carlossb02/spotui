@@ -247,7 +247,7 @@ object SongPlayer {
                 withContext(Dispatchers.Main) {
                     if (currentRequest != song) return@withContext
                     ensurePlayer(appContext)
-                    player!!.setMediaItem(buildMediaItem(streamUrl, flac = isFlacStream(streamUrl)))
+                    player!!.setMediaItem(buildMediaItem(streamUrl, streamMimeType(streamUrl)))
                     player!!.prepare()
                     // Restored session: continue from where the last run stopped.
                     if (song == restoreQuery && restorePositionMs > 0) {
@@ -265,7 +265,7 @@ object SongPlayer {
 
     // Build a MediaItem carrying the current track's metadata so the system media
     // notification (MediaSession) shows the right title / artist / artwork.
-    private fun buildMediaItem(streamUrl: String, flac: Boolean = false): MediaItem {
+    private fun buildMediaItem(streamUrl: String, mimeType: String? = null): MediaItem {
         val metadata = androidx.media3.common.MediaMetadata.Builder()
             .setTitle(metaTitle)
             .setArtist(metaArtist)
@@ -273,17 +273,25 @@ object SongPlayer {
             .build()
         return MediaItem.Builder()
             .setUri(streamUrl)
-            // Hint the FLAC container so ExoPlayer uses the FLAC extractor directly
-            // even when the URL has no .flac extension / audio/flac content-type.
-            .apply { if (flac) setMimeType(androidx.media3.common.MimeTypes.AUDIO_FLAC) }
+            // Hint the container so ExoPlayer picks the right source/extractor even
+            // when the URL has no extension: TIDAL lossless is a DASH .mpd manifest,
+            // and single-file lossless is FLAC.
+            .apply { if (mimeType != null) setMimeType(mimeType) }
             .setMediaMetadata(metadata)
             .build()
     }
 
-    /** True when the resolved stream is a FLAC (lossless source or a .flac URL/file). */
-    private fun isFlacStream(streamUrl: String): Boolean =
-        currentSource.startsWith("Lossless") ||
-            streamUrl.substringBefore('?').endsWith(".flac", ignoreCase = true)
+    /** MIME hint for a resolved stream: DASH manifest, single-file FLAC, or none. */
+    private fun streamMimeType(streamUrl: String): String? {
+        val bare = streamUrl.substringBefore('?').lowercase()
+        return when {
+            bare.endsWith(".mpd") || streamUrl.contains("manifest.tidal.com") || streamUrl.contains("/manifests/") ->
+                androidx.media3.common.MimeTypes.APPLICATION_MPD
+            bare.endsWith(".flac") || currentSource.startsWith("Lossless") ->
+                androidx.media3.common.MimeTypes.AUDIO_FLAC
+            else -> null
+        }
+    }
 
     /** Warm the cache for an upcoming track (e.g. the next/previous queue item). */
     fun prefetch(song: String, context: Context) {
@@ -717,7 +725,9 @@ object SongPlayer {
             com.metrolist.spotify.Spotify.track(song.spotifyTrackId).getOrNull()?.isrc
         }.getOrNull()
         val flac = when (
-            val r = com.metrolist.spotify.SpotiFlac.resolve(song.spotifyTrackId, isrc, preferHiRes = losslessHiRes)
+            val r = com.metrolist.spotify.SpotiFlac.resolve(
+                song.spotifyTrackId, isrc, preferHiRes = losslessHiRes, singleFileOnly = true,
+            )
         ) {
             is com.metrolist.spotify.SpotiFlac.Result.Success -> r.track
             is com.metrolist.spotify.SpotiFlac.Result.Cooldown -> {
@@ -726,6 +736,8 @@ object SongPlayer {
             }
             else -> return false
         }
+        // Segmented DASH can't be saved as a single .flac — let the caller fall back.
+        if (flac.container == "dash") return false
 
         val dir = java.io.File(appContext.filesDir, "downloads").apply { mkdirs() }
         val outFile = java.io.File(dir, "${song.id}.flac")
@@ -1411,7 +1423,7 @@ object SongPlayer {
                     val (sp, sf) = createPlayerWithFilter(ctx, handleAudioFocus = false)
                     secondaryPlayer = sp
                     secondaryPlayerFilter = sf
-                    sp.setMediaItem(buildMediaItem(nextUrl))
+                    sp.setMediaItem(buildMediaItem(nextUrl, streamMimeType(nextUrl)))
                     sp.prepare()
                     sp.volume = 0f
                     sp.playWhenReady = true

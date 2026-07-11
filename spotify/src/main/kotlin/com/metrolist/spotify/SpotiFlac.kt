@@ -161,6 +161,9 @@ object SpotiFlac {
         spotifyTrackId: String,
         isrc: String?,
         preferHiRes: Boolean = true,
+        // Downloads need one saveable file, so skip segmented DASH results (TIDAL
+        // lossless) and let a single-file community proxy answer instead.
+        singleFileOnly: Boolean = false,
     ): Result {
         val quality = if (preferHiRes) "24" else "16"
         val ids = runCatching { resolveProviderIds(spotifyTrackId, isrc) }
@@ -177,7 +180,9 @@ object SpotiFlac {
         ids.tidalId?.takeIf { it.isNotBlank() }?.let { tidalId ->
             sawMatch = true
             when (val r = resolveTidalMonochrome(tidalId, preferHiRes)) {
-                is Result.Success -> return r
+                // For downloads, a DASH result isn't a single saveable file — fall
+                // through to a single-file community proxy instead of returning it.
+                is Result.Success -> if (!(singleFileOnly && r.track.container == "dash")) return r
                 is Result.Cooldown -> sawCooldown = r.message
                 is Result.Error -> log("W", "tidal (monochrome) error: ${r.message}")
                 is Result.NotFound -> Unit
@@ -322,20 +327,20 @@ object SpotiFlac {
         for (base in monochromeInstances()) {
             // Instances run one of two API versions, so try both endpoint styles.
             flacViaTrackManifests(base, tidalId)?.let {
-                log("D", "tidal FLAC via $base/trackManifests")
-                return Result.Success(LosslessTrack(url = it, provider = "tidal", quality = "16"))
+                log("D", "tidal FLAC via $base/trackManifests (${it.container})")
+                return Result.Success(it)
             }
             flacViaTrack(base, tidalId)?.let {
-                log("D", "tidal FLAC via $base/track")
-                return Result.Success(LosslessTrack(url = it, provider = "tidal", quality = "16"))
+                log("D", "tidal FLAC via $base/track (${it.container})")
+                return Result.Success(it)
             }
             sawError = true
         }
         return if (sawError) Result.Error("Tidal backends unavailable") else Result.NotFound
     }
 
-    /** New Hi-Fi API: /trackManifests → signed manifest uri → FLAC url. */
-    private suspend fun flacViaTrackManifests(base: String, tidalId: String): String? {
+    /** New Hi-Fi API: /trackManifests → signed manifest uri → FLAC/DASH stream. */
+    private suspend fun flacViaTrackManifests(base: String, tidalId: String): LosslessTrack? {
         val lookup = runCatching {
             client.get("$base/trackManifests/") {
                 parameter("id", tidalId)
@@ -350,11 +355,11 @@ object SpotiFlac {
         val manifestUri = extractManifestUri(runCatching { lookup.bodyAsText() }.getOrDefault("")) ?: return null
         val manifestResp = runCatching { client.get(manifestUri) { header("User-Agent", UA) } }.getOrNull() ?: return null
         if (manifestResp.status.value !in 200..299) return null
-        return flacUrlFromManifest(runCatching { manifestResp.bodyAsText() }.getOrDefault(""))
+        return trackFromManifest(runCatching { manifestResp.bodyAsText() }.getOrDefault(""), manifestUri)
     }
 
     /** Older hifi-api: /track/?id=&quality=LOSSLESS → OriginalTrackUrl or inline manifest. */
-    private suspend fun flacViaTrack(base: String, tidalId: String): String? {
+    private suspend fun flacViaTrack(base: String, tidalId: String): LosslessTrack? {
         val resp = runCatching {
             client.get("$base/track/") {
                 parameter("id", tidalId)
@@ -370,12 +375,46 @@ object SpotiFlac {
         val data = (root["data"] as? JsonObject) ?: root
         fun JsonObject.httpUrl(key: String) =
             this[key]?.jsonPrimitive?.contentOrNull?.takeIf { it.startsWith("http") }
-        data.httpUrl("OriginalTrackUrl")?.let { return it }
-        data.httpUrl("originalTrackUrl")?.let { return it }
-        data.httpUrl("url")?.let { return it }
+        (data.httpUrl("OriginalTrackUrl") ?: data.httpUrl("originalTrackUrl") ?: data.httpUrl("url"))?.let {
+            return LosslessTrack(url = it, provider = "tidal", quality = "16", container = "flac")
+        }
         val manifest = (data["manifest"] ?: root["manifest"])?.jsonPrimitive?.contentOrNull ?: return null
         val decoded = runCatching { String(java.util.Base64.getMimeDecoder().decode(manifest)) }.getOrElse { manifest }
-        return flacUrlFromManifest(decoded)
+        return flacUrlFromManifest(decoded)?.let {
+            LosslessTrack(url = it, provider = "tidal", quality = "16", container = "flac")
+        }
+    }
+
+    /**
+     * Turn a fetched TIDAL manifest into a playable track. A `<MPD>` is a segmented
+     * DASH stream — we hand the manifest URL itself to ExoPlayer (container "dash").
+     * A BTS JSON manifest yields a single-file FLAC URL (container "flac").
+     */
+    private fun trackFromManifest(manifestText: String, manifestUri: String): LosslessTrack? {
+        if (manifestText.isBlank()) return null
+        if (manifestText.contains("<MPD")) {
+            // Limited/no-subscription backends serve 30-second previews. Reject them
+            // so a full-access backend (or full-length YouTube) is used instead.
+            val durSec = mpdDurationSeconds(manifestText)
+            if (durSec != null && durSec < 45.0) {
+                log("W", "tidal manifest is a ${durSec.toInt()}s preview — skipping")
+                return null
+            }
+            return LosslessTrack(url = manifestUri, provider = "tidal", quality = "16", container = "dash")
+        }
+        return flacUrlFromManifest(manifestText)?.let {
+            LosslessTrack(url = it, provider = "tidal", quality = "16", container = "flac")
+        }
+    }
+
+    /** Parse a DASH `mediaPresentationDuration="PT#H#M#S"` into seconds. */
+    private fun mpdDurationSeconds(mpd: String): Double? {
+        val m = Regex("mediaPresentationDuration=\"PT(?:([0-9]+)H)?(?:([0-9]+)M)?([0-9.]+)S\"").find(mpd)
+            ?: return null
+        val h = m.groupValues[1].toDoubleOrNull() ?: 0.0
+        val min = m.groupValues[2].toDoubleOrNull() ?: 0.0
+        val s = m.groupValues[3].toDoubleOrNull() ?: 0.0
+        return h * 3600 + min * 60 + s
     }
 
     /** Pull `attributes.uri` (the signed manifest URL) out of a /trackManifests response. */
