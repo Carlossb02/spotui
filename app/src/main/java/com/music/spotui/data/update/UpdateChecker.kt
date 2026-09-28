@@ -47,9 +47,14 @@ object UpdateChecker {
 
     private fun fetchLatestRelease(context: Context): UpdateInfo? {
         val repoUrl = getUpdateRepoUrl(context).trimEnd('/')
-        val repoPath = repoUrl.removePrefix("https://github.com/").removePrefix("http://github.com/")
+        val repoPath = repoUrl.removePrefix("https://github.com/")
+            .removePrefix("http://github.com/")
+            .removeSuffix("/releases")
+            .removeSuffix("/releases/latest")
+            .trimEnd('/')
+        val cleanRepoUrl = "https://github.com/$repoPath"
         val apiLatest = "https://api.github.com/repos/$repoPath/releases/latest"
-        val releasesPage = "$repoUrl/releases/latest"
+        val releasesPage = "$cleanRepoUrl/releases/latest"
 
         val request = Request.Builder()
             .url(apiLatest)

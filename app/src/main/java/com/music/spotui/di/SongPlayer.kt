@@ -23,6 +23,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.text.Normalizer
 import kotlin.math.abs
 import kotlin.math.PI
@@ -1453,10 +1455,21 @@ object SongPlayer {
      * playback. Runs on the IO scope; invokes [onComplete] (main thread) with whether
      * it succeeded. No-op if it's already downloaded or downloading.
      */
-    /** Download every track in a list (album/playlist). Each song dedupes and
-     *  reports its own progress via the existing per-song machinery. */
+    private val downloadSemaphore = Semaphore(2)
+
+    /** Download every track in a list (album/playlist) with bounded concurrency (max 2 at a time)
+     *  to prevent network congestion and 0% stalls. */
     fun downloadAll(songs: List<com.music.spotui.data.entity.SongsModel>, context: Context) {
-        songs.forEach { downloadSong(it, context) }
+        val appContext = context.applicationContext
+        scope.launch {
+            songs.forEach { song ->
+                launch {
+                    downloadSemaphore.withPermit {
+                        downloadSongSuspend(song, appContext)
+                    }
+                }
+            }
+        }
     }
 
     /** True once every track in [songs] is downloaded (for the album's "downloaded" state). */
@@ -1471,39 +1484,49 @@ object SongPlayer {
         }
     }
 
+    private suspend fun downloadSongSuspend(
+        song: com.music.spotui.data.entity.SongsModel,
+        appContext: Context,
+    ): Boolean {
+        val query = song.url
+        if (query.isBlank() ||
+            com.music.spotui.data.preferences.isDownloaded(appContext, song.id.toString()) ||
+            !downloading.add(query)
+        ) return true
+        downloadingSongs[query] = song
+        downloadProgress[query] = 0
+        onDownloadsChanged?.invoke()
+        lastDownloadError = null
+        val ok = runCatching { downloadToFile(song, appContext) }
+            .onFailure { lastDownloadError = it.message ?: "Unexpected error" }
+            .getOrDefault(false)
+        downloading.remove(query)
+        downloadProgress.remove(query)
+        downloadingSongs.remove(query)
+        withContext(Dispatchers.Main) {
+            if (!ok) {
+                android.widget.Toast.makeText(
+                    appContext,
+                    "Download failed: ${lastDownloadError ?: "unknown reason"}",
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
+            }
+            onDownloadsChanged?.invoke()
+        }
+        return ok
+    }
+
     fun downloadSong(
         song: com.music.spotui.data.entity.SongsModel,
         context: Context,
         onComplete: (Boolean) -> Unit = {},
     ) {
         val appContext = context.applicationContext
-        val query = song.url
-        if (query.isBlank() ||
-            com.music.spotui.data.preferences.isDownloaded(appContext, song.id.toString()) ||
-            !downloading.add(query)
-        ) return
-        downloadingSongs[query] = song
-        downloadProgress[query] = 0
-        onDownloadsChanged?.invoke()
-        lastDownloadError = null
         scope.launch {
-            val ok = runCatching { downloadToFile(song, appContext) }
-                .onFailure { lastDownloadError = it.message ?: "Unexpected error" }
-                .getOrDefault(false)
-            downloading.remove(query)
-            downloadProgress.remove(query)
-            downloadingSongs.remove(query)
-            withContext(Dispatchers.Main) {
-                if (!ok) {
-                    android.widget.Toast.makeText(
-                        appContext,
-                        "Download failed: ${lastDownloadError ?: "unknown reason"}",
-                        android.widget.Toast.LENGTH_LONG,
-                    ).show()
-                }
-                onDownloadsChanged?.invoke()
-                onComplete(ok)
+            val ok = downloadSemaphore.withPermit {
+                downloadSongSuspend(song, appContext)
             }
+            onComplete(ok)
         }
     }
 

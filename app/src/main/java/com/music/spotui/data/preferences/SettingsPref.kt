@@ -33,7 +33,7 @@ private const val KEY_LIBRARY_GRID = "library_grid_view"
 private const val KEY_AUTO_PLAY = "auto_play_startup"
 private const val KEY_IGNORE_BATTERY_OPT = "ignore_battery_optimization"
 private const val KEY_UPDATE_REPO_URL = "update_repo_url"
-const val DEFAULT_UPDATE_REPO_URL = "https://github.com/H4zh4n/Spotui"
+const val DEFAULT_UPDATE_REPO_URL = "https://github.com/Carlossb02/spotui"
 
 /** Off (0s) … 12s. 0 disables crossfade. */
 const val CROSSFADE_MIN_MS = 0
