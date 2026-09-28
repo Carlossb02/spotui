@@ -1497,9 +1497,19 @@ object SongPlayer {
         downloadProgress[query] = 0
         onDownloadsChanged?.invoke()
         lastDownloadError = null
-        val ok = runCatching { downloadToFile(song, appContext) }
-            .onFailure { lastDownloadError = it.message ?: "Unexpected error" }
-            .getOrDefault(false)
+
+        var ok = false
+        var attempt = 0
+        while (attempt < 3 && !ok) {
+            attempt++
+            ok = runCatching { downloadToFile(song, appContext) }
+                .onFailure { lastDownloadError = it.message ?: "Unexpected error" }
+                .getOrDefault(false)
+            if (!ok && attempt < 3) {
+                delay(1000L)
+            }
+        }
+
         downloading.remove(query)
         downloadProgress.remove(query)
         downloadingSongs.remove(query)

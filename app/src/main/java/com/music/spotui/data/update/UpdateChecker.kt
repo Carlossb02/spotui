@@ -54,24 +54,52 @@ object UpdateChecker {
             .trimEnd('/')
         val cleanRepoUrl = "https://github.com/$repoPath"
         val apiLatest = "https://api.github.com/repos/$repoPath/releases/latest"
+        val apiReleases = "https://api.github.com/repos/$repoPath/releases"
         val releasesPage = "$cleanRepoUrl/releases/latest"
 
         val request = Request.Builder()
             .url(apiLatest)
             .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "Spotui-App")
             .build()
         val response = client.newCall(request).execute()
-        if (!response.isSuccessful) return null
-        val body = response.body?.string() ?: return null
-        val json = JSONObject(body)
-        val tag = json.optString("tag_name").trim()
+        val body = response.body?.string()
+        var json: JSONObject? = null
+
+        if (response.isSuccessful && !body.isNullOrBlank()) {
+            runCatching { json = JSONObject(body) }
+        }
+
+        // Fallback: if /releases/latest failed or returned invalid json, fetch /releases list and pick the first release
+        if (json == null || json.optString("tag_name").trim().isBlank()) {
+            val listRequest = Request.Builder()
+                .url(apiReleases)
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "Spotui-App")
+                .build()
+            val listResponse = client.newCall(listRequest).execute()
+            if (listResponse.isSuccessful) {
+                val listBody = listResponse.body?.string()
+                if (!listBody.isNullOrBlank()) {
+                    runCatching {
+                        val arr = org.json.JSONArray(listBody)
+                        if (arr.length() > 0) {
+                            json = arr.optJSONObject(0)
+                        }
+                    }
+                }
+            }
+        }
+
+        val j = json ?: return null
+        val tag = j.optString("tag_name").trim()
         if (tag.isBlank()) return null
         val version = extractVersion(tag)
             ?: return null
-        val releaseBody = json.optString("body", "")
-        val htmlUrl = json.optString("html_url", releasesPage)
+        val releaseBody = j.optString("body", "")
+        val htmlUrl = j.optString("html_url", releasesPage)
             .ifBlank { releasesPage }
-        val assets = json.optJSONArray("assets")
+        val assets = j.optJSONArray("assets")
         val apkUrl = (0 until (assets?.length() ?: 0))
             .asSequence()
             .mapNotNull { assets?.optJSONObject(it) }
@@ -80,7 +108,7 @@ object UpdateChecker {
         return UpdateInfo(
             version = version,
             downloadUrl = apkUrl?.ifBlank { null } ?: htmlUrl,
-            fingerprint = "${json.optLong("id")}:${json.optString("updated_at")}:$version",
+            fingerprint = "${j.optLong("id")}:${j.optString("updated_at")}:$version",
             releaseBody = releaseBody,
         )
     }

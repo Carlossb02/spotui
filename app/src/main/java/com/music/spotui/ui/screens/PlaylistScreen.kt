@@ -729,6 +729,15 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                         fontWeight = FontWeight.Medium,
                                         maxLines = 1
                                     )
+                                    if (com.music.spotui.data.preferences.isDownloaded(context, song.id.toString())) {
+                                        Spacer(Modifier.width(6.dp))
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = "Downloaded",
+                                            tint = Color(0xFF1DB954),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
                                 }
                                 Text(
                                     text = song.singer,
