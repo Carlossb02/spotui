@@ -186,12 +186,13 @@ fun setAudioProviderOrder(c: Context, order: List<AudioProviderOrderItem>) {
 private const val KEY_DISABLED_AUDIO_PROVIDERS = "disabled_audio_providers"
 
 fun getDisabledAudioProviders(c: Context): Set<String> {
-    return prefs(c).getStringSet(KEY_DISABLED_AUDIO_PROVIDERS, emptySet()) ?: emptySet()
+    val all = AudioProviderOrderItem.values().filter { it != AudioProviderOrderItem.YOUTUBE_MUSIC }.map { it.id }.toSet()
+    return prefs(c).getStringSet(KEY_DISABLED_AUDIO_PROVIDERS, all) ?: all
 }
 
 fun isAudioProviderEnabled(c: Context, providerId: String): Boolean {
     if (providerId == AudioProviderOrderItem.YOUTUBE_MUSIC.id || providerId == AudioProviderOrderItem.YOUTUBE_MUSIC.name) return true
-    return providerId !in getDisabledAudioProviders(c)
+    return false
 }
 
 fun setAudioProviderEnabled(c: Context, providerId: String, enabled: Boolean) {

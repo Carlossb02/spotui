@@ -108,7 +108,7 @@ object SongPlayer {
             }
         }
 
-        val currentPlayingSong = boundState?.queue?.value?.firstOrNull { 
+        val currentPlayingSong = boundState?.queue?.value?.firstOrNull {
             it.id == boundState?.songId?.value || (it.url == boundState?.songUrl?.value && it.url.isNotBlank())
         }
         val playingUrl = boundState?.songUrl?.value
@@ -369,12 +369,23 @@ object SongPlayer {
         return cleaned.trim()
     }
 
-    private fun searchTextForPlayback(song: String): String =
-        if (song.startsWith(SPOTIFY_TRACK_PREFIX) && song.contains('|')) {
+    private fun searchTextForPlayback(song: String): String {
+        val meta = metadataRegistry[song]
+        if (meta != null && meta.artist.isNotBlank() && meta.title.isNotBlank()) {
+            val cleanArtist = meta.artist.replace(",", " ").replace("  ", " ").trim()
+            return "$cleanArtist ${cleanSpotifySearchTitle(meta.title)}"
+        }
+        val matchSong = boundState?.queue?.value?.firstOrNull { it.url == song }
+        if (matchSong != null && matchSong.singer.isNotBlank() && matchSong.title.isNotBlank()) {
+            val cleanArtist = matchSong.singer.replace(",", " ").replace("  ", " ").trim()
+            return "$cleanArtist ${cleanSpotifySearchTitle(matchSong.title)}"
+        }
+        return if (song.startsWith(SPOTIFY_TRACK_PREFIX) && song.contains('|')) {
             song.substringAfter('|').ifBlank { song }
         } else {
             song
         }
+    }
 
     private fun spotifyTrackIdForPlayback(song: String): String? =
         if (song.startsWith(SPOTIFY_TRACK_PREFIX)) {
@@ -490,7 +501,7 @@ object SongPlayer {
         appCtx = appContext
         currentRequest = song
         val resolvedMediaId = mediaId ?: boundState?.queue?.value?.firstOrNull { it.url == song }?.let { "song/${it.id}" }
-            ?: boundState?.songId?.value?.let { if (it != 0) "song/$it" else null }
+        ?: boundState?.songId?.value?.let { if (it != 0) "song/$it" else null }
         currentMediaId = resolvedMediaId
 
         // Immediately populate now-playing metadata if matching track exists in queue
@@ -663,7 +674,7 @@ object SongPlayer {
                 if (streamUrl.contains("fmt=flac")) androidx.media3.common.MimeTypes.AUDIO_FLAC
                 else androidx.media3.common.MimeTypes.AUDIO_MPEG
             streamUrl.startsWith("data:application/dash+xml") ||
-                bare.endsWith(".mpd") || streamUrl.contains("manifest.tidal.com") || streamUrl.contains("/manifests/") ->
+                    bare.endsWith(".mpd") || streamUrl.contains("manifest.tidal.com") || streamUrl.contains("/manifests/") ->
                 androidx.media3.common.MimeTypes.APPLICATION_MPD
             bare.endsWith(".flac") || currentSource.startsWith("Lossless") ->
                 androidx.media3.common.MimeTypes.AUDIO_FLAC
@@ -764,7 +775,7 @@ object SongPlayer {
             },
             isParserCandidate = { dataSpec, mediaId ->
                 dataSpec.uri.toString().contains(".flac", ignoreCase = true) ||
-                    currentSource.startsWith("Lossless")
+                        currentSource.startsWith("Lossless")
             },
             sampleRateProvider = { null },
             onBitrate = { mediaId, bitrate, _, _ ->
@@ -1253,8 +1264,8 @@ object SongPlayer {
             if (flacResult != null) {
                 val (url, providerName, flacQuality) = flacResult
                 val isLossless = flacQuality.contains("FLAC", ignoreCase = true) ||
-                    flacQuality.contains("Hi-Res", ignoreCase = true) ||
-                    flacQuality.contains("Ultra HD", ignoreCase = true)
+                        flacQuality.contains("Hi-Res", ignoreCase = true) ||
+                        flacQuality.contains("Ultra HD", ignoreCase = true)
                 val sourceLabel = if (isLossless) "Lossless • $providerName" else providerName
                 Log.d(TAG, "Resolved via $providerName ($flacQuality) [lossless=$isLossless] for: $song")
                 if (forPlayback) {
@@ -1387,7 +1398,7 @@ object SongPlayer {
             setRequestProperty(
                 "User-Agent",
                 "Mozilla/5.0 (Linux; Android 14; Pixel) AppleWebKit/537.36 " +
-                    "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+                        "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
             )
         }
 
@@ -1713,208 +1724,18 @@ object SongPlayer {
         return true
     }
 
-    private data class CandidateScore(
-        val item: SongItem,
-        val score: Double,
-        val titleScore: Double,
-        val artistScore: Double,
-        val artistEvidenceScore: Double,
-        val durationScore: Double?,
-        val albumScore: Double?,
-        val alternatePenalty: Double,
-        val unexpectedAlternates: List<String>,
-    )
+    private fun cleanTextForMatch(text: String): String {
+        val noDiacritics = Normalizer.normalize(text, Normalizer.Form.NFD).replace(Regex("""\p{Mn}+"""), "")
+        val lower = noDiacritics.lowercase()
+        // Remove content in parentheses or brackets (e.g., "(Official Video)", "[Remastered]")
+        val noBrackets = lower.replace(Regex("""\([^)]*\)|\[[^]]*\]"""), "")
+        // Remove common featuring keywords to avoid mismatches
+        val noFeat = noBrackets.replace(Regex("""\b(feat\.?|ft\.?|featuring|with)\b.*"""), "")
+        // Keep only alphanumeric characters
+        val clean = noFeat.replace(Regex("""[^a-z0-9]"""), "").trim()
 
-    private fun normalizedForMatch(value: String): String =
-        value.lowercase()
-            .replace(featSearchPattern, "")
-            .replace(Regex("""[^\p{L}\p{Nd}\s]"""), " ")
-            .replace(Regex("""\s+"""), " ")
-            .trim()
-
-    private val anyLatinTransliterator by lazy {
-        runCatching {
-            android.icu.text.Transliterator.getInstance("Any-Latin; Latin-ASCII")
-        }.getOrNull()
-    }
-
-    private fun foldLatinDiacritics(value: String): String =
-        Normalizer.normalize(value, Normalizer.Form.NFD)
-            .replace(Regex("""\p{Mn}+"""), "")
-
-    private fun transliterateCyrillic(value: String): String {
-        val map = mapOf(
-            'а' to "a", 'б' to "b", 'в' to "v", 'г' to "g", 'д' to "d",
-            'е' to "e", 'ё' to "e", 'ж' to "zh", 'з' to "z", 'и' to "i",
-            'й' to "y", 'к' to "k", 'л' to "l", 'м' to "m", 'н' to "n",
-            'о' to "o", 'п' to "p", 'р' to "r", 'с' to "s", 'т' to "t",
-            'у' to "u", 'ф' to "f", 'х' to "h", 'ц' to "ts", 'ч' to "ch",
-            'ш' to "sh", 'щ' to "sch", 'ъ' to "", 'ы' to "y", 'ь' to "",
-            'э' to "e", 'ю' to "yu", 'я' to "ya",
-        )
-        return buildString {
-            value.lowercase().forEach { ch ->
-                append(map[ch] ?: ch)
-            }
-        }
-    }
-
-    private fun bigramSimilarity(a: String, b: String): Double {
-        fun variants(value: String): List<String> =
-            listOfNotNull(
-                value,
-                foldLatinDiacritics(value),
-                transliterateCyrillic(value),
-                anyLatinTransliterator?.transliterate(value),
-            )
-                .map(::normalizedForMatch)
-                .filter { it.isNotBlank() }
-                .distinct()
-
-        fun score(na: String, nb: String): Double {
-            if (na == nb) return 1.0
-            if (na.length < 2 || nb.length < 2) return 0.0
-            val aBigrams = na.windowed(2).toSet()
-            val bBigrams = nb.windowed(2).toSet()
-            if (aBigrams.isEmpty() || bBigrams.isEmpty()) return 0.0
-            val intersection = aBigrams.count { it in bBigrams }
-            return (2.0 * intersection) / (aBigrams.size + bBigrams.size)
-        }
-        return variants(a).maxOf { aa ->
-            variants(b).maxOf { bb -> score(aa, bb) }
-        }
-    }
-
-    private data class VersionMarker(
-        val name: String,
-        val pattern: Regex,
-        val hardReject: Boolean,
-    )
-
-    private fun markerPattern(terms: String): Regex =
-        Regex("""(^|\s)($terms)(\s|$)""", RegexOption.IGNORE_CASE)
-
-    private val alternateVersionMarkers = listOf(
-        VersionMarker("remix", markerPattern("""re\s*mix|rmx|club mix|dance mix|dub mix|vip mix|ремикс|рмикс"""), true),
-        VersionMarker("alternate", markerPattern("""alternative|alternate|alt version|demo|demo version|unreleased|rough mix|early version|альтернатив\w*|демо|неиздан\w*|чернов\w*"""), true),
-        VersionMarker("sped up", markerPattern("""sped\s*up|speed\s*up|fast version|ускоренн\w*|быстрая версия"""), true),
-        VersionMarker("slowed", markerPattern("""slowed|slowed reverb|slow version|замедленн\w*|медленная версия"""), true),
-        VersionMarker("nightcore", markerPattern("""nightcore|daycore"""), true),
-        VersionMarker("live", markerPattern("""live|concert|session|performance|лайв|концерт|с концерта|выступлен\w*"""), true),
-        VersionMarker("acoustic", markerPattern("""acoustic|unplugged|piano version|guitar version|акустик\w*|пианино|гитар\w*"""), true),
-        VersionMarker("cover", markerPattern("""cover|covered by|tribute|кавер|трибьют"""), true),
-        VersionMarker("karaoke", markerPattern("""karaoke|minus one|караоке|минусовка"""), true),
-        VersionMarker("instrumental", markerPattern("""instrumental|no vocals|инструментал|без вокала"""), true),
-        VersionMarker("mashup", markerPattern("""mashup|mash up|bootleg|rework|flip|мешап|мэшап|бутлег"""), true),
-        VersionMarker("fan edit", markerPattern("""fan edit|fanmade|right version|edit audio|перезалив|перезалит\w*"""), true),
-        VersionMarker("clean", markerPattern("""\bclean\b|clean version|edited version|пensored"""), false),
-        VersionMarker("explicit", markerPattern("""\bexplicit\b|explicit version|uncensored|uncut"""), false),
-        VersionMarker("extended", markerPattern("""extended mix|extended version|12 inch|12"""), false),
-        VersionMarker("radio edit", markerPattern("""radio edit|single edit|edit version"""), false),
-        VersionMarker("remaster", markerPattern("""remaster|remastered|anniversary edition"""), false),
-    )
-
-    private fun versionMarkers(value: String): Set<String> {
-        val normalized = normalizedForMatch(value)
-        return alternateVersionMarkers
-            .filter { marker -> marker.pattern.containsMatchIn(normalized) }
-            .map { it.name }
-            .toSet()
-    }
-
-    private fun hardVersionMarkers(names: Collection<String>): Set<String> {
-        val hardNames = alternateVersionMarkers.filter { it.hardReject }.map { it.name }.toSet()
-        return names.filterTo(mutableSetOf()) { it in hardNames }
-    }
-
-    private fun ytmusicTransferScore(
-        candidate: SongItem,
-        expected: TrackMatchMetadata,
-        expectedDurationMs: Int,
-    ): CandidateScore {
-        var candidateTitle = candidate.title
-        if (candidate.isVideoSong) {
-            val split = candidateTitle.split("-", limit = 2)
-            if (split.size == 2) candidateTitle = split[1].trim()
-        }
-
-        val titleScore = bigramSimilarity(candidateTitle, expected.title)
-        val expectedArtists = expected.artist.split(Regex("""[,&]| and """, RegexOption.IGNORE_CASE))
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-        
-        val primaryArtist = expectedArtists.firstOrNull() ?: expected.artist
-        val candidateTextAll = "${candidate.artists.joinToString(" ") { it.name }} ${candidate.title}"
-        
-        val primaryArtistScore = bigramSimilarity(candidateTextAll, primaryArtist)
-        val allArtistsScore = expectedArtists.maxOfOrNull { artist ->
-            bigramSimilarity(candidateTextAll, artist)
-        } ?: bigramSimilarity(candidateTextAll, expected.artist)
-        
-        val artistScore = maxOf(primaryArtistScore, allArtistsScore)
-
-        val expectedDurationSec = expectedDurationMs / 1000.0
-        val candidateDuration = candidate.duration
-        val durationScore = if (expectedDurationSec > 0 && candidateDuration != null) {
-            (1.0 - abs(candidateDuration - expectedDurationSec) * 2.0 / expectedDurationSec)
-                .coerceIn(0.0, 1.0)
-        } else {
-            null
-        }
-
-        val albumScore = if (!candidate.isVideoSong && expected.album.isNotBlank()) {
-            candidate.album?.name?.let { bigramSimilarity(it, expected.album) }
-        } else {
-            null
-        }
-
-        val expectedMarkers = versionMarkers(expected.title)
-        val candidateMarkers = versionMarkers(
-            listOf(
-                candidate.title,
-                candidate.album?.name.orEmpty(),
-            ).joinToString(" "),
-        )
-        val unexpectedAlternates = (candidateMarkers - expectedMarkers).toList().sorted()
-        val hardUnexpected = hardVersionMarkers(unexpectedAlternates).size
-        val softUnexpected = unexpectedAlternates.size - hardUnexpected
-        val alternatePenalty = hardUnexpected * 1.75 + softUnexpected * 0.65
-
-        val parts = mutableListOf(titleScore, artistScore)
-        durationScore?.let { parts += it * 5.0 }
-        albumScore?.let { parts += it }
-        val resultTypeBoost = if (candidate.isVideoSong) 1.0 else 2.0
-        val baseScore = parts.average() * resultTypeBoost
-        return CandidateScore(
-            item = candidate,
-            score = (baseScore - alternatePenalty).coerceAtLeast(0.0),
-            titleScore = titleScore,
-            artistScore = allArtistsScore,
-            artistEvidenceScore = artistScore,
-            durationScore = durationScore,
-            albumScore = albumScore,
-            alternatePenalty = alternatePenalty,
-            unexpectedAlternates = unexpectedAlternates,
-        )
-    }
-
-    private fun CandidateScore.isAcceptableMatch(wantExplicit: Boolean? = null): Boolean {
-        val hasDuration = durationScore != null
-        val baseMinScore = when {
-            hasDuration && item.isVideoSong -> 1.55
-            hasDuration -> 2.25
-            item.isVideoSong -> 0.78
-            else -> 1.35
-        }
-        val explicitMismatch = wantExplicit != null && item.explicit != wantExplicit
-        val minScore = if (explicitMismatch) baseMinScore + 0.6 else baseMinScore
-
-        val hasUnexpectedHardAlternate = hardVersionMarkers(unexpectedAlternates).isNotEmpty()
-        // Strict artist match requirement: artistEvidenceScore must be at least 0.50 unconditionally
-        return score >= minScore &&
-            !hasUnexpectedHardAlternate &&
-            titleScore >= 0.45 &&
-            artistEvidenceScore >= 0.50
+        // Fallback: If aggressive cleaning destroyed the string entirely, return basic lowercase alphanumeric
+        return if (clean.isEmpty()) lower.replace(Regex("""[^a-z0-9]"""), "").trim() else clean
     }
 
     private suspend fun ensureSpotifyMatchMetadata(query: String): TrackMatchMetadata? {
@@ -1960,175 +1781,102 @@ object SongPlayer {
         if (forPlayback) {
             updateResolveStatus(true, "Searching YouTube videos...")
         }
+
         val wantExplicit = explicitRegistry[query]
         val baseSearchText = searchTextForPlayback(query)
-        // Append "explicit" to the YouTube search query when Spotify says the
-        // track is explicit — increases the chance YouTube returns the correct
-        // version instead of the clean/radio edit.
         val searchText = if (wantExplicit == true) "$baseSearchText explicit" else baseSearchText
-        // A raw YouTube videoId is 11 chars with no spaces — accept it directly.
+
         if (searchText.length == 11 && !searchText.contains(' ')) return listOf(searchText)
+
         val hits = YouTube.search(searchText, filter)
             .onFailure { Log.w(TAG, "resolveVideoId: YouTube search failed for: $searchText", it) }
             .getOrNull()
             ?.items
             ?.filterIsInstance<SongItem>()
             .orEmpty()
+
         if (hits.isEmpty()) {
             Log.w(TAG, "resolveVideoId: no YouTube song results for: $searchText")
             return emptyList()
         }
-        // YouTube's top hit is NOT always the requested song (worst for
-        // non-English titles). Score every hit against the query — the query is
-        // "title artist1, artist2":
-        //   +2 artist match, +1 title match, +2 duration match.
-        // Duration is the key disambiguator for same-title/different-artist: a
-        // wrong-artist song with the same name almost always has a different
-        // length, so it never ties the real track once duration is in the score.
-        fun norm(s: String) = s.lowercase().filter { it.isLetterOrDigit() }
-        val qn = norm(baseSearchText)
+
         val exactMeta = ensureSpotifyMatchMetadata(query)
         val wantSec = durationRegistry[query]?.let { it / 1000 }
-        val scored = hits.map { h ->
-            val cleanTitle = norm(h.title.substringBefore('(').substringBefore('['))
-            var s = 0
-            if (cleanTitle.isNotEmpty() && qn.contains(cleanTitle)) s += 1
-            if (h.artists.any { a -> norm(a.name).let { it.isNotEmpty() && qn.contains(it) } }) s += 2
-            // Within ~4s of the Spotify track length → very likely the same recording.
-            val hDur = h.duration
-            if (wantSec != null && hDur != null && kotlin.math.abs(hDur - wantSec) <= 4) s += 2
-            h to s
-        }
-        val transferScored = if (exactMeta != null) {
-            hits.map { ytmusicTransferScore(it, exactMeta, durationRegistry[query] ?: 0) }
-        } else {
-            emptyList()
-        }
-        // A hit is "verified" as the right recording when its artist matches the
-        // query, OR (when we know the Spotify length) its duration is within ~4s.
-        fun verified(h: SongItem): Boolean {
-            val artistOk = h.artists.any { a -> norm(a.name).let { it.isNotEmpty() && qn.contains(it) } }
-            val d = h.duration
-            val durOk = wantSec != null && d != null && kotlin.math.abs(d - wantSec) <= 4
-            return artistOk || durOk
-        }
-        fun explicitFirst(list: List<SongItem>) =
-            if (wantExplicit != null) list.sortedByDescending { it.explicit == wantExplicit } else list
-        var ordered = if (transferScored.isNotEmpty()) {
-            var accepted = transferScored
-                .filter { it.isAcceptableMatch(wantExplicit) }
-                .let { pool ->
-                    if (wantExplicit != null) {
-                        val matching = pool.filter { it.item.explicit == wantExplicit }
-                        if (matching.isNotEmpty()) matching else pool
-                    } else {
-                        pool
-                    }
-                }
-                .sortedWith(
-                    compareByDescending<CandidateScore> { it.item.explicit == wantExplicit || wantExplicit == null }
-                        .thenByDescending { it.score }
-                )
-                .map { it.item }
 
-            // Secondary search attempts if primary search yielded no acceptable match
-            if (accepted.isEmpty() && exactMeta != null) {
-                val cleanedTitle = cleanSpotifySearchTitle(exactMeta.title)
-                val secondaryQueries = mutableListOf<String>()
-                if (cleanedTitle != exactMeta.title) {
-                    secondaryQueries.add("$cleanedTitle ${exactMeta.artist}${if (wantExplicit == true) " explicit" else ""}".trim())
-                }
-                if (exactMeta.album.isNotBlank()) {
-                    secondaryQueries.add("$cleanedTitle ${exactMeta.artist} ${exactMeta.album}".trim())
-                }
+        val targetTitle = exactMeta?.title ?: baseSearchText
+        val targetArtist = exactMeta?.artist ?: baseSearchText
 
-                for (altQuery in secondaryQueries) {
-                    if (altQuery == searchText) continue
-                    Log.d(TAG, "resolveVideoId: primary query failed, trying secondary query: '$altQuery'")
-                    val altHits = YouTube.search(altQuery, filter).getOrNull()?.items?.filterIsInstance<SongItem>().orEmpty()
-                    if (altHits.isNotEmpty()) {
-                        val altScored = altHits.map { ytmusicTransferScore(it, exactMeta, durationRegistry[query] ?: 0) }
-                        val altAccepted = altScored
-                            .filter { it.isAcceptableMatch(wantExplicit) }
-                            .let { pool ->
-                                if (wantExplicit != null) {
-                                    val matching = pool.filter { it.item.explicit == wantExplicit }
-                                    if (matching.isNotEmpty()) matching else pool
-                                } else {
-                                    pool
-                                }
-                            }
-                            .sortedWith(
-                                compareByDescending<CandidateScore> { it.item.explicit == wantExplicit || wantExplicit == null }
-                                    .thenByDescending { it.score }
-                            )
-                            .map { it.item }
+        val expectedTitleClean = cleanTextForMatch(targetTitle)
+        val expectedArtistsList = targetArtist
+            .split(Regex("""[,&]| and """, RegexOption.IGNORE_CASE))
+            .map { cleanTextForMatch(it) }
+            .filter { it.isNotEmpty() }
+        val primaryArtistClean = expectedArtistsList.firstOrNull() ?: cleanTextForMatch(baseSearchText)
 
-                        if (altAccepted.isNotEmpty()) {
-                            accepted = altAccepted
-                            break
-                        }
-                    }
-                }
+        Log.d(TAG, "==================================================")
+        Log.d(TAG, "▶ DEBUG MATCHING STARTED FOR: '$query'")
+        Log.d(TAG, "▶ TARGET: Title: '$targetTitle' (clean: '$expectedTitleClean')")
+        Log.d(TAG, "▶ TARGET: Artist: '$targetArtist' (clean primary: '$primaryArtistClean')")
+        Log.d(TAG, "▶ TARGET: Duration: ${wantSec}s | Wants Explicit: $wantExplicit")
+        Log.d(TAG, "--------------------------------------------------")
+
+        val candidatesWithTiers = mutableListOf<Pair<SongItem, Int>>()
+
+        for (item in hits) {
+            val itemTitleClean = cleanTextForMatch(item.title)
+            val itemArtistsClean = item.artists.map { cleanTextForMatch(it.name) }
+            val itemDur = item.duration
+
+            val artistMatch = itemArtistsClean.any {
+                it == primaryArtistClean || it.contains(primaryArtistClean) || primaryArtistClean.contains(it)
+            }
+            val titleExactMatch = itemTitleClean == expectedTitleClean
+            val titleContainsMatch = expectedTitleClean.isNotEmpty() &&
+                    (itemTitleClean.contains(expectedTitleClean) || expectedTitleClean.contains(itemTitleClean))
+            val durDiff = if (wantSec != null && itemDur != null) kotlin.math.abs(wantSec - itemDur) else null
+            val explicitMatch = wantExplicit == null || item.explicit == wantExplicit
+
+            var tier = 99 // 99 = descartado / sin coincidencia de calidad
+
+            if (artistMatch && titleExactMatch && durDiff != null && durDiff <= 3) {
+                tier = if (explicitMatch) 1 else 2 // Tier 1: Perfección absoluta. Tier 2: Perfecto pero no coincide el flag explicit
+            } else if (artistMatch && titleContainsMatch && durDiff != null && durDiff <= 5) {
+                tier = 3 // Tier 3: Contiene el título y casi misma duración
+            } else if (artistMatch && durDiff != null && durDiff <= 2) {
+                tier = 4 // Tier 4: Título raro, pero artista coincide y duración es EXACTA
+            } else if (artistMatch && titleExactMatch) {
+                tier = 5 // Tier 5: Título y artista exactos, pero la duración no cuadra o es nula
             }
 
-            if (accepted.isEmpty()) {
-                val best = transferScored.maxByOrNull { it.score }
-                Log.w(
-                    TAG,
-                    "resolveVideoId: no acceptable YouTube match for '$searchText' " +
-                        "(best='${best?.item?.title}' score=${"%.2f".format(best?.score ?: 0.0)} " +
-                        "title=${"%.2f".format(best?.titleScore ?: 0.0)} " +
-                        "artist=${"%.2f".format(best?.artistEvidenceScore ?: 0.0)} " +
-                        "duration=${"%.2f".format(best?.durationScore ?: 0.0)} " +
-                        "album=${"%.2f".format(best?.albumScore ?: 0.0)} " +
-                        "alt=${best?.unexpectedAlternates.orEmpty().joinToString("/")}), falling back to best-effort",
-                )
-                transferScored.sortedByDescending { it.score }.map { it.item }
-            } else {
-                accepted.distinctBy { it.id }
+            Log.d(TAG, "  -> CANDIDATE: '${item.title}' by ${item.artists.joinToString { it.name }} | Dur: ${itemDur}s | Explicit: ${item.explicit}")
+            Log.d(TAG, "     ArtistMatch: $artistMatch | TitleExact: $titleExactMatch | DurDiff: $durDiff | Tier Assigned: $tier")
+
+            if (tier < 99) {
+                candidatesWithTiers.add(item to tier)
             }
-        } else {
-            // Legacy/plain queries without registered Spotify metadata: keep the
-            // old best-effort ordering.
-            val verifiedRanked = scored
-                .filter { verified(it.first) }
-                .sortedByDescending { it.second }
-                .map { it.first }
-            val restRanked = scored
-                .filter { !verified(it.first) }
-                .sortedByDescending { it.second }
-                .map { it.first }
-            (explicitFirst(verifiedRanked) + explicitFirst(restRanked)).distinctBy { it.id }
         }
 
-        if (ordered.isEmpty()) return emptyList()
-        val chosen = ordered.first()
-        if (transferScored.isEmpty() && !verified(chosen)) {
-            Log.w(TAG, "resolveVideoId: no verified match for: $searchText (want=${wantSec}s) — best-effort '${chosen.title}'")
-        }
-        val chosenScore = transferScored.firstOrNull { it.item.id == chosen.id }
-        Log.d(
-            TAG,
-            "resolveVideoId: '$searchText' -> '${chosen.title}' by " +
-                chosen.artists.joinToString { it.name } +
-                " [explicit=${chosen.explicit} dur=${chosen.duration}s want=${wantSec}s id=${chosen.id}] " +
-                (chosenScore?.let {
-                    "score=${"%.2f".format(it.score)} title=${"%.2f".format(it.titleScore)} " +
-                        "artist=${"%.2f".format(it.artistEvidenceScore)} duration=${"%.2f".format(it.durationScore ?: 0.0)} " +
-                        "album=${"%.2f".format(it.albumScore ?: 0.0)} " +
-                        "altPenalty=${"%.2f".format(it.alternatePenalty)} " +
-                        "alt=${it.unexpectedAlternates.joinToString("/")}"
-                } ?: "${ordered.count { verified(it) }} verified/${ordered.size}"),
-        )
-        val resolvedIds = ordered.map { it.id }.distinct()
-        if (resolvedIds.isNotEmpty()) {
+        Log.d(TAG, "--------------------------------------------------")
+
+        val sortedCandidates = candidatesWithTiers.sortedBy { it.second }.map { it.first }
+
+        if (sortedCandidates.isNotEmpty()) {
+            val best = sortedCandidates.first()
+            val chosenTier = candidatesWithTiers.first { it.first.id == best.id }.second
+            Log.d(TAG, "✅ WINNER CHOSEN: '${best.title}' (Tier $chosenTier, ID: ${best.id})")
+            Log.d(TAG, "==================================================")
+
+            val resolvedIds = sortedCandidates.map { it.id }.distinct()
             videoCandidatesCache[cacheKey] = resolvedIds
             appCtx?.let { ctx ->
                 com.music.spotui.data.preferences.setCachedVideoIds(ctx, cacheKey, resolvedIds)
             }
+            return resolvedIds
         }
-        return resolvedIds
+
+        Log.d(TAG, "❌ NO SUITABLE CANDIDATES FOUND. Rejecting all.")
+        Log.d(TAG, "==================================================")
+        return emptyList()
     }
 
     /**
@@ -2163,9 +1911,9 @@ object SongPlayer {
                     skipValidation = skipValidation,
                 ).fold(
                     onSuccess = { return it },
-                    onFailure = { 
+                    onFailure = {
                         lastYtFailureReason = it.message ?: "Stream failed"
-                        Log.w(TAG, "stream failed for $videoId (${it.message}) — trying next candidate for: ${searchTextForPlayback(query)}") 
+                        Log.w(TAG, "stream failed for $videoId (${it.message}) — trying next candidate for: ${searchTextForPlayback(query)}")
                     },
                 )
             }
@@ -2276,8 +2024,8 @@ object SongPlayer {
         // Widevine, AND the user is logged into Spotify (sp_dc). Missing any of these
         // → fall back to the YouTube/FLAC engine so playback is never silent.
         return com.music.spotui.data.preferences.isWebPlaybackEnabled(ctx) &&
-            SpotifyWebPlayer.canPlay &&
-            com.music.spotui.data.api.SpotifySession.spDc(ctx).isNotBlank()
+                SpotifyWebPlayer.canPlay &&
+                com.music.spotui.data.api.SpotifySession.spDc(ctx).isNotBlank()
     }
 
     // ── Session restore (survive app restarts) ──

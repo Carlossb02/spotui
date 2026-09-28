@@ -14,8 +14,6 @@ object SpotifyMapper {
     private val FEAT_PATTERN = Regex("\\(feat\\..*?\\)")
     private val FT_PATTERN = Regex("\\(ft\\..*?\\)")
     private val BRACKET_PATTERN = Regex("\\[.*?]")
-    private val REMASTER_PATTERN = Regex("\\(.*?remaster.*?\\)", RegexOption.IGNORE_CASE)
-    private val REMIX_PATTERN = Regex("\\(.*?remix.*?\\)", RegexOption.IGNORE_CASE)
     private val NON_ALNUM_PATTERN = Regex("[^a-z0-9\\s]")
     private val MULTI_SPACE_PATTERN = Regex("\\s+")
 
@@ -135,7 +133,7 @@ object SpotifyMapper {
         )
 
         val durationScore = durationScore(spotifyDurationMs, candidateDurationSec)
-        return titleScore * 0.45 + artistScore * 0.35 + durationScore * 0.20
+        return titleScore * 0.60 + artistScore * 0.20 + durationScore * 0.20
     }
 
     /**
@@ -162,7 +160,7 @@ object SpotifyMapper {
         )
 
         val durationScore = durationScore(precomputed.durationMs, candidateDurationSec)
-        return titleScore * 0.45 + artistScore * 0.35 + durationScore * 0.20
+        return titleScore * 0.60 + artistScore * 0.20 + durationScore * 0.20
     }
 
     /** Threshold above which we consider a match good enough to skip remaining candidates. */
@@ -205,8 +203,8 @@ object SpotifyMapper {
             .replace(FEAT_PATTERN, "")
             .replace(FT_PATTERN, "")
             .replace(BRACKET_PATTERN, "")
-            .replace(REMASTER_PATTERN, "")
-            .replace(REMIX_PATTERN, "")
+            // .replace(REMASTER_PATTERN, "") // Mantener para diferenciar versiones
+            // .replace(REMIX_PATTERN, "")    // Mantener para diferenciar versiones
             .replace(NON_ALNUM_PATTERN, "")
             .replace(MULTI_SPACE_PATTERN, " ")
             .trim()

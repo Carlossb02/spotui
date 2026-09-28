@@ -62,5 +62,7 @@ class MyApplication : Application(){
         appScope.launch {
             runCatching { com.metrolist.innertube.NewPipeExtractor.init() }
         }
+        // Purge stale stream caches so all track resolutions run through the strict artist-matching algorithm
+        com.music.spotui.data.preferences.clearAllCachedStreams(this)
     }
 }
