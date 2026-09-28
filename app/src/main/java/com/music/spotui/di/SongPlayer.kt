@@ -353,9 +353,19 @@ object SongPlayer {
     }
 
     private val featSearchPattern = Regex("""\s*[\(\[]\s*(feat|ft)\..*?[\)\]]""", RegexOption.IGNORE_CASE)
+    private val remasterTitlePatterns = listOf(
+        Regex("""\s*[-–—]\s*(\d{4}\s*)?remaster(ed)?.*$""", RegexOption.IGNORE_CASE),
+        Regex("""\s*[\(\[]\s*(\d{4}\s*)?remaster(ed)?.*?[\)\]]""", RegexOption.IGNORE_CASE),
+        Regex("""\s*[\(\[]\s*(deluxe|anniversary|special|expanded)\s*(edition|version)?.*?[\)\]]""", RegexOption.IGNORE_CASE),
+    )
 
-    private fun cleanSpotifySearchTitle(title: String): String =
-        title.replace(featSearchPattern, "").trim()
+    private fun cleanSpotifySearchTitle(title: String): String {
+        var cleaned = title.replace(featSearchPattern, "")
+        for (pattern in remasterTitlePatterns) {
+            cleaned = cleaned.replace(pattern, "")
+        }
+        return cleaned.trim()
+    }
 
     private fun searchTextForPlayback(song: String): String =
         if (song.startsWith(SPOTIFY_TRACK_PREFIX) && song.contains('|')) {
@@ -1518,16 +1528,46 @@ object SongPlayer {
         }
 
         val query = song.url
-        // Resolve a fresh network stream URL (bypass any local-file short-circuit),
-        // walking the ranked video candidates like playback does.
-        val playback = resolveYtPlayback(query, dlQuality.audioQuality, appContext) ?: run {
-            lastDownloadError = "Couldn't resolve a stream"
-            return false
-        }
+        val alt = alternativeStreamForPlayback(query, appContext)
 
         val dir = java.io.File(appContext.filesDir, "downloads").apply { mkdirs() }
         val outFile = java.io.File(dir, "${song.id}.m4a")
         val tmpFile = java.io.File(dir, "${song.id}.part")
+
+        if (alt != null && alt.isLocal) {
+            val copyOk = runCatching {
+                val uri = android.net.Uri.parse(alt.value)
+                appContext.contentResolver.openInputStream(uri)?.use { input ->
+                    java.io.FileOutputStream(tmpFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                true
+            }.getOrDefault(false)
+
+            if (!copyOk || !tmpFile.exists() || tmpFile.length() == 0L) {
+                lastDownloadError = "Could not read alternative local file"
+                runCatching { tmpFile.delete() }
+                return false
+            }
+
+            if (!tmpFile.renameTo(outFile)) {
+                lastDownloadError = "Couldn't save local alternative file"
+                runCatching { tmpFile.delete() }
+                return false
+            }
+
+            com.music.spotui.data.preferences.addDownload(appContext, song, outFile.absolutePath)
+            downloadCoverImage(song.coverUri, java.io.File(dir, "${song.id}_cover.jpg"))
+            return true
+        }
+
+        // If an alternative YouTube stream is set, use alt.value (videoId); otherwise use query search
+        val targetQuery = if (alt != null && alt.isYouTube) alt.value else query
+        val playback = resolveYtPlayback(targetQuery, dlQuality.audioQuality, appContext) ?: run {
+            lastDownloadError = "Couldn't resolve a stream"
+            return false
+        }
 
         if (!httpDownloadRanged(playback.streamUrl, tmpFile, song.url)) {
             runCatching { tmpFile.delete() }
@@ -1934,13 +1974,10 @@ object SongPlayer {
         }
         fun explicitFirst(list: List<SongItem>) =
             if (wantExplicit != null) list.sortedByDescending { it.explicit == wantExplicit } else list
-        val ordered = if (transferScored.isNotEmpty()) {
-            val accepted = transferScored
+        var ordered = if (transferScored.isNotEmpty()) {
+            var accepted = transferScored
                 .filter { it.isAcceptableMatch(wantExplicit) }
                 .let { pool ->
-                    // Hard filter: when the Spotify track has an explicit flag and at
-                    // least one acceptable candidate matches, discard the rest so a
-                    // clean version can never win over an available explicit one.
                     if (wantExplicit != null) {
                         val matching = pool.filter { it.item.explicit == wantExplicit }
                         if (matching.isNotEmpty()) matching else pool
@@ -1953,6 +1990,48 @@ object SongPlayer {
                         .thenByDescending { it.score }
                 )
                 .map { it.item }
+
+            // Secondary search attempts if primary search yielded no acceptable match
+            if (accepted.isEmpty() && exactMeta != null) {
+                val cleanedTitle = cleanSpotifySearchTitle(exactMeta.title)
+                val secondaryQueries = mutableListOf<String>()
+                if (cleanedTitle != exactMeta.title) {
+                    secondaryQueries.add("$cleanedTitle ${exactMeta.artist}${if (wantExplicit == true) " explicit" else ""}".trim())
+                }
+                if (exactMeta.album.isNotBlank()) {
+                    secondaryQueries.add("$cleanedTitle ${exactMeta.artist} ${exactMeta.album}".trim())
+                }
+
+                for (altQuery in secondaryQueries) {
+                    if (altQuery == searchText) continue
+                    Log.d(TAG, "resolveVideoId: primary query failed, trying secondary query: '$altQuery'")
+                    val altHits = YouTube.search(altQuery, filter).getOrNull()?.items?.filterIsInstance<SongItem>().orEmpty()
+                    if (altHits.isNotEmpty()) {
+                        val altScored = altHits.map { ytmusicTransferScore(it, exactMeta, durationRegistry[query] ?: 0) }
+                        val altAccepted = altScored
+                            .filter { it.isAcceptableMatch(wantExplicit) }
+                            .let { pool ->
+                                if (wantExplicit != null) {
+                                    val matching = pool.filter { it.item.explicit == wantExplicit }
+                                    if (matching.isNotEmpty()) matching else pool
+                                } else {
+                                    pool
+                                }
+                            }
+                            .sortedWith(
+                                compareByDescending<CandidateScore> { it.item.explicit == wantExplicit || wantExplicit == null }
+                                    .thenByDescending { it.score }
+                            )
+                            .map { it.item }
+
+                        if (altAccepted.isNotEmpty()) {
+                            accepted = altAccepted
+                            break
+                        }
+                    }
+                }
+            }
+
             if (accepted.isEmpty()) {
                 val best = transferScored.maxByOrNull { it.score }
                 Log.w(

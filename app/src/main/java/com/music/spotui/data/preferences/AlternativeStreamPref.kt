@@ -84,3 +84,25 @@ fun clearAllAlternativeStreams(context: Context) {
         .clear()
         .apply()
 }
+
+fun getAllAlternativeStreams(context: Context): Map<String, AlternativeStream> {
+    val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+    val map = mutableMapOf<String, AlternativeStream>()
+    for ((key, value) in prefs.all) {
+        if (value is String) {
+            parseAlternativeStream(value)?.let { stream ->
+                map[key] = stream
+            }
+        }
+    }
+    return map
+}
+
+fun restoreAlternativeStreams(context: Context, streams: Map<String, AlternativeStream>) {
+    val editor = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+    for ((key, stream) in streams) {
+        editor.putString(key, stream.toJson())
+    }
+    editor.apply()
+}
+

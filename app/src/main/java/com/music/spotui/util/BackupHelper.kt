@@ -97,6 +97,17 @@ object BackupHelper {
                     put("updateRepoUrl", getUpdateRepoUrl(context))
                 }
                 put("settings", settingsObj)
+
+                // 4. Alternative Streams
+                val altObj = JSONObject()
+                com.music.spotui.data.preferences.getAllAlternativeStreams(context).forEach { (key, stream) ->
+                    altObj.put(key, JSONObject().apply {
+                        put("type", stream.type)
+                        put("value", stream.value)
+                        put("label", stream.label)
+                    })
+                }
+                put("alternativeStreams", altObj)
             }
             put("data", data)
         }
@@ -255,8 +266,33 @@ object BackupHelper {
                 if (s.has("updateRepoUrl")) setUpdateRepoUrl(context, s.getString("updateRepoUrl"))
             }
 
+            // 4. Restore Alternative Streams
+            var restoredAltStreams = 0
+            if (data.has("alternativeStreams")) {
+                val altObj = data.getJSONObject("alternativeStreams")
+                val map = mutableMapOf<String, com.music.spotui.data.preferences.AlternativeStream>()
+                val keys = altObj.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val item = altObj.optJSONObject(key)
+                    if (item != null) {
+                        val type = item.optString("type")
+                        val value = item.optString("value")
+                        val label = item.optString("label")
+                        if (value.isNotBlank() && (type == com.music.spotui.data.preferences.AlternativeStream.TYPE_YOUTUBE || type == com.music.spotui.data.preferences.AlternativeStream.TYPE_LOCAL)) {
+                            map[key] = com.music.spotui.data.preferences.AlternativeStream(type, value, label)
+                        }
+                    }
+                }
+                if (map.isNotEmpty()) {
+                    com.music.spotui.data.preferences.restoreAlternativeStreams(context, map)
+                    restoredAltStreams = map.size
+                }
+            }
+
             Api.HomeCache.clear()
-            Pair(true, "Restored $restoredPlaylists playlist(s) and $restoredLiked liked song(s)!")
+            Pair(true, "Restored $restoredPlaylists playlist(s), $restoredLiked liked song(s), and $restoredAltStreams alternative stream(s)!")
+
         }.getOrElse { e ->
             Log.e(TAG, "Error restoring backup", e)
             Pair(false, "Failed to restore backup: ${e.message}")
