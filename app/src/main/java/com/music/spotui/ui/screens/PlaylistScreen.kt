@@ -734,7 +734,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                         Icon(
                                             imageVector = Icons.Default.CheckCircle,
                                             contentDescription = "Downloaded",
-                                            tint = Color(0xFF1DB954),
+                                            tint = Color(0xFF2196F3),
                                             modifier = Modifier.size(14.dp)
                                         )
                                     }

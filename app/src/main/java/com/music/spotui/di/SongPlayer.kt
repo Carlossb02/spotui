@@ -1839,12 +1839,17 @@ object SongPlayer {
         }
 
         val titleScore = bigramSimilarity(candidateTitle, expected.title)
-        val uploaderArtistScore = bigramSimilarity(
-            candidate.artists.joinToString(" ") { it.name },
-            expected.artist,
-        )
+        val expectedArtists = expected.artist.split(Regex("""[,&]| and """, RegexOption.IGNORE_CASE))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        val candidateArtistText = candidate.artists.joinToString(" ") { it.name }
+        val uploaderArtistScore = expectedArtists.maxOfOrNull { artist ->
+            bigramSimilarity(candidateArtistText, artist)
+        } ?: bigramSimilarity(candidateArtistText, expected.artist)
         val titleArtistScore = if (candidate.isVideoSong) {
-            bigramSimilarity(candidate.title.substringBefore("-"), expected.artist)
+            expectedArtists.maxOfOrNull { artist ->
+                bigramSimilarity(candidate.title.substringBefore("-"), artist)
+            } ?: bigramSimilarity(candidate.title.substringBefore("-"), expected.artist)
         } else {
             0.0
         }
@@ -1922,9 +1927,9 @@ object SongPlayer {
             !hasUnexpectedHardAlternate &&
             titleScore >= 0.45 &&
             (
-                artistEvidenceScore >= 0.32 ||
-                    (albumUseful && artistEvidenceScore >= 0.18) ||
-                    (durationStrong && artistEvidenceScore >= 0.25)
+                artistEvidenceScore >= 0.40 ||
+                    (albumUseful && artistEvidenceScore >= 0.25) ||
+                    (durationStrong && artistEvidenceScore >= 0.35)
                 )
     }
 
