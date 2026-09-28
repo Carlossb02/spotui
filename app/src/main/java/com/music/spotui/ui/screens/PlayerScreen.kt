@@ -1895,6 +1895,10 @@ fun PlayerOptionsSheet(
                 picked,
                 picked.lastPathSegment.orEmpty()
             )
+            if (com.music.spotui.data.preferences.isDownloaded(context, song.id.toString())) {
+                com.music.spotui.data.preferences.removeDownload(context, song.id.toString())
+                SongPlayer.downloadSong(song, context)
+            }
             currentAlternative = getAlternativeStream(context, alternativeKey)
             Toast.makeText(context, "Alternative stream set to local file", Toast.LENGTH_SHORT).show()
             SongPlayer.invalidateSongCache(song, context, reloadIfPlaying = true, clearAltStream = false)
@@ -1932,6 +1936,10 @@ fun PlayerOptionsSheet(
                     onUseVideoId = { videoId ->
                         val song = currentSong ?: return@YouTubeSearchView
                         setYouTubeAlternativeStream(context, alternativeKey, videoId)
+                        if (com.music.spotui.data.preferences.isDownloaded(context, song.id.toString())) {
+                            com.music.spotui.data.preferences.removeDownload(context, song.id.toString())
+                            SongPlayer.downloadSong(song, context)
+                        }
                         currentAlternative = getAlternativeStream(context, alternativeKey)
                         showYouTubeSearch = false
                         showAlternativeStream = false
@@ -1960,6 +1968,10 @@ fun PlayerOptionsSheet(
                             ).show()
                         } else {
                             setYouTubeAlternativeStream(context, alternativeKey, videoId)
+                            if (com.music.spotui.data.preferences.isDownloaded(context, song.id.toString())) {
+                                com.music.spotui.data.preferences.removeDownload(context, song.id.toString())
+                                SongPlayer.downloadSong(song, context)
+                            }
                             currentAlternative = getAlternativeStream(context, alternativeKey)
                             Toast.makeText(
                                 context,

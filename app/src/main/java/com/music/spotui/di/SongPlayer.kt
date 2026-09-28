@@ -517,6 +517,24 @@ object SongPlayer {
             player?.pause()
         }
 
+        // Unconditional offline playback: if this track is downloaded, play the local file immediately.
+        val immediateDownloadedPath = com.music.spotui.data.preferences.downloadedPathForQuery(appContext, song)
+        if (immediateDownloadedPath != null) {
+            runCatching {
+                ensurePlayer(appContext)
+                player?.pause()
+                currentSource = "Downloaded"
+                currentQuality = immediateDownloadedPath.substringAfterLast('.', "").uppercase()
+                val localUri = android.net.Uri.fromFile(java.io.File(immediateDownloadedPath))
+                player?.setMediaItem(MediaItem.fromUri(localUri))
+                player?.prepare()
+                player?.play()
+            }
+            boundState?.updateResolveDetailNote("Source: Downloaded Local File • Format: $currentQuality")
+            updateResolveStatus(false)
+            return
+        }
+
         // Podcast episodes are encoded as "episode:<id>" queries — play them via the
         // Spotify web player's episode page (same engine as tracks).
         if (song.startsWith("episode:") && webPlayerEnabled && SpotifyWebPlayer.canPlay &&

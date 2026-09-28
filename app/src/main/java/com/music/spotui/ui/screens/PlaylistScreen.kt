@@ -401,15 +401,13 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 )
                             }
                         }
-                        if (playlist.time.isNotBlank()) {
-                            Text(
-                                modifier = Modifier.padding(20.dp, 4.dp, 20.dp, 0.dp),
-                                text = playlist.time,
-                                color = Color.Gray,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
+                        Text(
+                            modifier = Modifier.padding(20.dp, 4.dp, 20.dp, 0.dp),
+                            text = "${songs.size} songs" + if (playlist.time.isNotBlank()) " • ${playlist.time}" else "",
+                            color = Color.Gray,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(20.dp, 4.dp, 0.dp, 0.dp)
@@ -727,7 +725,9 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                         color = currentColor,
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Medium,
-                                        maxLines = 1
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
                                     )
                                     if (com.music.spotui.data.preferences.isDownloaded(context, song.id.toString())) {
                                         Spacer(Modifier.width(6.dp))
