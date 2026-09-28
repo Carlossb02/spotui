@@ -1842,18 +1842,16 @@ object SongPlayer {
         val expectedArtists = expected.artist.split(Regex("""[,&]| and """, RegexOption.IGNORE_CASE))
             .map { it.trim() }
             .filter { it.isNotBlank() }
-        val candidateArtistText = candidate.artists.joinToString(" ") { it.name }
-        val uploaderArtistScore = expectedArtists.maxOfOrNull { artist ->
-            bigramSimilarity(candidateArtistText, artist)
-        } ?: bigramSimilarity(candidateArtistText, expected.artist)
-        val titleArtistScore = if (candidate.isVideoSong) {
-            expectedArtists.maxOfOrNull { artist ->
-                bigramSimilarity(candidate.title.substringBefore("-"), artist)
-            } ?: bigramSimilarity(candidate.title.substringBefore("-"), expected.artist)
-        } else {
-            0.0
-        }
-        val artistScore = maxOf(uploaderArtistScore, titleArtistScore)
+        
+        val primaryArtist = expectedArtists.firstOrNull() ?: expected.artist
+        val candidateTextAll = "${candidate.artists.joinToString(" ") { it.name }} ${candidate.title}"
+        
+        val primaryArtistScore = bigramSimilarity(candidateTextAll, primaryArtist)
+        val allArtistsScore = expectedArtists.maxOfOrNull { artist ->
+            bigramSimilarity(candidateTextAll, artist)
+        } ?: bigramSimilarity(candidateTextAll, expected.artist)
+        
+        val artistScore = maxOf(primaryArtistScore, allArtistsScore)
 
         val expectedDurationSec = expectedDurationMs / 1000.0
         val candidateDuration = candidate.duration
@@ -1891,7 +1889,7 @@ object SongPlayer {
             item = candidate,
             score = (baseScore - alternatePenalty).coerceAtLeast(0.0),
             titleScore = titleScore,
-            artistScore = uploaderArtistScore,
+            artistScore = allArtistsScore,
             artistEvidenceScore = artistScore,
             durationScore = durationScore,
             albumScore = albumScore,
@@ -1901,8 +1899,6 @@ object SongPlayer {
     }
 
     private fun CandidateScore.isAcceptableMatch(wantExplicit: Boolean? = null): Boolean {
-        val durationStrong = durationScore?.let { it >= 0.94 } ?: false
-        val albumUseful = albumScore?.let { it >= 0.45 } ?: false
         val hasDuration = durationScore != null
         val baseMinScore = when {
             hasDuration && item.isVideoSong -> 1.55
@@ -1910,27 +1906,15 @@ object SongPlayer {
             item.isVideoSong -> 0.78
             else -> 1.35
         }
-        // Penalise candidates whose explicit flag doesn't match the Spotify track.
-        // This makes it harder for a clean version to pass the gate when an
-        // explicit one is expected (and vice-versa).
         val explicitMismatch = wantExplicit != null && item.explicit != wantExplicit
         val minScore = if (explicitMismatch) baseMinScore + 0.6 else baseMinScore
 
-        // Duration is deliberately weighted heavily, as in spotify_to_ytmusic,
-        // but these gates prevent a same-length wrong-artist song from winning.
-        // If Spotify did not ask for a remix/live/acoustic/etc version, do not
-        // let that alternate upload win just because its title and length are close.
-        // When duration is missing, allow strong title+artist/album matches
-        // instead of rejecting every possible candidate.
         val hasUnexpectedHardAlternate = hardVersionMarkers(unexpectedAlternates).isNotEmpty()
+        // Strict artist match requirement: artistEvidenceScore must be at least 0.50 unconditionally
         return score >= minScore &&
             !hasUnexpectedHardAlternate &&
             titleScore >= 0.45 &&
-            (
-                artistEvidenceScore >= 0.40 ||
-                    (albumUseful && artistEvidenceScore >= 0.25) ||
-                    (durationStrong && artistEvidenceScore >= 0.35)
-                )
+            artistEvidenceScore >= 0.50
     }
 
     private suspend fun ensureSpotifyMatchMetadata(query: String): TrackMatchMetadata? {

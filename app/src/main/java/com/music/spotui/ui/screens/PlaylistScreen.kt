@@ -732,7 +732,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                     if (com.music.spotui.data.preferences.isDownloaded(context, song.id.toString())) {
                                         Spacer(Modifier.width(6.dp))
                                         Icon(
-                                            imageVector = Icons.Default.CheckCircle,
+                                            painter = painterResource(id = R.drawable.ic_download),
                                             contentDescription = "Downloaded",
                                             tint = Color(0xFF2196F3),
                                             modifier = Modifier.size(14.dp)
