@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -50,6 +51,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -106,6 +108,19 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     val playlistResp by playlistViewModel.playlist.collectAsState()
     val context = LocalContext.current
 
+    // Trigger dinámico para refrescar la UI automáticamente cuando una descarga termina
+    var downloadRefreshTrigger by remember { mutableStateOf(0) }
+    DisposableEffect(Unit) {
+        val oldCallback = SongPlayer.onDownloadsChanged
+        SongPlayer.onDownloadsChanged = {
+            oldCallback?.invoke()
+            downloadRefreshTrigger++
+        }
+        onDispose {
+            SongPlayer.onDownloadsChanged = oldCallback
+        }
+    }
+
     LaunchedEffect(playlistId) {
         playlistViewModel.loadPlaylist(playlistId)
     }
@@ -139,7 +154,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             SongPlayer.prefetchList(songs.map { it.url }, context)
         }
     }
-    
+
     var searchQuery by remember(playlistId) { mutableStateOf("") }
     var currentSort by remember(playlistId) { mutableStateOf(getPlaylistSortOption(context, playlistId)) }
     var isDescending by remember(playlistId) { mutableStateOf(isPlaylistSortDescending(context, playlistId)) }
@@ -154,7 +169,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                         it.singer.contains(searchQuery, ignoreCase = true)
             }
         }
-        
+
         when (currentSort) {
             PlaylistSortOption.DATE -> if (isDescending) filtered.reversed() else filtered
             PlaylistSortOption.TITLE -> if (isDescending) filtered.sortedByDescending { it.title.lowercase() } else filtered.sortedBy { it.title.lowercase() }
@@ -346,418 +361,433 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                         .fillMaxSize()
                         .background(Color(AppBackground.toArgb()))
                 ) {
-                item {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 440.dp)
-                            .padding(bottom = 8.dp)
-                            .background(
-                                brush = Brush.verticalGradient(
-                                    colors = listOf(dominentColor, Color(AppBackground.toArgb())),
-                                    startY = -100f,
-                                ),
-                            ),
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        Spacer(modifier = Modifier.padding(25.dp))
-
-                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            GlideImage(
-                                modifier = Modifier.size(230.dp),
-                                model = playlist.coverUri,
-                                failure = placeholder(R.drawable.placeholder),
-                                contentDescription = "",
-                            )
-                        }
-                        Spacer(modifier = Modifier.padding(5.dp))
-                        val isLocalPlaylist = playlistId.startsWith("local_pl_")
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
+                    item {
+                        Column(
                             modifier = Modifier
-                                .padding(20.dp, 5.dp, 20.dp, 0.dp)
-                                .then(
-                                    if (isLocalPlaylist) {
-                                        Modifier.clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null
-                                        ) { showRenameDialog = true }
-                                    } else Modifier
-                                )
+                                .fillMaxWidth()
+                                .heightIn(min = 440.dp)
+                                .padding(bottom = 8.dp)
+                                .background(
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(dominentColor, Color(AppBackground.toArgb())),
+                                        startY = -100f,
+                                    ),
+                                ),
+                            verticalArrangement = Arrangement.Center,
                         ) {
-                            Text(
-                                text = playlist.name.ifBlank { playlistName },
-                                color = Color.White,
-                                fontSize = 23.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            if (isLocalPlaylist) {
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = "Edit Playlist Name",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(20.dp)
+                            Spacer(modifier = Modifier.padding(25.dp))
+
+                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                GlideImage(
+                                    modifier = Modifier.size(230.dp),
+                                    model = playlist.coverUri,
+                                    failure = placeholder(R.drawable.placeholder),
+                                    contentDescription = "",
                                 )
                             }
-                        }
-                        Text(
-                            modifier = Modifier.padding(20.dp, 4.dp, 20.dp, 0.dp),
-                            text = "${songs.size} songs" + if (playlist.time.isNotBlank()) " • ${playlist.time}" else "",
-                            color = Color.Gray,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(20.dp, 4.dp, 0.dp, 0.dp)
-                        ) {
-                            if (playlistId.startsWith("local_pl_")) {
-                                Icon(
-                                    imageVector = Icons.Default.PhoneAndroid,
-                                    contentDescription = "Local Playlist",
-                                    tint = Color(0xFF1ED760),
-                                    modifier = Modifier
-                                        .size(14.dp)
-                                        .padding(end = 4.dp)
-                                )
+                            Spacer(modifier = Modifier.padding(5.dp))
+                            val isLocalPlaylist = playlistId.startsWith("local_pl_")
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .padding(20.dp, 5.dp, 20.dp, 0.dp)
+                                    .then(
+                                        if (isLocalPlaylist) {
+                                            Modifier.clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null
+                                            ) { showRenameDialog = true }
+                                        } else Modifier
+                                    )
+                            ) {
                                 Text(
-                                    text = "Local Playlist",
+                                    text = playlist.name.ifBlank { playlistName },
                                     color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium
+                                    fontSize = 23.sp,
+                                    fontWeight = FontWeight.Bold
                                 )
-                            } else if (playlist.artists.isNotBlank()) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (isLocalPlaylist) {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "Edit Playlist Name",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                modifier = Modifier.padding(20.dp, 4.dp, 20.dp, 0.dp),
+                                text = "${songs.size} songs" + if (playlist.time.isNotBlank()) " • ${playlist.time}" else "",
+                                color = Color.Gray,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(20.dp, 4.dp, 0.dp, 0.dp)
+                            ) {
+                                if (playlistId.startsWith("local_pl_")) {
+                                    Icon(
+                                        imageVector = Icons.Default.PhoneAndroid,
+                                        contentDescription = "Local Playlist",
+                                        tint = Color(0xFF1ED760),
+                                        modifier = Modifier
+                                            .size(14.dp)
+                                            .padding(end = 4.dp)
+                                    )
                                     Text(
-                                        text = "Playlist • ",
+                                        text = "Local Playlist",
                                         color = Color.White,
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Medium
                                     )
-                                    Text(
-                                        text = playlist.artists,
-                                        color = Color.White,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        modifier = Modifier.clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null,
-                                        ) {
-                                            if (playlistArtistList.size == 1) {
-                                                navController.navigate(artistRoute(playlistArtistList[0]))
-                                            } else if (playlistArtistList.size > 1) {
-                                                showArtistSheet = true
+                                } else if (playlist.artists.isNotBlank()) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = "Playlist • ",
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Text(
+                                            text = playlist.artists,
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            modifier = Modifier.clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null,
+                                            ) {
+                                                if (playlistArtistList.size == 1) {
+                                                    navController.navigate(artistRoute(playlistArtistList[0]))
+                                                } else if (playlistArtistList.size > 1) {
+                                                    showArtistSheet = true
+                                                }
                                             }
-                                        }
-                                    )
+                                        )
+                                    }
                                 }
                             }
-                        }
 
-                        Row(
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(52.dp)
-                                .padding(20.dp, 0.dp)
-                        ) {
-                            var playlistDownloaded by remember(songs) {
-                                mutableStateOf(songs.isNotEmpty() && SongPlayer.allDownloaded(songs, context))
-                            }
-
-                            if (snackbarVisible) {
-                                Box(modifier = Modifier.weight(1f)) {
-                                    Snackbar(showMessage = snackbarMessage)
+                            Row(
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(52.dp)
+                                    .padding(20.dp, 0.dp)
+                            ) {
+                                var playlistDownloaded by remember(songs, downloadRefreshTrigger) {
+                                    mutableStateOf(songs.isNotEmpty() && SongPlayer.allDownloaded(songs, context))
                                 }
-                                Spacer(modifier = Modifier.width(16.dp))
-                            } else {
-                                Row(
-                                    horizontalArrangement = Arrangement.Start,
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    if (songs.isNotEmpty()) {
-                                        // Add all playlist tracks to the queue.
-                                        Icon(
-                                            painter = painterResource(id = R.drawable.ic_queue_add),
-                                            tint = Color.White,
-                                            modifier = Modifier
-                                                .size(24.dp)
-                                                .clickable(
-                                                    interactionSource = remember { MutableInteractionSource() },
-                                                    indication = null,
-                                                ) {
-                                                    playlistViewModel.addAllToQueue(filteredSongs)
-                                                    android.widget.Toast.makeText(
-                                                        context,
-                                                        "${filteredSongs.size} track(s) added to queue",
-                                                        android.widget.Toast.LENGTH_SHORT,
-                                                    ).show()
-                                                },
-                                            contentDescription = "Add to queue",
-                                        )
-                                        Spacer(modifier = Modifier.width(18.dp))
-                                        Icon(
-                                            imageVector = if (playlistDownloaded)
-                                                Icons.Default.CheckCircle else ImageVector.vectorResource(R.drawable.ic_download),
-                                            tint = if (playlistDownloaded) Color(AppPalette.toArgb()) else Color.White,
-                                            modifier = Modifier
-                                                .size(24.dp)
-                                                .clickable(
-                                                    interactionSource = remember { MutableInteractionSource() },
-                                                    indication = null,
-                                                ) {
-                                                    com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollection(
-                                                        context = context,
-                                                        id = playlistId,
-                                                        name = playlist.name,
-                                                        coverUri = playlist.coverUri,
-                                                        artists = playlist.artists,
-                                                        isPlaylist = true,
-                                                        songs = songs
-                                                    )
-                                                    if (!playlistDownloaded) {
-                                                        SongPlayer.downloadAll(songs, context)
-                                                        snackbarMessage = "Downloading ${songs.size} tracks…"
-                                                        snackbarVisible = true
-                                                    } else {
-                                                        snackbarMessage = "Playlist added to offline library"
-                                                        snackbarVisible = true
-                                                    }
-                                                },
-                                            contentDescription = "Download playlist",
-                                        )
-                                        Spacer(modifier = Modifier.width(18.dp))
-                                        // Shuffle-play: start the playlist in random order.
-                                        Icon(
-                                            painter = painterResource(id = R.drawable.ic_player_shuffle),
-                                            tint = Color.White,
-                                            modifier = Modifier
-                                                .size(24.dp)
-                                                .clickable(
-                                                    interactionSource = remember { MutableInteractionSource() },
-                                                    indication = null,
-                                                ) {
-                                                    playlistViewModel.startShuffled(songs)?.let { first ->
-                                                        playlistViewModel.updateSongState(
-                                                            first.coverUri,
-                                                            first.title,
-                                                            first.singer,
-                                                            true,
-                                                            first.id,
-                                                            0,
-                                                            playlist.name,
-                                                        )
-                                                        SongPlayer.playSong(first.url, context, "song/${first.id}")
-                                                    }
-                                                },
-                                            contentDescription = "Shuffle play",
-                                        )
-                                        if (playlistId.startsWith("local_pl_")) {
-                                            Spacer(modifier = Modifier.width(18.dp))
+
+                                if (snackbarVisible) {
+                                    Box(modifier = Modifier.weight(1f)) {
+                                        Snackbar(showMessage = snackbarMessage)
+                                    }
+                                    Spacer(modifier = Modifier.width(16.dp))
+                                } else {
+                                    Row(
+                                        horizontalArrangement = Arrangement.Start,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        if (songs.isNotEmpty()) {
+                                            // Add all playlist tracks to the queue.
                                             Icon(
-                                                imageVector = Icons.Default.Delete,
-                                                contentDescription = "Delete Playlist",
+                                                painter = painterResource(id = R.drawable.ic_queue_add),
                                                 tint = Color.White,
                                                 modifier = Modifier
                                                     .size(24.dp)
                                                     .clickable(
                                                         interactionSource = remember { MutableInteractionSource() },
                                                         indication = null,
-                                                    ) { showDeleteDialog = true }
+                                                    ) {
+                                                        playlistViewModel.addAllToQueue(filteredSongs)
+                                                        android.widget.Toast.makeText(
+                                                            context,
+                                                            "${filteredSongs.size} track(s) added to queue",
+                                                            android.widget.Toast.LENGTH_SHORT,
+                                                        ).show()
+                                                    },
+                                                contentDescription = "Add to queue",
                                             )
-                                        }
-                                    }
-                                }
-                            }
-                            // Always visible: pause when playing, resume when this
-                            // list's track is paused, otherwise start from the top.
-                            if (songs.isNotEmpty()) {
-                                val playing = playlistViewModel.currentSongPlayingState.value
-                                val currentInList = songs.any { it.id == playlistViewModel.currentSongId.value }
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier
-                                        .size(52.dp)
-                                        .clip(RoundedCornerShape(100.dp))
-                                        .background(Color.White)
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null
-                                        ) {
-                                            when {
-                                                currentInList -> playlistViewModel.setPlaying(!playing)
-                                                filteredSongs.isNotEmpty() -> {
-                                                    playlistViewModel.updateQueue(filteredSongs)
-                                                    playlistViewModel.updateSongState(
-                                                        filteredSongs[0].coverUri,
-                                                        filteredSongs[0].title,
-                                                        filteredSongs[0].singer,
-                                                        true,
-                                                        filteredSongs[0].id,
-                                                        0,
-                                                        playlist.name
-                                                    )
-                                                    SongPlayer.playSong(filteredSongs[0].url, context, "song/${filteredSongs[0].id}")
-                                                }
+                                            Spacer(modifier = Modifier.width(18.dp))
+                                            Icon(
+                                                imageVector = if (playlistDownloaded)
+                                                    Icons.Default.CheckCircle else ImageVector.vectorResource(R.drawable.ic_download),
+                                                tint = if (playlistDownloaded) Color(AppPalette.toArgb()) else Color.White,
+                                                modifier = Modifier
+                                                    .size(24.dp)
+                                                    .clickable(
+                                                        interactionSource = remember { MutableInteractionSource() },
+                                                        indication = null,
+                                                    ) {
+                                                        com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollection(
+                                                            context = context,
+                                                            id = playlistId,
+                                                            name = playlist.name,
+                                                            coverUri = playlist.coverUri,
+                                                            artists = playlist.artists,
+                                                            isPlaylist = true,
+                                                            songs = songs
+                                                        )
+                                                        if (!playlistDownloaded) {
+                                                            SongPlayer.downloadAll(songs, context)
+                                                            snackbarMessage = "Downloading ${songs.size} tracks…"
+                                                            snackbarVisible = true
+                                                        } else {
+                                                            snackbarMessage = "Playlist added to offline library"
+                                                            snackbarVisible = true
+                                                        }
+                                                    },
+                                                contentDescription = "Download playlist",
+                                            )
+                                            Spacer(modifier = Modifier.width(18.dp))
+                                            // Shuffle-play: start the playlist in random order.
+                                            Icon(
+                                                painter = painterResource(id = R.drawable.ic_player_shuffle),
+                                                tint = Color.White,
+                                                modifier = Modifier
+                                                    .size(24.dp)
+                                                    .clickable(
+                                                        interactionSource = remember { MutableInteractionSource() },
+                                                        indication = null,
+                                                    ) {
+                                                        playlistViewModel.startShuffled(songs)?.let { first ->
+                                                            playlistViewModel.updateSongState(
+                                                                first.coverUri,
+                                                                first.title,
+                                                                first.singer,
+                                                                true,
+                                                                first.id,
+                                                                0,
+                                                                playlist.name,
+                                                            )
+                                                            SongPlayer.playSong(first.url, context, "song/${first.id}")
+                                                        }
+                                                    },
+                                                contentDescription = "Shuffle play",
+                                            )
+                                            if (playlistId.startsWith("local_pl_")) {
+                                                Spacer(modifier = Modifier.width(18.dp))
+                                                Icon(
+                                                    imageVector = Icons.Default.Delete,
+                                                    contentDescription = "Delete Playlist",
+                                                    tint = Color.White,
+                                                    modifier = Modifier
+                                                        .size(24.dp)
+                                                        .clickable(
+                                                            interactionSource = remember { MutableInteractionSource() },
+                                                            indication = null,
+                                                        ) { showDeleteDialog = true }
+                                                )
                                             }
                                         }
+                                    }
+                                }
+                                // Always visible: pause when playing, resume when this
+                                // list's track is paused, otherwise start from the top.
+                                if (songs.isNotEmpty()) {
+                                    val playing = playlistViewModel.currentSongPlayingState.value
+                                    val currentInList = songs.any { it.id == playlistViewModel.currentSongId.value }
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier
+                                            .size(52.dp)
+                                            .clip(RoundedCornerShape(100.dp))
+                                            .background(Color.White)
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null
+                                            ) {
+                                                when {
+                                                    currentInList -> playlistViewModel.setPlaying(!playing)
+                                                    filteredSongs.isNotEmpty() -> {
+                                                        playlistViewModel.updateQueue(filteredSongs)
+                                                        playlistViewModel.updateSongState(
+                                                            filteredSongs[0].coverUri,
+                                                            filteredSongs[0].title,
+                                                            filteredSongs[0].singer,
+                                                            true,
+                                                            filteredSongs[0].id,
+                                                            0,
+                                                            playlist.name
+                                                        )
+                                                        SongPlayer.playSong(filteredSongs[0].url, context, "song/${filteredSongs[0].id}")
+                                                    }
+                                                }
+                                            }
+                                    ) {
+                                        Icon(
+                                            modifier = Modifier.size(25.dp),
+                                            tint = Color.Black,
+                                            painter = painterResource(
+                                                id = if (currentInList && playing) R.drawable.ic_playing else R.drawable.play_svgrepo_com,
+                                            ),
+                                            contentDescription = if (currentInList && playing) "Pause" else "Play"
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Search bar for playlist ──
+                    item {
+                        AppSearchBar(
+                            query = searchQuery,
+                            onQueryChange = { searchQuery = it },
+                            modifier = Modifier.padding(20.dp, 8.dp),
+                            placeholder = "Search in playlist",
+                        )
+                    }
+
+                    // ── Sort action ──
+                    item {
+                        if (songs.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(20.dp, 0.dp, 20.dp, 8.dp),
+                                horizontalArrangement = Arrangement.Start
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .background(Color(0xFF2A2A30))
+                                        .clickable { showSortSheet = true }
+                                        .padding(horizontal = 14.dp, vertical = 8.dp)
                                 ) {
+                                    Text(
+                                        text = currentSort.getDescriptiveLabel(isDescending),
+                                        color = Color.White,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
                                     Icon(
-                                        modifier = Modifier.size(25.dp),
-                                        tint = Color.Black,
-                                        painter = painterResource(
-                                            id = if (currentInList && playing) R.drawable.ic_playing else R.drawable.play_svgrepo_com,
-                                        ),
-                                        contentDescription = if (currentInList && playing) "Pause" else "Play"
+                                        imageVector = Icons.Default.KeyboardArrowDown,
+                                        contentDescription = "Sort Options",
+                                        tint = Color.White,
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .padding(start = 4.dp)
                                     )
                                 }
                             }
                         }
                     }
-                }
 
-                // ── Search bar for playlist ──
-                item {
-                    AppSearchBar(
-                        query = searchQuery,
-                        onQueryChange = { searchQuery = it },
-                        modifier = Modifier.padding(20.dp, 8.dp),
-                        placeholder = "Search in playlist",
-                    )
-                }
-                
-                // ── Sort action ──
-                item {
-                    if (songs.isNotEmpty()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(20.dp, 0.dp, 20.dp, 8.dp),
-                            horizontalArrangement = Arrangement.Start
+                    itemsIndexed(filteredSongs, key = { _, song -> song.id }) { index, song ->
+                        val currentColor = if (song.id == playlistViewModel.currentSongId.value)
+                            Color(AppPalette.toArgb()) else Color.White
+
+                        // Forzar recomposición si el trigger de descargas cambia
+                        val isDownloaded = remember(downloadRefreshTrigger, song.id) {
+                            com.music.spotui.data.preferences.isDownloaded(context, song.id.toString())
+                        }
+
+                        SwipeToPlayNextWrapper(
+                            onPlayNext = {
+                                playerViewModel.playNext(song)
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "${song.title} will play next",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
                         ) {
                             Row(
+                                horizontalArrangement = Arrangement.Start,
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .background(Color(0xFF2A2A30))
-                                    .clickable { showSortSheet = true }
-                                    .padding(horizontal = 14.dp, vertical = 8.dp)
-                            ) {
-                                Text(
-                                    text = currentSort.getDescriptiveLabel(isDescending),
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.KeyboardArrowDown,
-                                    contentDescription = "Sort Options",
-                                    tint = Color.White,
-                                    modifier = Modifier
-                                        .size(16.dp)
-                                        .padding(start = 4.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                itemsIndexed(filteredSongs, key = { _, song -> song.id }) { index, song ->
-                    val currentColor = if (song.id == playlistViewModel.currentSongId.value)
-                        Color(AppPalette.toArgb()) else Color.White
-
-                    SwipeToPlayNextWrapper(
-                        onPlayNext = {
-                            playerViewModel.playNext(song)
-                            android.widget.Toast.makeText(
-                                context,
-                                "${song.title} will play next",
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                    ) {
-                        Row(
-                            horizontalArrangement = Arrangement.Start,
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(AppBackground)
-                                .combinedClickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    onLongClick = { menuSong = song },
-                                    onClick = {
-                                        playlistViewModel.updateQueue(filteredSongs)
-                                        playlistViewModel.updateSongState(
-                                            song.coverUri,
-                                            song.title,
-                                            song.singer,
-                                            true,
-                                            song.id,
-                                            index,
-                                            playlist.name
-                                        )
-                                        SongPlayer.playSong(song.url, context, "song/${song.id}")
-                                    },
-                                )
-                                .padding(20.dp, 8.dp)
-                        ) {
-                            GlideImage(
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(RoundedCornerShape(4.dp)),
-                                model = song.coverUri,
-                                failure = placeholder(R.drawable.placeholder),
-                                contentScale = ContentScale.Crop,
-                                contentDescription = ""
-                            )
-                            Column(modifier = Modifier.padding(start = 12.dp).width(280.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (song.explicit) {
-                                        com.music.spotui.ui.components.ExplicitBadge()
-                                        Spacer(Modifier.width(4.dp))
-                                    }
-                                    Text(
-                                        text = song.title,
-                                        color = currentColor,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        maxLines = 1,
-                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f, fill = false)
+                                    .fillMaxWidth()
+                                    .background(AppBackground)
+                                    .combinedClickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        onLongClick = { menuSong = song },
+                                        onClick = {
+                                            playlistViewModel.updateQueue(filteredSongs)
+                                            playlistViewModel.updateSongState(
+                                                song.coverUri,
+                                                song.title,
+                                                song.singer,
+                                                true,
+                                                song.id,
+                                                index,
+                                                playlist.name
+                                            )
+                                            SongPlayer.playSong(song.url, context, "song/${song.id}")
+                                        },
                                     )
-                                    if (com.music.spotui.data.preferences.isDownloaded(context, song.id.toString())) {
-                                        Spacer(Modifier.width(6.dp))
-                                        Icon(
-                                            painter = painterResource(id = R.drawable.ic_download),
-                                            contentDescription = "Downloaded",
-                                            tint = Color(0xFF2196F3),
-                                            modifier = Modifier.size(14.dp)
+                                    .padding(20.dp, 8.dp)
+                            ) {
+                                GlideImage(
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(RoundedCornerShape(4.dp)),
+                                    model = song.coverUri,
+                                    failure = placeholder(R.drawable.placeholder),
+                                    contentScale = ContentScale.Crop,
+                                    contentDescription = ""
+                                )
+                                Column(modifier = Modifier.padding(start = 12.dp).width(280.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (song.explicit) {
+                                            com.music.spotui.ui.components.ExplicitBadge()
+                                            Spacer(Modifier.width(4.dp))
+                                        }
+                                        Text(
+                                            text = song.title,
+                                            color = currentColor,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+                                    }
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (isDownloaded) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(14.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(0xFF1ED760)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    painter = painterResource(id = R.drawable.ic_download),
+                                                    contentDescription = "Downloaded",
+                                                    tint = Color.Black,
+                                                    modifier = Modifier.size(10.dp)
+                                                )
+                                            }
+                                            Spacer(Modifier.width(6.dp))
+                                        }
+                                        Text(
+                                            text = song.singer,
+                                            color = Color.Gray,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1
                                         )
                                     }
                                 }
-                                Text(
-                                    text = song.singer,
-                                    color = Color.Gray,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 1
-                                )
                             }
                         }
                     }
-                }
 
-                item { Spacer(modifier = Modifier.height(160.dp)) }
+                    item { Spacer(modifier = Modifier.height(160.dp)) }
+                }
+                com.music.spotui.ui.components.FastScrollbarForLazyList(
+                    state = listState,
+                    modifier = Modifier.align(androidx.compose.ui.Alignment.CenterEnd)
+                )
             }
-            com.music.spotui.ui.components.FastScrollbarForLazyList(
-                state = listState,
-                modifier = Modifier.align(androidx.compose.ui.Alignment.CenterEnd)
-            )
-        }
         }
         if (showSortSheet) {
             ModalBottomSheet(
@@ -811,12 +841,12 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 modifier = Modifier.size(22.dp)
                             )
                             Spacer(modifier = Modifier.width(18.dp))
-                             Text(
-                                 text = if (isSelected) option.getDescriptiveLabel(isDescending) else option.getDescriptiveLabel(option == PlaylistSortOption.DATE),
-                                 color = if (isSelected) Color(AppPalette.toArgb()) else Color.White,
-                                 fontSize = 15.sp,
-                                 modifier = Modifier.weight(1f)
-                             )
+                            Text(
+                                text = if (isSelected) option.getDescriptiveLabel(isDescending) else option.getDescriptiveLabel(option == PlaylistSortOption.DATE),
+                                color = if (isSelected) Color(AppPalette.toArgb()) else Color.White,
+                                fontSize = 15.sp,
+                                modifier = Modifier.weight(1f)
+                            )
                             if (isSelected) {
                                 Icon(
                                     imageVector = if (isDescending) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
@@ -833,4 +863,3 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         }
     }
 }
-

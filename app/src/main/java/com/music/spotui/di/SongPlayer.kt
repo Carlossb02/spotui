@@ -18,6 +18,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -88,6 +90,8 @@ object SongPlayer {
     // Cache of resolved YouTube video candidates keyed by the play query
     private val videoCandidatesCache = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
 
+    @kotlin.OptIn(androidx.media3.common.util.UnstableApi::class)
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun clearCaches(context: Context) {
         val appContext = context.applicationContext
         streamCache.clear()
@@ -98,6 +102,8 @@ object SongPlayer {
         inFlightResolutions.values.forEach { runCatching { it.cancel() } }
         inFlightResolutions.clear()
         alternativeKeyRegistry.clear()
+        providerBlocklist.clear()
+        durationVerified.clear()
         com.metrolist.music.utils.YTPlayerUtils.resetSession(appContext)
         com.music.spotui.data.preferences.clearAllCachedStreams(appContext)
         com.music.spotui.data.preferences.clearAllAlternativeStreams(appContext)
@@ -149,11 +155,6 @@ object SongPlayer {
         }
     }
 
-    // ── Lossless (SpotiFLAC) ──
-    // When enabled, playback first tries to resolve a lossless FLAC stream (Tidal/
-    // Amazon via SpotiFLAC's free community proxies) for the current track and only
-    // falls back to YouTube if no FLAC is available or the proxies are throttled.
-    // Trades a little first-tap latency for true lossless audio.
     @Volatile var losslessStreaming = true
     @Volatile var losslessHiRes = true
 
@@ -182,21 +183,12 @@ object SongPlayer {
         return title.ifBlank { raw }
     }
 
-    // Source kill-switches. The Spotify web player is currently broken (off).
-    // YouTube is the last-resort fallback, kept on so tracks SpotiFLAC misses or
-    // can't serve during a proxy cooldown still play — with the wrong-song guards
-    // (videoId match check + artist/title scoring + candidate fallback).
     @Volatile var webPlayerEnabled = false
     @Volatile var youtubeEnabled = true
     @Volatile var deezerEnabled = true
 
-    // Which engine is feeding the CURRENT track, for the on-screen source badge.
-    // "Lossless" (SpotiFLAC: Tidal/Qobuz/Amazon) is NOT Spotify — surfaced so the
-    // user knows real Spotify vs a lossless mirror vs the YouTube fallback.
     @Volatile var currentSource: String = "YouTube"
         private set
-    // Human-readable quality of the CURRENT stream (e.g. "FLAC 16-bit",
-    // "OPUS 141 kbps"), shown next to the source badge.
     @Volatile var currentQuality: String = ""
         private set
 
@@ -207,21 +199,16 @@ object SongPlayer {
     }
     private val qualityCache = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val qualityTierCache = java.util.concurrent.ConcurrentHashMap<String, String>()
-    // Maps a "title artist" play query -> the track's real Spotify id, so the
-    // lossless resolver can be seeded from a play site that only has the query.
-    // Populated centrally whenever the queue changes (see CurrentSongState).
     private val trackIdRegistry = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val isrcRegistry = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val alternativeKeyRegistry = java.util.concurrent.ConcurrentHashMap<String, String>()
 
-    /** Register query→spotifyTrackId pairs so lossless can be resolved by query. */
     fun registerLossless(pairs: List<Pair<String, String>>) {
         pairs.forEach { (query, spotifyId) ->
             if (query.isNotBlank() && spotifyId.isNotBlank()) trackIdRegistry[query] = spotifyId
         }
     }
 
-    /** Register spotifyTrackId -> ISRC mapping so Qobuz matching can succeed during streaming. */
     fun registerIsrc(spotifyTrackId: String, isrc: String) {
         if (spotifyTrackId.isNotBlank() && isrc.isNotBlank()) {
             isrcRegistry[spotifyTrackId] = isrc
@@ -234,22 +221,16 @@ object SongPlayer {
         }
     }
 
-    // Whether each play query is the explicit version on Spotify, so the YouTube
-    // fallback can pick the matching (explicit vs clean) edit.
     private val explicitRegistry = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
 
-    /** Register query→explicit pairs (populated whenever the queue changes). */
     fun registerExplicit(pairs: List<Pair<String, Boolean>>) {
         pairs.forEach { (query, explicit) ->
             if (query.isNotBlank()) explicitRegistry[query] = explicit
         }
     }
 
-    // Expected track length (ms) per query, from Spotify — lets the YouTube match
-    // reject a same-title song by a different artist (different duration).
     private val durationRegistry = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
-    /** Register query→durationMs pairs (populated whenever the queue changes). */
     fun registerDuration(pairs: List<Pair<String, Int>>) {
         pairs.forEach { (query, ms) ->
             if (query.isNotBlank() && ms > 0) durationRegistry[query] = ms
@@ -265,21 +246,16 @@ object SongPlayer {
     private val metadataRegistry =
         java.util.concurrent.ConcurrentHashMap<String, TrackMatchMetadata>()
 
-    /** Register query→Spotify metadata pairs for strict YouTube result scoring. */
     fun registerMetadata(pairs: List<Pair<String, TrackMatchMetadata>>) {
         pairs.forEach { (query, meta) ->
             if (query.isNotBlank() && meta.title.isNotBlank()) metadataRegistry[query] = meta
         }
     }
-    // Tracks which query is the latest play request so a slow resolve for an old
-    // tap doesn't clobber a newer one (fast switching).
+
     @Volatile private var currentRequest: String = ""
     @Volatile private var loadedQuery: String? = null
     @Volatile private var playWhenResolved = true
 
-    // Latest track metadata (title / artist / cover URL) so the MediaItem we build
-    // carries it into the system media notification. Set via [setNowPlayingMeta]
-    // (driven by CurrentSongState) just before / as playback starts.
     @Volatile private var metaTitle: String = ""
     @Volatile private var metaArtist: String = ""
     @Volatile private var metaCover: String = ""
@@ -340,12 +316,6 @@ object SongPlayer {
         }
     }
 
-    /**
-     * Build a stable playback identity for Spotify tracks. The full value is used
-     * as cache/registry key, while only the text after "|" is sent to YouTube
-     * search. This prevents same-title/same-artist tracks from reusing each
-     * other's resolved stream.
-     */
     fun buildSpotifyPlayQuery(spotifyTrackId: String, title: String, artist: String): String {
         val cleanArtist = artist.replace(",", " ").replace("  ", " ").trim()
         val searchText = listOf(cleanSpotifySearchTitle(title), cleanArtist)
@@ -412,8 +382,8 @@ object SongPlayer {
         sourceCache.remove(song)
         qualityCache.remove(song)
         qualityTierCache.remove(song)
-        videoCandidatesCache.remove("$song|FILTER_SONG")
-        videoCandidatesCache.remove("$song|FILTER_VIDEO")
+        videoCandidatesCache.remove("$song|FILTER_SONG|MATCH_V6")
+        videoCandidatesCache.remove("$song|FILTER_VIDEO|MATCH_V6")
         appCtx?.let { ctx ->
             com.music.spotui.data.preferences.clearCachedVideoId(ctx, song)
             com.music.spotui.data.preferences.clearCachedStream(ctx, song)
@@ -448,13 +418,11 @@ object SongPlayer {
         if (songUrl.isBlank()) return
         val appContext = context.applicationContext
 
-        // 1. Clear memory & disk cache for this track ONLY
         invalidateResolvedStream(songUrl)
         inFlightResolutions.remove(songUrl)?.cancel()
 
         val matchSong = boundState?.queue?.value?.firstOrNull { it.url == songUrl }
 
-        // Clear stored alternative stream overrides if requested (e.g. manual Invalidate Cache tap)
         if (clearAltStream) {
             val altKey = alternativeKeyRegistry.remove(songUrl)
             if (altKey != null) {
@@ -469,7 +437,6 @@ object SongPlayer {
             }
         }
 
-        // 2. Determine if currently playing
         val currentPlayingId = boundState?.songId?.value
         val isCurrentlyPlaying = (songId != null && songId != 0 && currentPlayingId == songId) ||
                 (boundState?.songUrl?.value == songUrl && songUrl.isNotBlank())
@@ -496,15 +463,111 @@ object SongPlayer {
 
     @Volatile private var currentMediaId: String? = null
 
+    // ── Recording verification (safety net for every non-YouTube provider) ────
+    //
+    // Amazon / Qobuz / TIDAL / Deezer / SoundCloud match on their own. When one of them hands
+    // back a live/alternate cut, the only reliable tell is its duration. After prepare() we wait
+    // for the real duration; if it disagrees with Spotify's, that provider is blocked for the
+    // track, its caches are dropped and resolution runs again with the next provider (finally
+    // the strict YouTube matcher).
+
+    /** Turn off if a provider reports unreliable durations. */
+    @Volatile var durationGuardEnabled = true
+
+    private const val MATCH_PURGE_KEY = "match_v6_purged"
+    private val providerBlocklist = java.util.concurrent.ConcurrentHashMap<String, Set<String>>()
+    private val durationVerified: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    private var durationGuard: androidx.media3.common.Player.Listener? = null
+    private var durationGuardPlayer: ExoPlayer? = null
+
+    private fun isProviderSource(source: String): Boolean =
+        source.isNotBlank() && source != "YouTube" && source != "Spotify" && source != "Downloaded" &&
+                source != "Local file" && !source.startsWith("Alternative")
+
+    /** "Lossless • Qobuz" -> "Qobuz", "SpotiFLAC (Tidal)" -> "SpotiFLAC". */
+    private fun providerKeyFromSource(source: String): String? =
+        source.substringAfter("• ", source).trim().substringBefore(' ').substringBefore('(').trim()
+            .takeIf { it.isNotBlank() }
+
+    private fun expectedDurationMs(song: String): Long? =
+        durationRegistry[song]?.toLong()?.takeIf { it > 0 }
+            ?: boundState?.queue?.value?.firstOrNull { it.url == song }?.durationMs?.toLong()?.takeIf { it > 0 }
+
+    /**
+     * Main thread, right after prepare(). Returns true when the guard has taken over
+     * `playWhenReady` (playback starts as soon as the duration is confirmed).
+     */
+    private fun armDurationGuard(p: ExoPlayer, song: String, ctx: Context): Boolean {
+        durationGuard?.let { old -> runCatching { durationGuardPlayer?.removeListener(old) } }
+        durationGuard = null
+        if (!durationGuardEnabled || song in durationVerified) return false
+        val source = currentSource
+        if (!isProviderSource(source)) return false
+        val providerKey = providerKeyFromSource(source) ?: return false
+        val wantMs = expectedDurationMs(song) ?: return false
+        if ((providerBlocklist[song]?.size ?: 0) >= 3) return false
+
+        val listener = object : androidx.media3.common.Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state != androidx.media3.common.Player.STATE_READY) return
+                p.removeListener(this)
+                if (durationGuard === this) durationGuard = null
+                if (currentRequest != song || player !== p) return
+                val actual = p.duration
+                if (actual <= 0L || actual == androidx.media3.common.C.TIME_UNSET) {
+                    p.playWhenReady = playWhenResolved
+                    return
+                }
+                val tolerance = maxOf(3_000L, wantMs / 100)
+                if (abs(actual - wantMs) <= tolerance) {
+                    durationVerified.add(song)
+                    logResolution("✓ duration verified: ${actual / 1000}s vs ${wantMs / 1000}s ($source)")
+                    p.playWhenReady = playWhenResolved
+                    return
+                }
+                logResolution("✗ $source rejected: stream lasts ${actual / 1000}s, track is ${wantMs / 1000}s (different version)")
+                Log.w(TAG, "duration guard: $source gave ${actual}ms, expected ${wantMs}ms for $song — switching provider")
+                providerBlocklist.merge(song, setOf(providerKey)) { old, new -> old + new }
+                invalidateResolvedStream(song)
+                playSong(song, ctx, currentMediaId)
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                p.removeListener(this)
+                if (durationGuard === this) durationGuard = null
+                p.playWhenReady = playWhenResolved
+            }
+        }
+        durationGuard = listener
+        durationGuardPlayer = p
+        p.addListener(listener)
+        return true
+    }
+
+    /**
+     * The matcher changed: streams cached by the previous version (disk cache, resolved video
+     * ids, ExoPlayer media cache) may point at the wrong recording. Purge them once.
+     */
+    private fun purgeLegacyMatchCachesOnce(ctx: Context) {
+        val prefs = ctx.getSharedPreferences("spotui_matcher", Context.MODE_PRIVATE)
+        if (prefs.getBoolean(MATCH_PURGE_KEY, false)) return
+        prefs.edit().putBoolean(MATCH_PURGE_KEY, true).apply()
+        runCatching {
+            com.music.spotui.data.preferences.clearAllCachedStreams(ctx)
+            com.music.spotui.data.preferences.clearAllResolvedVideos(ctx)
+            mediaCache?.keys?.forEach { key -> runCatching { mediaCache?.removeResource(key) } }
+        }.onFailure { Log.w(TAG, "legacy match cache purge failed", it) }
+    }
+
     fun playSong(song: String, context: Context, mediaId: String? = null) {
         val appContext = context.applicationContext
         appCtx = appContext
+        purgeLegacyMatchCachesOnce(appContext)
         currentRequest = song
         val resolvedMediaId = mediaId ?: boundState?.queue?.value?.firstOrNull { it.url == song }?.let { "song/${it.id}" }
         ?: boundState?.songId?.value?.let { if (it != 0) "song/$it" else null }
         currentMediaId = resolvedMediaId
 
-        // Immediately populate now-playing metadata if matching track exists in queue
         val matchTrack = boundState?.queue?.value?.firstOrNull { it.url == song }
             ?: (resolvedMediaId?.removePrefix("song/")?.toIntOrNull())?.let { id ->
                 boundState?.queue?.value?.firstOrNull { it.id == id }
@@ -516,19 +579,13 @@ object SongPlayer {
         }
 
         playWhenResolved = true
-        // Remember the play-query so history can replay this track on tap.
         boundState?.setSongUrl(song)
-        // A manual play (tap / next / prev) supersedes any in-flight crossfade.
         cancelCrossfade()
-        // Do not clear the media items while resolving the next song in the background.
-        // Keeping the player paused with the previous track active keeps the Media3
-        // foreground service and lockscreen notification alive, avoiding background start bans.
         runCatching {
             ensurePlayer(appContext)
             player?.pause()
         }
 
-        // Unconditional offline playback: if this track is downloaded, play the local file immediately.
         val immediateDownloadedPath = com.music.spotui.data.preferences.downloadedPathForQuery(appContext, song)
         if (immediateDownloadedPath != null) {
             runCatching {
@@ -546,8 +603,6 @@ object SongPlayer {
             return
         }
 
-        // Podcast episodes are encoded as "episode:<id>" queries — play them via the
-        // Spotify web player's episode page (same engine as tracks).
         if (song.startsWith("episode:") && webPlayerEnabled && SpotifyWebPlayer.canPlay &&
             com.music.spotui.data.preferences.isWebPlaybackEnabled(appContext)
         ) {
@@ -558,14 +613,8 @@ object SongPlayer {
             return
         }
 
-        // Downloaded tracks ALWAYS play the local file — even with Spotify web
-        // playback on. (Web is now the default and used to run first, so a
-        // downloaded track streamed from Spotify instead of playing offline.)
         val downloadedPath = com.music.spotui.data.preferences.downloadedPathForQuery(appContext, song)
         if (downloadedPath == null && webPlayerEnabled &&
-            // Experimental: stream through Spotify's own web player (real Spotify audio,
-            // no bypass) when enabled AND the device WebView has Widevine. Otherwise
-            // fall through to the normal YouTube/FLAC engine so playback is never silent.
             com.music.spotui.data.preferences.isWebPlaybackEnabled(appContext) &&
             SpotifyWebPlayer.canPlay
         ) {
@@ -589,7 +638,6 @@ object SongPlayer {
             try {
                 val streamUrl = resolveStreamUrl(song, appContext, forPlayback = true) ?: run {
                     releaseWakeLock("spotui:playSong")
-                    // Tell the user instead of silently leaving the request on.
                     val existingError = boundState?.resolveError?.value
                     if (currentRequest == song && existingError.isNullOrBlank()) {
                         withContext(Dispatchers.Main) {
@@ -605,7 +653,6 @@ object SongPlayer {
                     updateResolveStatus(false)
                     return@launch
                 }
-                // A newer tap superseded this one while we were resolving — drop it.
                 if (currentRequest != song) {
                     releaseWakeLock("spotui:playSong")
                     updateResolveStatus(false)
@@ -620,12 +667,14 @@ object SongPlayer {
                     ensurePlayer(appContext)
                     player!!.setMediaItem(buildMediaItem(streamUrl, streamMimeType(streamUrl), song))
                     player!!.prepare()
-                    // Restored session: continue from where the last run stopped.
                     if (song == restoreQuery && restorePositionMs > 0) {
                         player!!.seekTo(restorePositionMs)
                     }
                     restoreQuery = null
-                    player!!.playWhenReady = playWhenResolved
+                    // Lossless providers do their own (unseen) matching: hold playback until the
+                    // stream's real duration confirms it is the recording we asked for.
+                    val guarded = armDurationGuard(player!!, song, appContext)
+                    player!!.playWhenReady = playWhenResolved && !guarded
                     loadedQuery = song
                     updateResolveStatus(false)
                 }
@@ -639,8 +688,6 @@ object SongPlayer {
         }
     }
 
-    // Build a MediaItem carrying the current track's metadata so the system media
-    // notification (MediaSession) shows the right title / artist / artwork.
     private fun buildMediaItem(streamUrl: String, mimeType: String? = null, songQuery: String = ""): MediaItem {
         val metadataBuilder = androidx.media3.common.MediaMetadata.Builder()
             .setTitle(metaTitle)
@@ -658,15 +705,11 @@ object SongPlayer {
             .apply { currentMediaId?.let { setMediaId(it) } }
             .setUri(streamUrl)
             .setCustomCacheKey(stableKey)
-            // Hint the container so ExoPlayer picks the right source/extractor even
-            // when the URL has no extension: TIDAL lossless is a DASH .mpd manifest,
-            // and single-file lossless is FLAC.
             .apply { if (mimeType != null) setMimeType(mimeType) }
             .setMediaMetadata(metadata)
             .build()
     }
 
-    /** MIME hint for a resolved stream: DASH manifest, single-file FLAC, or none. */
     private fun streamMimeType(streamUrl: String): String? {
         val bare = streamUrl.substringBefore('?').lowercase()
         return when {
@@ -682,14 +725,10 @@ object SongPlayer {
         }
     }
 
-    /** Warm the cache for an upcoming track (e.g. the next/previous queue item). */
     fun prefetch(song: String, context: Context) {
         if (song.isBlank() || streamCache.containsKey(song)) return
         val appContext = context.applicationContext
-        // No point resolving streams while Spotify web is the active engine.
         if (webPlaybackActive()) return
-        // Lossless FLAC & YouTube pre-buffering uses LosslessCacheKeyFactory
-        // and ResolvingDataSource to handle stream URLs seamlessly.
         scope.launch {
             acquireWakeLock(appContext, "spotui:prefetch", 30_000L)
             try {
@@ -701,25 +740,9 @@ object SongPlayer {
         }
     }
 
-    /**
-     * Warm the cache for the first [count] tracks of a freshly-loaded list
-     * (album/artist/search). Resolves them sequentially so we don't fire a dozen
-     * PoToken/player chains at once, but get the likely-next taps ready ahead of
-     * time — this is what kills the "~3s per track" first-tap latency.
-     */
     fun prefetchList(songs: List<String>, context: Context, count: Int = 4) {
-        // Do not resolve streams for whole result/album lists. That made search
-        // and album screens kick off several network player/FLAC lookups before
-        // the user chose anything, which feels like the app is downloading the
-        // catalog instead of streaming the tapped song.
     }
 
-    // ── Intro preloading (instant playback) ──
-    // Resolving the stream URL hides most latency, but ExoPlayer still has to open the
-    // connection and buffer the first segment on tap. We pre-cache the first ~1 MB (≈20–40s
-    // of audio) of upcoming tracks into a media cache the player reads through, so a tap on a
-    // preloaded track starts almost instantly. Skipped for local files (already instant) and
-    // when the user turns preloading off in Settings.
     private const val PRELOAD_BYTES = 1L * 1024 * 1024
 
     @Volatile private var mediaCache: androidx.media3.datasource.cache.SimpleCache? = null
@@ -789,7 +812,6 @@ object SongPlayer {
         )
     }
 
-    /** Pre-cache the first [PRELOAD_BYTES] of [url] into the media cache (http(s) only). */
     private fun cacheIntro(url: String, appContext: Context) {
         if (!url.startsWith("http")) return
         if (!com.music.spotui.data.preferences.isPreloadEnabled(appContext)) return
@@ -808,10 +830,6 @@ object SongPlayer {
 
     private val inFlightResolutions = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<String?>>()
 
-    // forPlayback=true only for the track actually being played — so background
-    // prefetch of upcoming tracks doesn't clobber the current source badge (a
-    // prefetch resolving the NEXT track via YouTube was flipping the badge to
-    // "YouTube" while the current track streamed from Spotify).
     internal suspend fun resolveStreamUrl(song: String, appContext: Context, forPlayback: Boolean = false): String? {
         if (song.startsWith("content://") || song.startsWith("file://")) {
             if (forPlayback) {
@@ -822,9 +840,6 @@ object SongPlayer {
             return song
         }
 
-        // If an in-flight resolution for this exact song query is already running
-        // (e.g. background prefetch was resolving it and user tapped to play it),
-        // await the existing in-flight job instead of starting from scratch!
         val existingDeferred = inFlightResolutions[song]
         if (existingDeferred != null && existingDeferred.isActive) {
             val trackMeta = metadataRegistry[song]
@@ -848,8 +863,6 @@ object SongPlayer {
                 }
                 return result
             }
-            // If the in-flight prefetch returned null (e.g. initial attempt failed/cancelled),
-            // fall through to attempt fresh resolution for playback.
         }
 
         val deferred = scope.async {
@@ -910,14 +923,11 @@ object SongPlayer {
                 qualityTierCache.remove(song)
             }
         }
-        // Persistent stream cache: survives app restarts. YouTube URLs are cached
-        // with their server-provided expiry so stale entries are never served.
         if (forPlayback) {
             updateResolveStatus(true, "Checking saved cache...")
         }
         com.music.spotui.data.preferences.getCachedStream(appContext, song, expectedTier = expectedTier)?.let { (url, source, cachedQuality) ->
             if (YTPlayerUtils.validateStatus(url)) {
-                // Promote back into the in-memory caches for this session.
                 streamCache[song] = url
                 sourceCache[song] = source
                 qualityCache[song] = cachedQuality
@@ -986,7 +996,6 @@ object SongPlayer {
                 }
             }
         }
-        // Offline: if this track was downloaded, play the local file instead of the network.
         if (forPlayback) {
             updateResolveStatus(true, "Locating local file...")
         }
@@ -1001,15 +1010,7 @@ object SongPlayer {
             }
             return android.net.Uri.fromFile(java.io.File(path)).toString()
         }
-        // Quality for the current network (Wi-Fi vs cellular), from Settings (already retrieved as quality above).
-        // ── Parallel resolution ──
-        // FLAC community proxies are slow and unreliable. Instead of blocking on
-        // FLAC first then starting YouTube after it fails, we launch both in
-        // parallel. If FLAC wins, we cancel YouTube. If FLAC loses (timeout/
-        // cooldown/miss), YouTube is already resolved — no wait.
-        //
-        // The candidates/search step of resolveYtPlayback also runs in this scope;
-        // if FLAC succeeds, that search result is just discarded.
+
         val shouldTryFlac = losslessStreaming && quality.lossless
         val shouldTryYoutube = youtubeEnabled
 
@@ -1035,10 +1036,9 @@ object SongPlayer {
 
         val flacDeferred = if (shouldTryFlac) {
             scope.async {
-                // Resolve ISRC and metadata *before* the provider loop so these
-                // network calls don't eat into the provider time budget.
+                withTimeoutOrNull(5000L) { runCatching { ensureSpotifyMatchMetadata(song) } }
                 val isrc = (flacSpotifyId?.let { isrcRegistry[it] }) ?: runCatching {
-                    withTimeoutOrNull(1500L) {
+                    withTimeoutOrNull(4000L) {
                         flacSpotifyId?.let { id ->
                             com.metrolist.spotify.Spotify.track(id).getOrNull()?.isrc?.also { code ->
                                 isrcRegistry[id] = code
@@ -1046,7 +1046,7 @@ object SongPlayer {
                         }
                     }
                 }.getOrNull()
-                val durationMs = songDurationMs
+                val durationMs = songDurationMs ?: durationRegistry[song]?.toLong()
                 val providerOrder = com.music.spotui.data.preferences.getEnabledAudioProviderOrder(appContext)
 
                 if (forPlayback) {
@@ -1054,9 +1054,6 @@ object SongPlayer {
                     if (isrc != null) logResolution("Spotify ISRC: $isrc")
                 }
 
-                // No outer timeout — each provider manages its own network
-                // timeouts internally. The previous withTimeoutOrNull(4-8s)
-                // was starving providers since ISRC resolution alone took ~3s.
                 if (forPlayback) {
                     logResolution("Query: mediaId=${flacSpotifyId ?: "(none)"}, title='$cleanTitle', artist='$songArtist', isrc=${isrc ?: "(none)"}, duration=${durationMs ?: "(none)"}ms")
                 }
@@ -1064,6 +1061,11 @@ object SongPlayer {
                 var dzLossyFallback: Triple<String, String, String>? = null
                 for (item in providerOrder) {
                     if (result != null) break
+                    val blockedKeys = providerBlocklist[song].orEmpty()
+                    if (blockedKeys.any { key -> item.displayName.contains(key, ignoreCase = true) }) {
+                        if (forPlayback) logResolution("⊘ ${item.displayName}: skipped (previously returned a different version)")
+                        continue
+                    }
                     when (item) {
                         com.music.spotui.data.preferences.AudioProviderOrderItem.AMAZON -> {
                             if (forPlayback) logResolution("Attempting Amazon Music...")
@@ -1258,9 +1260,14 @@ object SongPlayer {
 
         var flacFailReason: String? = null
 
-        // Check FLAC first — try all providers in priority order
         if (flacDeferred != null) {
-            val flacResult = flacDeferred.await()
+            val flacResult = if (ytDeferred != null && forPlayback) {
+                kotlinx.coroutines.withTimeoutOrNull(1200L) {
+                    flacDeferred.await()
+                }
+            } else {
+                flacDeferred.await()
+            }
             if (flacResult != null) {
                 val (url, providerName, flacQuality) = flacResult
                 val isLossless = flacQuality.contains("FLAC", ignoreCase = true) ||
@@ -1286,12 +1293,12 @@ object SongPlayer {
                 ytDeferred?.cancelAndJoin()
                 return url
             } else {
-                flacFailReason = "All lossless providers failed"
-                Log.w(TAG, "All lossless providers failed, using YouTube fallback for: $song")
+                flacFailReason = "Lossless providers timed out or failed"
+                flacDeferred.cancel()
+                Log.w(TAG, "Lossless providers timed out or failed, using YouTube fallback for: $song")
             }
         }
 
-        // FLAC didn't work — use YouTube (already resolving in parallel).
         if (!shouldTryYoutube) {
             Log.w(TAG, "YouTube fallback disabled — no stream for: $song")
             if (forPlayback) updateResolveStatus(false)
@@ -1307,7 +1314,6 @@ object SongPlayer {
                 "Source: YouTube • Quality: ${quality.audioQuality}"
             }
             boundState?.updateResolveDetailNote(note)
-            // Show resolve status only if YouTube is not fully loaded yet.
             if (ytDeferred != null && !ytDeferred.isCompleted) {
                 updateResolveStatus(true, "Locating YouTube source...")
             }
@@ -1316,7 +1322,7 @@ object SongPlayer {
         val playback = ytDeferred!!.await()
         if (playback == null) {
             if (forPlayback) {
-                val cacheKey = "$song|${com.metrolist.innertube.YouTube.SearchFilter.FILTER_SONG.value}"
+                val cacheKey = "$song|${com.metrolist.innertube.YouTube.SearchFilter.FILTER_SONG.value}|MATCH_V6"
                 val cachedCandidates = videoCandidatesCache[cacheKey]
                 val reason = when {
                     cachedCandidates == null -> "YouTube search failed"
@@ -1328,7 +1334,6 @@ object SongPlayer {
             }
             return null
         }
-        // e.g. "OPUS 141 kbps" from the chosen adaptive format.
         val codec = playback.format.mimeType
             .substringAfter("codecs=\"", "").substringBefore('"').substringBefore('.')
             .uppercase()
@@ -1342,7 +1347,6 @@ object SongPlayer {
         sourceCache[song] = "YouTube"
         qualityCache[song] = ytQuality
         qualityTierCache[song] = expectedTier
-        // Persist to disk so replays after an app restart skip the whole pipeline.
         com.music.spotui.data.preferences.setCachedStream(
             appContext, song, playback.streamUrl, "YouTube", ytQuality,
             playback.streamExpiresInSeconds, qualityTier = expectedTier,
@@ -1361,35 +1365,24 @@ object SongPlayer {
         return key?.let { com.music.spotui.data.preferences.getAlternativeStream(appContext, it) }
     }
 
-    // ── Downloads (offline playback) ──
-    // Tracks which song queries are mid-download so the UI can show a spinner and
-    // we don't kick off the same download twice.
     private val downloading = java.util.Collections.newSetFromMap(
         java.util.concurrent.ConcurrentHashMap<String, Boolean>()
     )
     @Volatile var onDownloadsChanged: (() -> Unit)? = null
 
-    // Per-query download progress, 0..100. Present only while a download is active.
     private val downloadProgress = java.util.concurrent.ConcurrentHashMap<String, Int>()
-    // The actual SongsModel of each in-progress download, so the Downloads screen can
-    // render it (with a progress bar) before the file exists / it's added to prefs.
     private val downloadingSongs =
         java.util.concurrent.ConcurrentHashMap<String, com.music.spotui.data.entity.SongsModel>()
 
     fun isDownloading(query: String): Boolean = downloading.contains(query)
 
-    /** Current download progress (0..100) for a query, or -1 if unknown/not downloading. */
     fun downloadProgress(query: String): Int = downloadProgress[query] ?: -1
 
-    /** Snapshot of the currently-downloading tracks paired with their percent (0..100). */
     fun downloadingSnapshot(): List<Pair<com.music.spotui.data.entity.SongsModel, Int>> =
         downloadingSongs.entries.map { (q, song) -> song to (downloadProgress[q] ?: 0) }
 
-    // Last download failure reason, surfaced to the user as a Toast for diagnosis.
     @Volatile var lastDownloadError: String? = null
 
-    // googlevideo stream URLs 403 without a browser User-Agent and need redirects
-    // followed (http↔https) — ExoPlayer does both, so a raw URLConnection must too.
     private fun openDownloadConn(url: String): java.net.HttpURLConnection =
         (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
             connectTimeout = 15000
@@ -1402,15 +1395,6 @@ object SongPlayer {
             )
         }
 
-    /**
-     * Download [url] to [tmpFile] using HTTP **Range** requests in chunks, reporting
-     * progress (0..100) for [query]. A single full-file GET of a googlevideo stream gets
-     * reset partway through (`SocketException: Connection reset`) — the server expects the
-     * audio fetched in byte ranges, which is how ExoPlayer/NewPipe get it. Each chunk is a
-     * short connection (retried a few times on reset); writing is append-continuous so a
-     * retried chunk resumes from the current byte position. Returns true iff the whole
-     * file was written. Falls back gracefully if the server ignores Range (HTTP 200).
-     */
     private fun httpDownloadRanged(url: String, tmpFile: java.io.File, query: String): Boolean {
         val chunk = 8L * 1024 * 1024 // 8 MB
         var total = -1L
@@ -1437,7 +1421,7 @@ object SongPlayer {
                                     ?.substringAfter('/')?.toLongOrNull()
                                     ?: conn.contentLengthLong
                             }
-                            fullBody = code == 200 // server ignored Range → whole file in one body
+                            fullBody = code == 200
                             conn.inputStream.use { input ->
                                 val buf = ByteArray(64 * 1024)
                                 while (true) {
@@ -1454,21 +1438,20 @@ object SongPlayer {
                                     }
                                 }
                             }
-                            break // this chunk completed
+                            break
                         } catch (e: Exception) {
                             Log.w(TAG, "chunk @${position} failed (attempt $attempt): ${e.message}")
                             if (attempt >= 4) {
                                 lastDownloadError = e.message ?: "Connection reset"
                                 return false
                             }
-                            // retry the remainder of this chunk from the current position
                         } finally {
                             conn.disconnect()
                         }
                     }
                     if (fullBody) { total = position; break@outer }
                     if (total in 1..position) break@outer
-                    if (total < 0) break@outer // couldn't determine size; assume done
+                    if (total < 0) break@outer
                 }
             }
             downloadProgress[query] = 100
@@ -1479,15 +1462,8 @@ object SongPlayer {
         }
     }
 
-    /**
-     * Resolve the track's stream and save the audio to local storage for offline
-     * playback. Runs on the IO scope; invokes [onComplete] (main thread) with whether
-     * it succeeded. No-op if it's already downloaded or downloading.
-     */
     private val downloadSemaphore = Semaphore(2)
 
-    /** Download every track in a list (album/playlist) with bounded concurrency (max 2 at a time)
-     *  to prevent network congestion and 0% stalls. */
     fun downloadAll(songs: List<com.music.spotui.data.entity.SongsModel>, context: Context) {
         val appContext = context.applicationContext
         scope.launch {
@@ -1501,7 +1477,6 @@ object SongPlayer {
         }
     }
 
-    /** True once every track in [songs] is downloaded (for the album's "downloaded" state). */
     fun allDownloaded(
         songs: List<com.music.spotui.data.entity.SongsModel>,
         context: Context,
@@ -1576,7 +1551,6 @@ object SongPlayer {
         val dlQuality = com.music.spotui.data.preferences.getDownloadQuality(appContext)
         val losslessDownloading = losslessStreaming
 
-        // Attempt Lossless download across all configured providers (Amazon, Qobuz, Deezer, SpotiFLAC, SoundCloud)
         if (dlQuality.lossless || losslessDownloading) {
             val flacOk = kotlinx.coroutines.withTimeoutOrNull(45_000) {
                 runCatching { downloadLosslessTrackToFile(song, appContext) }.getOrDefault(false)
@@ -1624,7 +1598,6 @@ object SongPlayer {
             return true
         }
 
-        // If an alternative YouTube stream is set, use alt.value (videoId); otherwise use query search
         val targetQuery = if (alt != null && alt.isYouTube) alt.value else query
         val playback = resolveYtPlayback(targetQuery, dlQuality.audioQuality, appContext) ?: run {
             lastDownloadError = "Couldn't resolve a stream"
@@ -1642,7 +1615,6 @@ object SongPlayer {
         }
         com.music.spotui.data.preferences.addDownload(appContext, song, outFile.absolutePath)
         downloadCoverImage(song.coverUri, java.io.File(dir, "${song.id}_cover.jpg"))
-        // Eagerly cache lyrics so offline playback doesn't need a network round-trip.
         LyricsApi.removeFromCache(song.title, song.singer)
         val lyricsOk = runCatching {
             LyricsApi.fetch(song.title, song.singer, song.album, song.durationMs / 1000)
@@ -1669,22 +1641,16 @@ object SongPlayer {
         }
     }
 
-    /**
-     * Download a true lossless track via configured Lossless providers (Amazon, Qobuz, Deezer, SpotiFLAC, SoundCloud).
-     * Saves the downloaded file as `<id>.flac` (or `.mp3`). Returns false on miss so the caller can fall back.
-     */
     private suspend fun downloadLosslessTrackToFile(
         song: com.music.spotui.data.entity.SongsModel,
         appContext: Context,
     ): Boolean {
-        // Resolve stream URL using the provider hierarchy (Amazon, Qobuz, Deezer, SpotiFLAC, SoundCloud)
         val streamUrl = resolveStreamUrl(song.url, appContext, forPlayback = false)
         if (streamUrl.isNullOrBlank()) return false
 
         val source = sourceCache[song.url] ?: "Lossless"
         val quality = qualityCache[song.url] ?: "FLAC"
 
-        // Do not use YouTube stream URLs for FLAC downloads (YouTube falls back to m4a in downloadToFile)
         if (source.contains("YouTube", ignoreCase = true) || streamUrl.contains("googlevideo.com") || streamUrl.contains("youtube.com")) {
             return false
         }
@@ -1714,7 +1680,6 @@ object SongPlayer {
         }
         com.music.spotui.data.preferences.addDownload(appContext, song, outFile.absolutePath)
         downloadCoverImage(song.coverUri, java.io.File(dir, "${song.id}_cover.jpg"))
-        // Eagerly cache lyrics so offline playback doesn't need a network round-trip.
         LyricsApi.removeFromCache(song.title, song.singer)
         val lyricsOk = runCatching {
             LyricsApi.fetch(song.title, song.singer, song.album, song.durationMs / 1000)
@@ -1724,19 +1689,151 @@ object SongPlayer {
         return true
     }
 
-    private fun cleanTextForMatch(text: String): String {
-        val noDiacritics = Normalizer.normalize(text, Normalizer.Form.NFD).replace(Regex("""\p{Mn}+"""), "")
-        val lower = noDiacritics.lowercase()
-        // Remove content in parentheses or brackets (e.g., "(Official Video)", "[Remastered]")
-        val noBrackets = lower.replace(Regex("""\([^)]*\)|\[[^]]*\]"""), "")
-        // Remove common featuring keywords to avoid mismatches
-        val noFeat = noBrackets.replace(Regex("""\b(feat\.?|ft\.?|featuring|with)\b.*"""), "")
-        // Keep only alphanumeric characters
-        val clean = noFeat.replace(Regex("""[^a-z0-9]"""), "").trim()
+    // ── Track-matching helpers ───────────────────────────────────────────────
 
-        // Fallback: If aggressive cleaning destroyed the string entirely, return basic lowercase alphanumeric
-        return if (clean.isEmpty()) lower.replace(Regex("""[^a-z0-9]"""), "").trim() else clean
+    private val diacriticsRegex = Regex("""\p{Mn}+""")
+    private val bracketRegex = Regex("""\([^)]*\)|\[[^\]]*\]""")
+    private val featTailRegex = Regex("""\b(feat|ft|featuring)\b\.?.*""")
+    private val nonAlnumRegex = Regex("""[^\p{L}\p{N}]""")
+    private val dashSplitRegex = Regex("""\s+[-–—]\s+""")
+    private val artistNoiseRegex = Regex("""(?i)\s*-\s*topic$|vevo$|\s+official$""")
+    private val albumNoiseRegex = Regex(
+        """(?i)\b(deluxe|expanded|anniversary|edition|remaster(ed)?|special|super|bonus|platinum|international|standard|explicit)\b"""
+    )
+    private val whitespaceRegex = Regex("""\s+""")
+    private val coverArtistRegex = Regex(
+        """\b(tribute|karaoke|covers?|orchestra|quartet|players|instrumental|lullab\w*|kids|nursery|ensemble|singers|studio band)\b"""
+    )
+    private val compilationRegex = Regex(
+        """\b(greatest hits|best of|the best|hits|collection|essential|anthology|complete|number ones|now that|ultimate|very best|playlist|top \d+|bravo)\b"""
+    )
+
+    /**
+     * Normalises text for comparison: no accents, lowercase, brackets and a trailing
+     * "feat./ft./featuring …" credit removed, letters/digits only. Unicode-aware, so Korean,
+     * Japanese, Cyrillic… titles are comparable too. "with" is NOT stripped: it's a real
+     * word in many titles ("Stay With Me", "Dancing With Myself").
+     */
+    private fun cleanTextForMatch(text: String): String {
+        val lower = Normalizer.normalize(text, Normalizer.Form.NFD).replace(diacriticsRegex, "").lowercase()
+        val noBrackets = lower.replace(bracketRegex, " ")
+        val noFeat = noBrackets.replace(featTailRegex, " ")
+        val clean = noFeat.replace(nonAlnumRegex, "")
+        // If aggressive cleaning destroyed the string, fall back to plain letters/digits.
+        return clean.ifEmpty { lower.replace(nonAlnumRegex, "") }
     }
+
+    private fun artistKey(name: String): String =
+        cleanTextForMatch(name.trim().replace(artistNoiseRegex, ""))
+
+    /**
+     * Compara nombres de artista ignorando diferencias editoriales como el prefijo
+     * inglés "The". No cambia artistKey(), porque el valor normalizado original
+     * sigue siendo útil para logs, cachés y otras comparaciones.
+     */
+    private fun artistComparisonKey(name: String): String =
+        artistKey(name).removePrefix("the").ifBlank { artistKey(name) }
+
+    private fun sameArtist(a: String, b: String): Boolean =
+        a.isNotBlank() && b.isNotBlank() &&
+                (a == b || artistComparisonKey(a) == artistComparisonKey(b))
+
+    private fun albumKey(name: String?): String {
+        if (name.isNullOrBlank()) return ""
+        val head = name.split(dashSplitRegex, limit = 2)[0].replace(albumNoiseRegex, " ")
+        return cleanTextForMatch(head)
+    }
+
+    private fun albumSearchText(name: String): String =
+        name.replace(bracketRegex, " ")
+            .split(dashSplitRegex, limit = 2)[0]
+            .replace(albumNoiseRegex, " ")
+            .replace(whitespaceRegex, " ")
+            .trim()
+
+    /** A title split into its comparable core and its decorations (brackets / " - suffix"). */
+    private class TitleParts(val baseKey: String, val decorations: String)
+
+    private fun parseTitle(title: String, artistKeys: Collection<String>): TitleParts {
+        var current = title
+        // "Maroon 5 - Sugar (Official Video)": drop the artist prefix that video uploads carry.
+        val first = current.split(dashSplitRegex, limit = 2)
+        if (first.size == 2 && artistKeys.any { sameArtist(cleanTextForMatch(first[0]), it) }) {
+            current = first[1]
+        }
+
+        val decorations = StringBuilder()
+        bracketRegex.findAll(current).forEach { decorations.append(' ').append(it.value) }
+        val parts = current.replace(bracketRegex, " ").split(dashSplitRegex, limit = 2)
+        if (parts.size == 2) decorations.append(' ').append(parts[1])
+
+        val key = cleanTextForMatch(parts[0]).ifEmpty { cleanTextForMatch(title) }
+        return TitleParts(key, decorations.toString())
+    }
+
+    /**
+     * Recording "flavours". Two tracks are only the same recording if they carry the same set.
+     * Deliberately NOT flagged (same recording): remaster, deluxe, explicit, official audio/video.
+     * They are evaluated on the decorations only: a marker inside the core title ("Live Forever")
+     * makes the core keys differ, so it is already handled by the title comparison.
+     */
+    private val versionPatterns: List<Pair<String, Regex>> = listOf(
+        "remix" to Regex("""\b(remix(es|ed)?|rmx|rework(ed)?|bootleg|flip|mashup|refix|vip|club mix|dub mix|extended (mix|version)|megamix|dance mix|re-?edit)\b"""),
+        "live" to Regex("""\b(live|en vivo|ao vivo|dal vivo|en directo|in concert|concert|unplugged)\b"""),
+        "acoustic" to Regex("""\b(acoustic|acustico|acustica|unplugged|stripped|piano( version)?|orchestral|orchestra|symphonic|string quartet|strings|reimagined|re-imagined|sessions?|reprise)\b"""),
+        "sped" to Regex("""\b(sped ?up|speed(ed)? ?up|nightcore|fast version|hyperspeed)\b"""),
+        "slowed" to Regex("""\b(slowed( down)?|slow version|reverb|chopped|screwed|daycore)\b"""),
+        "fx" to Regex("""\b(8d|16d|bass boost(ed)?|lo-?fi)\b"""),
+        "instrumental" to Regex("""\b(instrumental|backing track|no vocals|without vocals|minus one|off vocal|karaoke)\b"""),
+        "cover" to Regex("""\b(cover(ed)?|tribute|originally (performed )?by|made famous by|as made famous|in the style of|as performed by|performed by|sing ?along)\b"""),
+        "acapella" to Regex("""\b(a ?cappella|acapella|vocals? only)\b"""),
+        "demo" to Regex("""\b(demo|rough (mix|cut)|outtake|alternat(e|ive) (version|take|mix|recording)|alt\.? (version|take|mix)|early version|unreleased|rehearsal|work tape|take \d+|first version|home (recording|demo))\b"""),
+        "edit" to Regex("""\b(radio edit|single edit|single version|radio version|radio mix|short version|edit version|album edit|tv edit|video edit|video version|edit)\b"""),
+        "language" to Regex("""\b((spanish|espanol|portuguese|french|german|italian|japanese|korean|chinese|mandarin|hindi|arabic|russian|turkish|english) (version|ver)|version (en|in) \w+|en espanol|en ingles|in spanish|in english|latin version|spanglish( version)?)\b"""),
+        "mono" to Regex("""\bmono\b"""),
+    )
+    // Flags that are also meaningful when they appear in an ALBUM name (e.g. "Live at Knebworth").
+    private val albumRelevantFlags = setOf(
+        "live", "cover", "acoustic", "remix", "instrumental", "sped", "slowed", "fx", "demo", "acapella",
+    )
+
+    private fun versionFlags(text: String): Set<String> {
+        if (text.isBlank()) return emptySet()
+        val t = Normalizer.normalize(text.lowercase(), Normalizer.Form.NFD).replace(diacriticsRegex, "")
+        return versionPatterns.filter { it.second.containsMatchIn(t) }.map { it.first }.toSet()
+    }
+
+    private fun albumFlags(album: String?): Set<String> =
+        if (album.isNullOrBlank()) emptySet() else versionFlags(album).intersect(albumRelevantFlags)
+
+    // Album-derived flavours that ALWAYS disqualify a candidate. "acoustic"/"demo" are weaker
+    // (album names like "Sessions" or "Strings" are ambiguous) and may be relaxed in stage 2.
+    private val strongFlags = setOf("live", "cover", "remix", "instrumental", "sped", "slowed", "fx", "acapella")
+
+    /** A single named after the song ("Live Forever"): its album name says nothing about the version. */
+    private fun isPlainSingleAlbum(album: String?, baseKey: String): Boolean =
+        !album.isNullOrBlank() && albumKey(album) == baseKey &&
+                !bracketRegex.containsMatchIn(album) && !dashSplitRegex.containsMatchIn(album)
+
+    // Decorations that don't change the recording. Anything else left in the brackets
+    // ("XXV", "From Better Man: Soundtrack", "con Carter J. Murphy"…) is an unknown edition.
+    private val neutralDecorationRegex = Regex(
+        """\b(remaster(ed)?|digitally|explicit|clean|official|audio|video|lyrics?|visualizer|hd|hq|version|album|original|deluxe|edition|feat|ft|featuring|with|\d{4})\b"""
+    )
+
+    private fun decorationKey(decor: String): String =
+        Normalizer.normalize(decor.lowercase(), Normalizer.Form.NFD).replace(diacriticsRegex, "").replace(nonAlnumRegex, "")
+
+    private fun hasUnknownDecoration(decor: String): Boolean {
+        if (decor.isBlank()) return false
+        val t = Normalizer.normalize(decor.lowercase(), Normalizer.Form.NFD).replace(diacriticsRegex, "")
+        return t.replace(neutralDecorationRegex, " ").replace(nonAlnumRegex, "").isNotEmpty()
+    }
+
+    private val featMarkerRegex = Regex("""\b(feat|ft|featuring|with)\b""")
+
+    /** A YouTube Music candidate that passed a matching stage. Lower stage = more trustworthy. */
+    private class MatchCandidate(val item: SongItem, val stage: Int, val score: Int, val index: Int)
 
     private suspend fun ensureSpotifyMatchMetadata(query: String): TrackMatchMetadata? {
         val currentMeta = metadataRegistry[query]
@@ -1748,10 +1845,15 @@ object SongPlayer {
         }
 
         val spotifyId = trackIdRegistry[query] ?: spotifyTrackIdForPlayback(query) ?: return currentMeta
-        val track = runCatching { com.metrolist.spotify.Spotify.track(spotifyId).getOrNull() }
-            .onFailure { Log.w(TAG, "Spotify metadata repair failed for $spotifyId", it) }
-            .getOrNull()
-            ?: return currentMeta
+        val track = (0 until 3).firstNotNullOfOrNull { attempt ->
+            if (attempt > 0) delay(600L)
+            runCatching { com.metrolist.spotify.Spotify.track(spotifyId).getOrNull() }
+                .onFailure { Log.w(TAG, "Spotify metadata repair failed for $spotifyId (attempt ${attempt + 1})", it) }
+                .getOrNull()
+        } ?: run {
+            Log.w(TAG, "Spotify metadata unavailable for $spotifyId: duration/explicit unknown")
+            return currentMeta
+        }
 
         val repaired = TrackMatchMetadata(
             title = track.name,
@@ -1762,6 +1864,7 @@ object SongPlayer {
         trackIdRegistry[query] = spotifyId
         explicitRegistry[query] = track.explicit
         if (track.durationMs > 0) durationRegistry[query] = track.durationMs
+        track.isrc?.takeIf { it.isNotBlank() }?.let { isrcRegistry[spotifyId] = it }
         return repaired
     }
 
@@ -1770,7 +1873,7 @@ object SongPlayer {
         filter: YouTube.SearchFilter = YouTube.SearchFilter.FILTER_SONG,
         forPlayback: Boolean = false,
     ): List<String> {
-        val cacheKey = "$query|${filter.value}"
+        val cacheKey = "$query|${filter.value}|MATCH_V6"
         videoCandidatesCache[cacheKey]?.let { return it }
         appCtx?.let { ctx ->
             com.music.spotui.data.preferences.getCachedVideoIds(ctx, cacheKey)?.let { cached ->
@@ -1788,85 +1891,232 @@ object SongPlayer {
 
         if (searchText.length == 11 && !searchText.contains(' ')) return listOf(searchText)
 
-        val hits = YouTube.search(searchText, filter)
-            .onFailure { Log.w(TAG, "resolveVideoId: YouTube search failed for: $searchText", it) }
-            .getOrNull()
-            ?.items
-            ?.filterIsInstance<SongItem>()
-            .orEmpty()
+        // Resolve metadata independently from the first YouTube search. This lets the
+        // broad/original query start immediately while we prepare the more precise queries.
+        // Each search is isolated below: one failed fallback must never cancel the others.
+        val (exactMeta, baseSearchResult) = kotlinx.coroutines.supervisorScope {
+            val metadataDeferred = async {
+                runCatching { ensureSpotifyMatchMetadata(query) }.getOrNull()
+            }
+            val baseSearchDeferred = async {
+                YouTube.search(searchText, filter)
+                    .onFailure {
+                        Log.w(TAG, "resolveVideoId: YouTube search failed for: $searchText", it)
+                    }
+                    .getOrNull()
+            }
+            metadataDeferred.await() to baseSearchDeferred.await()
+        }
+        val registeredMeta = metadataRegistry[query]
+        val queuedSong = boundState?.queue?.value?.firstOrNull { it.url == query }
+        val wantSec: Int? = durationRegistry[query]?.let { it / 1000 }
+            ?: queuedSong?.durationMs?.toLong()?.takeIf { it > 0 }?.let { (it / 1000).toInt() }
+        val targetAlbum: String? = exactMeta?.album?.ifBlank { null }
+            ?: registeredMeta?.album?.ifBlank { null }
+            ?: queuedSong?.album?.ifBlank { null }
+        val targetArtist = exactMeta?.artist?.ifBlank { null }
+            ?: registeredMeta?.artist?.ifBlank { null }
+            ?: queuedSong?.singer?.ifBlank { null }
+            ?: if (forPlayback) metaArtist.ifBlank { null } else null
+                ?: baseSearchText
+        val targetTitle = exactMeta?.title?.ifBlank { null }
+            ?: registeredMeta?.title?.ifBlank { null }
+            ?: queuedSong?.title?.ifBlank { null }
+            ?: cleanTrackTitle(query, targetArtist ?: "")
+
+        // Keep the original query first, then title/artist(/album) permutations. Including the
+        // album steers YouTube Music towards the original release instead of live/compilation cuts.
+        val artistForSearch = targetArtist.orEmpty().trim()
+        val titleForSearch = cleanSpotifySearchTitle(targetTitle).trim()
+        val albumForSearch = targetAlbum?.let { albumSearchText(it) }.orEmpty()
+        val searchQueries = linkedSetOf<String>().apply {
+            add(searchText)
+            if (titleForSearch.isNotBlank() && artistForSearch.isNotBlank()) {
+                add("$titleForSearch $artistForSearch")
+                if (albumForSearch.isNotBlank() && !albumForSearch.equals(titleForSearch, ignoreCase = true)) {
+                    add("$titleForSearch $artistForSearch $albumForSearch")
+                }
+                add("$artistForSearch $titleForSearch")
+                add("$titleForSearch $artistForSearch official audio")
+            }
+        }.filter { it.isNotBlank() && !(it.length == 11 && !it.contains(' ')) }
+
+        // Run independent YouTube searches concurrently, but isolate every fallback.
+        // supervisorScope is important here: one thrown exception/cancellation must not
+        // cancel the other queries and make us lose a valid recording.
+        val hits = kotlinx.coroutines.supervisorScope {
+            val deferredHits = searchQueries.map { candidateQuery ->
+                if (candidateQuery == searchText) {
+                    async { baseSearchResult }
+                } else {
+                    async {
+                        YouTube.search(candidateQuery, filter)
+                            .onFailure {
+                                Log.w(TAG, "resolveVideoId: YouTube search failed for: $candidateQuery", it)
+                            }
+                            .getOrNull()
+                    }
+                }
+            }
+
+            deferredHits.awaitAll()
+                .asSequence()
+                .flatMap { result ->
+                    result?.items
+                        ?.asSequence()
+                        ?.filterIsInstance<SongItem>()
+                        ?: emptySequence()
+                }
+                .distinctBy { it.id }
+                .toList()
+        }
+        Log.w(TAG, "MATCH '$query': ${hits.size} raw hits from ${searchQueries.size} parallel queries")
 
         if (hits.isEmpty()) {
-            Log.w(TAG, "resolveVideoId: no YouTube song results for: $searchText")
+            Log.w(TAG, "resolveVideoId: no YouTube song results for queries: $searchQueries")
             return emptyList()
         }
 
-        val exactMeta = ensureSpotifyMatchMetadata(query)
-        val wantSec = durationRegistry[query]?.let { it / 1000 }
-
-        val targetTitle = exactMeta?.title ?: baseSearchText
-        val targetArtist = exactMeta?.artist ?: baseSearchText
-
-        val expectedTitleClean = cleanTextForMatch(targetTitle)
-        val expectedArtistsList = targetArtist
-            .split(Regex("""[,&]| and """, RegexOption.IGNORE_CASE))
-            .map { cleanTextForMatch(it) }
+        // ── Target description ───────────────────────────────────────────────
+        val expectedArtistsList = (targetArtist ?: "").split(Regex("""[,&]|\band\b""", RegexOption.IGNORE_CASE))
+            .map { artistKey(it) }
             .filter { it.isNotEmpty() }
-        val primaryArtistClean = expectedArtistsList.firstOrNull() ?: cleanTextForMatch(baseSearchText)
+        val fullArtistKey = artistKey(targetArtist ?: "")
+        val primaryArtistKey = expectedArtistsList.firstOrNull() ?: artistKey(baseSearchText)
+        val targetArtistKeys = (listOf(primaryArtistKey, fullArtistKey) + expectedArtistsList)
+            .filter { it.isNotEmpty() }
+            .toSet()
 
+        val target = parseTitle(targetTitle, targetArtistKeys)
+        val targetAlbumKey = albumKey(targetAlbum)
+        val targetTitleFlags = versionFlags(target.decorations)
+        val targetAlbumFlags = if (isPlainSingleAlbum(targetAlbum, target.baseKey)) emptySet() else albumFlags(targetAlbum)
+        val expectedFlags = targetTitleFlags + targetAlbumFlags
+        val targetIsCompilation = targetAlbum?.let { compilationRegex.containsMatchIn(it.lowercase()) } ?: false
+
+        // Duration is the strongest recording fingerprint we have. Tight window for real audio
+        // tracks; video uploads (intros, fades) get a bit more room. `wideTol` is only usable
+        // together with a matching album.
+        val isSongFilter = filter == YouTube.SearchFilter.FILTER_SONG
+        val tightTol = if (isSongFilter) maxOf(5, (wantSec ?: 0) / 40) else maxOf(7, (wantSec ?: 0) / 35)
+        val wideTol = maxOf(8, (wantSec ?: 0) / 20)
+
+        if (forPlayback && wantSec == null) logResolution("⚠ Spotify duration unavailable: matching by album/title only")
         Log.d(TAG, "==================================================")
-        Log.d(TAG, "▶ DEBUG MATCHING STARTED FOR: '$query'")
-        Log.d(TAG, "▶ TARGET: Title: '$targetTitle' (clean: '$expectedTitleClean')")
-        Log.d(TAG, "▶ TARGET: Artist: '$targetArtist' (clean primary: '$primaryArtistClean')")
-        Log.d(TAG, "▶ TARGET: Duration: ${wantSec}s | Wants Explicit: $wantExplicit")
+        Log.d(TAG, "▶ MATCHING '$query' [filter=${filter.value}]")
+        Log.d(TAG, "▶ TARGET: title='${target.baseKey}' flags=$expectedFlags | artist='$primaryArtistKey' | album='$targetAlbumKey'")
+        Log.d(TAG, "▶ TARGET: duration=${wantSec}s (tight ±${tightTol}s, wide ±${wideTol}s) | explicit=$wantExplicit")
         Log.d(TAG, "--------------------------------------------------")
 
-        val candidatesWithTiers = mutableListOf<Pair<SongItem, Int>>()
+        // ── Candidate evaluation ─────────────────────────────────────────────
+        // Stage 1: exact artist + exact title + same recording flavour (title AND album) + duration
+        // Stage 2: same, but tolerating WEAK album-derived flavour (acoustic/demo) — album names
+        //          like "Sessions" are ambiguous. Live/cover/remix/karaoke albums never pass.
+        // Stage 3: same album, looser duration (edition/padding differences)
+        // Stage 4: near-exact artist (no tribute/karaoke names) and duration within 3s
+        // Only the best non-empty stage is returned, so a lower-quality "version" never sits
+        // behind the right recording as a silent fallback.
+        val scored = ArrayList<MatchCandidate>()
+        hits.forEachIndexed { index, item ->
+            val cand = parseTitle(item.title, targetArtistKeys)
+            val candArtistKeys = item.artists.map { artistKey(it.name) }.filter { it.isNotEmpty() }
+            val artistExact = candArtistKeys.any { sameArtist(it, primaryArtistKey) || sameArtist(it, fullArtistKey) } ||
+                    (fullArtistKey.isNotEmpty() && sameArtist(candArtistKeys.joinToString(""), fullArtistKey))
+            val artistPartial = !artistExact && item.artists.any { a ->
+                val k = artistKey(a.name)
+                primaryArtistKey.length >= 4 && k.length >= 4 &&
+                        (k.contains(primaryArtistKey) || primaryArtistKey.contains(k)) &&
+                        !coverArtistRegex.containsMatchIn(a.name.lowercase())
+            }
 
-        for (item in hits) {
-            val itemTitleClean = cleanTextForMatch(item.title)
-            val itemArtistsClean = item.artists.map { cleanTextForMatch(it.name) }
+            // A duet/collab is a different recording: artists (or a "feat." credit) that the
+            // request doesn't have disqualify the candidate.
+            val candExtraArtists = candArtistKeys.filter { k ->
+                k !in targetArtistKeys && !targetArtistKeys.any { t ->
+                    t.length >= 4 && k.length >= 4 && (k.contains(t) || t.contains(k))
+                }
+            }
+            val candHasFeat = featMarkerRegex.containsMatchIn(cand.decorations.lowercase())
+            val targetHasFeat = featMarkerRegex.containsMatchIn(target.decorations.lowercase())
+            val featEq = candExtraArtists.isEmpty() &&
+                    (!candHasFeat || targetHasFeat || expectedArtistsList.size >= 2)
+            val artistOk = artistExact && featEq
+            val titleEq = cand.baseKey.isNotEmpty() && cand.baseKey == target.baseKey
+            val candTitleFlags = versionFlags(cand.decorations)
+            val candAlbumName = item.album?.name
+            val candAlbumFlags = if (isPlainSingleAlbum(candAlbumName, cand.baseKey)) emptySet() else albumFlags(candAlbumName)
+            val candFlags = candTitleFlags + candAlbumFlags
+            val titleFlagsEq = candTitleFlags == targetTitleFlags
+            val allFlagsEq = candFlags == expectedFlags
+            val strongAlbumEq = (candAlbumFlags intersect strongFlags) == (targetAlbumFlags intersect strongFlags)
+
             val itemDur = item.duration
-
-            val artistMatch = itemArtistsClean.any {
-                it == primaryArtistClean || it.contains(primaryArtistClean) || primaryArtistClean.contains(it)
-            }
-            val titleExactMatch = itemTitleClean == expectedTitleClean
-            val titleContainsMatch = expectedTitleClean.isNotEmpty() &&
-                    (itemTitleClean.contains(expectedTitleClean) || expectedTitleClean.contains(itemTitleClean))
-            val durDiff = if (wantSec != null && itemDur != null) kotlin.math.abs(wantSec - itemDur) else null
+            val durDiff: Int? = if (wantSec != null && itemDur != null) abs(wantSec - itemDur) else null
+            val tightOk = durDiff == null || durDiff <= tightTol
+            val wideOk = durDiff == null || durDiff <= wideTol
+            val explicitOk = true // soft signal only, see score below
             val explicitMatch = wantExplicit == null || item.explicit == wantExplicit
+            val lastResortOk = durDiff == null || durDiff <= maxOf(15, (wantSec ?: 0) / 10)
 
-            var tier = 99 // 99 = descartado / sin coincidencia de calidad
+            val candAlbumKey = albumKey(candAlbumName)
+            val albumEq = targetAlbumKey.isNotEmpty() && candAlbumKey == targetAlbumKey
 
-            if (artistMatch && titleExactMatch && durDiff != null && durDiff <= 3) {
-                tier = if (explicitMatch) 1 else 2 // Tier 1: Perfección absoluta. Tier 2: Perfecto pero no coincide el flag explicit
-            } else if (artistMatch && titleContainsMatch && durDiff != null && durDiff <= 5) {
-                tier = 3 // Tier 3: Contiene el título y casi misma duración
-            } else if (artistMatch && durDiff != null && durDiff <= 2) {
-                tier = 4 // Tier 4: Título raro, pero artista coincide y duración es EXACTA
-            } else if (artistMatch && titleExactMatch) {
-                tier = 5 // Tier 5: Título y artista exactos, pero la duración no cuadra o es nula
+            val stage = when {
+                artistOk && titleEq && allFlagsEq && explicitOk && tightOk -> 1
+                artistOk && titleEq && titleFlagsEq && strongAlbumEq && explicitOk && tightOk -> 2
+                artistOk && titleEq && allFlagsEq && explicitOk && albumEq && wideOk -> 3
+                artistPartial && titleEq && titleFlagsEq && explicitOk &&
+                        wantSec != null && durDiff != null && durDiff <= 3 -> 4
+                // 5/6: right artist+title, no version markers anywhere; duration (5) and even
+                // explicit flag (6) unverifiable. Last resort, ranked by closeness.
+                artistOk && titleEq && titleFlagsEq && strongAlbumEq && explicitOk && lastResortOk -> 5
+                artistOk && titleEq && titleFlagsEq && strongAlbumEq && lastResortOk -> 6
+                else -> 99
             }
 
-            Log.d(TAG, "  -> CANDIDATE: '${item.title}' by ${item.artists.joinToString { it.name }} | Dur: ${itemDur}s | Explicit: ${item.explicit}")
-            Log.d(TAG, "     ArtistMatch: $artistMatch | TitleExact: $titleExactMatch | DurDiff: $durDiff | Tier Assigned: $tier")
-
-            if (tier < 99) {
-                candidatesWithTiers.add(item to tier)
+            // Ranking inside a stage.
+            var score = if (artistExact) 30 else 10
+            if (durDiff != null) {
+                score += when {
+                    durDiff <= 1 -> 30
+                    durDiff <= 2 -> 26
+                    durDiff <= 3 -> 20
+                    durDiff <= 5 -> 10
+                    else -> 2
+                }
             }
+            if (albumEq) {
+                score += 50
+            } else if (targetAlbumKey.length >= 4 && candAlbumKey.length >= 4 &&
+                (candAlbumKey.contains(targetAlbumKey) || targetAlbumKey.contains(candAlbumKey))
+            ) {
+                score += 12
+            } else if (candAlbumKey.isNotEmpty() && !targetIsCompilation &&
+                compilationRegex.containsMatchIn((candAlbumName ?: "").lowercase())
+            ) {
+                score -= 8
+            }
+            if (targetTitleFlags.isEmpty() && cand.decorations.isBlank()) score += 3
+            if (hasUnknownDecoration(cand.decorations) && decorationKey(cand.decorations) != decorationKey(target.decorations)) score -= 40
+            score += if (explicitMatch) 8 else -8
+
+            Log.d(TAG, "  -> '${item.title}' by ${item.artists.joinToString { it.name }} | album='${candAlbumName ?: ""}' | ${itemDur}s | explicit=${item.explicit}")
+            Log.d(TAG, "     artist=${if (artistExact) "exact" else if (artistPartial) "partial" else "no"} extraArtists=$candExtraArtists feat=$candHasFeat titleEq=$titleEq flags=$candFlags durDiff=$durDiff albumEq=$albumEq -> stage=$stage score=$score")
+            if (stage < 99) scored.add(MatchCandidate(item, stage, score, index))
         }
 
         Log.d(TAG, "--------------------------------------------------")
 
-        val sortedCandidates = candidatesWithTiers.sortedBy { it.second }.map { it.first }
-
-        if (sortedCandidates.isNotEmpty()) {
-            val best = sortedCandidates.first()
-            val chosenTier = candidatesWithTiers.first { it.first.id == best.id }.second
-            Log.d(TAG, "✅ WINNER CHOSEN: '${best.title}' (Tier $chosenTier, ID: ${best.id})")
+        val bestStage = scored.minOfOrNull { it.stage }
+        if (bestStage != null) {
+            val chosen = scored.filter { it.stage == bestStage }
+                .sortedWith(compareByDescending<MatchCandidate> { it.score }.thenBy { it.index })
+            val best = chosen.first()
+            if (forPlayback) logResolution("YouTube match: '${best.item.title}' | ${best.item.artists.joinToString { it.name }} | album='${best.item.album?.name ?: ""}' | ${best.item.duration}s vs ${wantSec}s | stage $bestStage")
+            Log.w(TAG, "✅ WINNER: '${best.item.title}' (stage $bestStage, score ${best.score}, ID: ${best.item.id})")
             Log.d(TAG, "==================================================")
 
-            val resolvedIds = sortedCandidates.map { it.id }.distinct()
+            val resolvedIds = chosen.map { it.item.id }.distinct()
             videoCandidatesCache[cacheKey] = resolvedIds
             appCtx?.let { ctx ->
                 com.music.spotui.data.preferences.setCachedVideoIds(ctx, cacheKey, resolvedIds)
@@ -1874,15 +2124,12 @@ object SongPlayer {
             return resolvedIds
         }
 
-        Log.d(TAG, "❌ NO SUITABLE CANDIDATES FOUND. Rejecting all.")
+        if (forPlayback) logResolution("YouTube: no candidate matched (${hits.size} hits, want ${wantSec}s, album '${targetAlbum ?: ""}')")
+        Log.w(TAG, "❌ NO SUITABLE CANDIDATES for '$query' (see per-candidate lines above)")
         Log.d(TAG, "==================================================")
         return emptyList()
     }
 
-    /**
-     * Resolves a playable YouTube stream for [query], falling back through up to
-     * 3 ranked video candidates when one has no obtainable stream.
-     */
     private suspend fun resolveYtPlayback(
         query: String,
         audioQuality: com.metrolist.music.constants.AudioQuality,
@@ -1892,10 +2139,7 @@ object SongPlayer {
         lastYtFailureReason = null
         val connectivityManager =
             appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        // Skip the HTTP HEAD validation probe when the video ID came from a
-        // previous successful play (cached in memory or SharedPrefs). ExoPlayer
-        // has its own retry logic, so the probe just adds ~0.5-1s of latency.
-        val cacheKey = "$query|${com.metrolist.innertube.YouTube.SearchFilter.FILTER_SONG.value}"
+        val cacheKey = "$query|${com.metrolist.innertube.YouTube.SearchFilter.FILTER_SONG.value}|MATCH_V6"
         val candidatesCached = videoCandidatesCache.containsKey(cacheKey)
         val tried = mutableSetOf<String>()
         suspend fun tryIds(ids: List<String>, skipValidation: Boolean = false): YTPlayerUtils.PlaybackData? {
@@ -1924,9 +2168,6 @@ object SongPlayer {
             Log.w(TAG, "song candidates exhausted and video fallback disabled for: ${searchTextForPlayback(query)}")
             return null
         }
-        // Song results exhausted (e.g. every official upload is age-restricted and
-        // we're not signed in to YouTube). Regular video uploads — lyric videos,
-        // reuploads — usually aren't age-gated: last-resort pass over those.
         Log.w(TAG, "song candidates exhausted, trying video search for: ${searchTextForPlayback(query)}")
         tryIds(resolveVideoCandidates(query, YouTube.SearchFilter.FILTER_VIDEO, forPlayback = forPlayback).take(3), skipValidation = false)?.let { return it }
         Log.e(TAG, "All YouTube candidates failed for: ${searchTextForPlayback(query)}")
@@ -1939,15 +2180,6 @@ object SongPlayer {
             .setUsage(androidx.media3.common.C.USAGE_MEDIA)
             .build()
 
-    /**
-     * Build an ExoPlayer that reads through the shared media cache (so preloaded intro
-     * bytes are reused) and carries its own [CrossfadeFilterAudioProcessor] so the DJ-style
-     * low/high-pass sweep can be applied per track during a crossfade. The filter is
-     * disabled (pass-through) outside a crossfade, so there's no overhead in normal playback.
-     *
-     * @param handleAudioFocus true for the active/session player, false for the transient
-     *   secondary (incoming) player so it doesn't fight the primary for focus mid-fade.
-     */
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     private fun createPlayerWithFilter(
         context: Context,
@@ -1993,23 +2225,18 @@ object SongPlayer {
         }
     }
 
-    /** The live ExoPlayer instance (may be null before first play). */
     val exoPlayer: ExoPlayer? get() = player
 
-    /** Sets the preferred audio output device for all active ExoPlayer instances. */
     fun setPreferredAudioDevice(deviceInfo: android.media.AudioDeviceInfo?) {
         try {
             player?.setPreferredAudioDevice(deviceInfo)
             secondaryPlayer?.setPreferredAudioDevice(deviceInfo)
         } catch (e: Exception) {
-            // Ignore if setting preferred device is not supported
         }
     }
 
-    /** Make sure the player exists (used by the media-session service). */
     fun ensureCreated(context: Context) = ensurePlayer(context.applicationContext)
 
-    /** Notified right after the ExoPlayer is built so the session can attach to it. */
     @Volatile var onPlayerCreated: ((ExoPlayer) -> Unit)? = null
 
     fun isPlaying(): Boolean {
@@ -2020,18 +2247,11 @@ object SongPlayer {
     fun webPlaybackActive(): Boolean {
         if (!webPlayerEnabled) return false
         val ctx = appCtx ?: return false
-        // Spotify web playback needs: user hasn't opted out, the WebView actually has
-        // Widevine, AND the user is logged into Spotify (sp_dc). Missing any of these
-        // → fall back to the YouTube/FLAC engine so playback is never silent.
         return com.music.spotui.data.preferences.isWebPlaybackEnabled(ctx) &&
                 SpotifyWebPlayer.canPlay &&
                 com.music.spotui.data.api.SpotifySession.spDc(ctx).isNotBlank()
     }
 
-    // ── Session restore (survive app restarts) ──
-    // Set at launch from the persisted playback state; the first playSong for
-    // this query seeks to the saved position, and play() with an empty player
-    // re-resolves the track instead of doing nothing.
     @Volatile private var restoreQuery: String? = null
     @Volatile private var restorePositionMs: Long = 0L
 
@@ -2046,11 +2266,8 @@ object SongPlayer {
         if (webPlaybackActive()) { SpotifyWebPlayer.resume(); return }
         playWhenResolved = true
         if (currentRequest.isNotBlank() && currentRequest != loadedQuery) {
-            // We are currently resolving a new track in the background.
-            // Do not play the old track (loadedQuery).
             return
         }
-        // Fresh launch: nothing loaded yet — resume the restored session track.
         if ((player?.mediaItemCount ?: 0) == 0) {
             val q = restoreQuery
             val ctx = appCtx
@@ -2066,7 +2283,6 @@ object SongPlayer {
         if (webPlaybackActive()) { SpotifyWebPlayer.pause(); return }
         player?.let {
             it.playWhenReady = false
-            // Remember where we stopped so a relaunch can resume mid-track.
             appCtx?.let { ctx ->
                 val pos = it.currentPosition
                 if (pos > 0) com.music.spotui.data.preferences.saveLastPosition(ctx, pos)
@@ -2205,14 +2421,6 @@ object SongPlayer {
         return playerState != null && playerState != ExoPlayer.STATE_IDLE && playerState != ExoPlayer.STATE_ENDED
     }
 
-    // ── Crossfade + DJ-style mixing ──
-    // The end of the current track is blended into the start of the next over a user-set
-    // window (Settings). A second, transient ExoPlayer plays the incoming track while the
-    // primary fades out; volumes follow an equal-power (cos/sin) curve so total loudness
-    // stays constant. In DJ mode, the outgoing track is low-passed (treble drops out) and the
-    // incoming track high-passed (bass fills in) via per-player [CrossfadeFilterAudioProcessor]s,
-    // swept on an S-curve — like a real DJ mixer. When the blend finishes the secondary player
-    // is promoted to primary and the media session is re-bound to it via [onPlayerSwapped].
     private const val CF_LPF_START_HZ = 20000f
     private const val CF_LPF_END_HZ = 200f
     private const val CF_HPF_START_HZ = 2000f
@@ -2228,12 +2436,8 @@ object SongPlayer {
     @Volatile private var crossfadeJob: kotlinx.coroutines.Job? = null
     @Volatile private var positionWatchJob: kotlinx.coroutines.Job? = null
 
-    /** Notified (on the main thread) when the active ExoPlayer instance changes after a
-     *  crossfade, so the media session can re-bind to the promoted player. */
     @Volatile var onPlayerSwapped: ((ExoPlayer) -> Unit)? = null
 
-    /** Give the player access to the shared queue/now-playing state so it can advance the
-     *  app's notion of "current track" itself when a crossfade fires. Called once at startup. */
     fun bindState(state: CurrentSongState) { boundState = state }
 
     fun isCrossfadeActive(): Boolean = isCrossfading
@@ -2245,8 +2449,6 @@ object SongPlayer {
         return exp(ln(start) + (ln(end) - ln(start)) * t).toFloat()
     }
 
-    /** Cancel an in-flight crossfade and tear down the secondary player, restoring the
-     *  primary to full volume with its filter disabled. Safe to call when not crossfading. */
     private fun cancelCrossfade() {
         if (!isCrossfading && secondaryPlayer == null) return
         crossfadeJob?.cancel()
@@ -2261,8 +2463,6 @@ object SongPlayer {
         releaseWakeLock("spotui:crossfade")
     }
 
-    /** (Re)start the loop that watches playback position and fires a crossfade as the
-     *  current track approaches its end. */
     private var posSaveTick = 0
 
     private fun startPositionWatch() {
@@ -2271,7 +2471,6 @@ object SongPlayer {
             while (isActive) {
                 kotlinx.coroutines.delay(250)
                 val ctx = appCtx ?: continue
-                // Persist the position every ~3s so a relaunch resumes mid-track.
                 if (++posSaveTick % 12 == 0 && !webPlaybackActive()) {
                     player?.let { p ->
                         val pos = withContext(Dispatchers.Main) {
@@ -2284,7 +2483,7 @@ object SongPlayer {
                 val crossfadeMs = com.music.spotui.data.preferences.getCrossfadeMs(ctx)
                 if (crossfadeMs <= 0) continue
                 val state = boundState ?: continue
-                if (state.repeat.value == RepeatMode.ONE) continue // repeat-one loops the same track
+                if (state.repeat.value == RepeatMode.ONE) continue
                 val p = player ?: continue
                 val playing = withContext(Dispatchers.Main) { p.isPlaying }
                 if (!playing) continue
@@ -2298,7 +2497,6 @@ object SongPlayer {
         }
     }
 
-    /** Begin blending the current track into the next queue item. */
     private fun triggerCrossfade(ctx: Context, configuredMs: Int) {
         if (isCrossfading) return
         val state = boundState ?: return
@@ -2308,7 +2506,7 @@ object SongPlayer {
             .takeIf { it >= 0 }
             ?: q.indexOfFirst { it.url == state.songUrl.value }.takeIf { it >= 0 }
             ?: state.songIndex.value.coerceIn(0, q.size - 1)
-        if (cur < 0 || cur >= q.size - 1) return // last track ends normally
+        if (cur < 0 || cur >= q.size - 1) return
         val nextSong = q[cur + 1]
         isCrossfading = true
         acquireWakeLock(ctx, "spotui:crossfade", 60_000L)
@@ -2319,7 +2517,6 @@ object SongPlayer {
                     releaseWakeLock("spotui:crossfade")
                     return@launch
                 }
-                // Effective duration: never longer than the real time left on the outgoing track.
                 val remaining = withContext(Dispatchers.Main) {
                     val p = player ?: return@withContext configuredMs.toLong()
                     val d = p.duration; val ps = p.currentPosition
@@ -2417,7 +2614,6 @@ object SongPlayer {
                 return@withContext
             }
             val old = player
-            // Promote the incoming (secondary) player to primary.
             currentPlayerFilter?.enabled = false
             secondaryPlayerFilter?.enabled = false
             player = incoming
@@ -2426,7 +2622,6 @@ object SongPlayer {
             secondaryPlayerFilter = null
             incoming.volume = 1f
 
-            // Update now-playing UI state right as the incoming track takes over full volume!
             metaTitle = nextSong.title
             metaArtist = nextSong.singer
             metaCover = nextSong.coverUri
@@ -2437,22 +2632,16 @@ object SongPlayer {
                 nextSong.id, nextIdx, nextSong.album,
             )
 
-            // The promoted player now owns audio focus / becoming-noisy handling.
             incoming.setAudioAttributes(buildAudioAttributes(), /* handleAudioFocus = */ true)
             incoming.setHandleAudioBecomingNoisy(true)
             runCatching { old?.stop(); old?.release() }
             isCrossfading = false
             releaseWakeLock("spotui:crossfade")
-            // Re-bind the media session to the new player.
             onPlayerSwapped?.invoke(incoming)
         }
-        // Watch the newly-promoted track for its own end.
         startPositionWatch()
     }
 
-    // ── Sleep timer ──
-    // Pauses playback after a delay. A new call replaces any pending timer;
-    // passing 0 (or calling cancelSleepTimer) clears it.
     @Volatile private var sleepJob: kotlinx.coroutines.Job? = null
     @Volatile var sleepTimerEndAt: Long = 0L
         private set
