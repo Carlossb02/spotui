@@ -2029,7 +2029,11 @@ object SongPlayer {
 
             // A duet/collab is a different recording: artists (or a "feat." credit) that the
             // request doesn't have disqualify the candidate.
-            val candExtraArtists = candArtistKeys.filter { k ->
+            // In FILTER_SONG, YouTube Music may expose the channel/distributor as an
+            // artist even when the title itself explicitly credits every requested artist.
+            // In that case treat unmatched metadata names as uploader metadata, not as a
+            // new collaborator. Without full title credits, retain the strict collab check.
+            val candExtraArtists = if (artistsCreditedInTitle) emptyList() else candArtistKeys.filter { k ->
                 k !in targetArtistKeys && !targetArtistKeys.any { t ->
                     t.length >= 4 && k.length >= 4 && (k.contains(t) || t.contains(k))
                 }
@@ -2114,6 +2118,11 @@ object SongPlayer {
                 score -= 8
             }
             if (targetTitleFlags.isEmpty() && cand.decorations.isBlank()) score += 3
+            // Lyrics/lyric videos can be the only surfaced copy of a valid recording.
+            // Keep them eligible, but prefer an otherwise equivalent clean/audio upload.
+            val isLyricsUpload = Regex("\\b(lyrics?|lyric video)\\b", RegexOption.IGNORE_CASE)
+                .containsMatchIn(item.title)
+            if (isLyricsUpload) score -= 15
             if (hasUnknownDecoration(cand.decorations) && decorationKey(cand.decorations) != decorationKey(target.decorations)) score -= 40
             score += if (explicitMatch) 8 else -8
 
