@@ -4,7 +4,6 @@ import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.res.painterResource
 import com.music.spotui.R
@@ -30,20 +29,6 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import com.music.spotui.data.preferences.BackupPref
 import com.music.spotui.util.BackupHelper
-import androidx.compose.material.icons.filled.SwapVert
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material3.IconButton
-import androidx.compose.ui.text.style.TextOverflow
-import com.music.spotui.data.preferences.AudioProviderOrderItem
-import com.music.spotui.data.preferences.getAudioProviderOrder
-import com.music.spotui.data.preferences.setAudioProviderOrder
-import com.music.spotui.data.preferences.isAudioProviderEnabled
-import com.music.spotui.data.preferences.setAudioProviderEnabled
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -61,7 +46,6 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -96,7 +80,6 @@ import com.music.spotui.data.preferences.setUpdateRepoUrl
 import com.music.spotui.data.preferences.resetUpdateRepoUrl
 import com.music.spotui.data.preferences.DEFAULT_UPDATE_REPO_URL
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -118,15 +101,11 @@ fun SettingsScreen(navController: NavController) {
     var crossfadeMs by remember { mutableStateOf(getCrossfadeMs(context).toFloat()) }
     var videoFallback by remember { mutableStateOf(isVideoFallbackEnabled(context)) }
     var autoPlay by remember { mutableStateOf(isAutoPlayEnabled(context)) }
+    var audioNormalization by remember { mutableStateOf(com.music.spotui.data.preferences.isAudioNormalizationEnabled(context)) }
     var batteryOptExempt by remember { mutableStateOf(BatteryOptimizationHelper.isIgnoringBatteryOptimization(context)) }
     var updateRepoUrl by remember { mutableStateOf(getUpdateRepoUrl(context)) }
     var isDefaultLinkHandler by remember { mutableStateOf(DefaultLinkHelper.isAppDefaultLinkHandler(context)) }
     var showDefaultGuide by remember { mutableStateOf(false) }
-    var showProviderStatusDialog by remember { mutableStateOf(false) }
-    var providerStatuses by remember { mutableStateOf(emptyList<com.metrolist.spotify.SpotiFlac.ProviderStatus>()) }
-    var isRefreshingStatuses by remember { mutableStateOf(false) }
-    var providerOrder by remember { mutableStateOf(getAudioProviderOrder(context)) }
-    var showProviderOrderDialog by remember { mutableStateOf(false) }
 
     var backupDirUri by remember { mutableStateOf(BackupPref.getDirectoryUri(context)) }
     var folderName by remember(backupDirUri) { mutableStateOf(BackupHelper.getFolderDisplayName(context, backupDirUri)) }
@@ -168,6 +147,7 @@ fun SettingsScreen(navController: NavController) {
                     crossfadeMs = getCrossfadeMs(context).toFloat()
                     videoFallback = isVideoFallbackEnabled(context)
                     autoPlay = isAutoPlayEnabled(context)
+                    audioNormalization = com.music.spotui.data.preferences.isAudioNormalizationEnabled(context)
                     updateRepoUrl = getUpdateRepoUrl(context)
                     backupDirUri = BackupPref.getDirectoryUri(context)
                     isAutoBackup = BackupPref.isAutoBackupEnabled(context)
@@ -221,8 +201,6 @@ fun SettingsScreen(navController: NavController) {
                 .padding(top = padding.calculateTopPadding())
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
-                // Clear the bottom nav + mini player so the last section
-                // (account / log out) isn't hidden under the bar.
                 .padding(bottom = 200.dp)
         ) {
             SectionTitle("Devices & Bluetooth")
@@ -343,26 +321,21 @@ fun SettingsScreen(navController: NavController) {
                     )
                 }
             }
+
             SectionTitle("Audio quality")
             QualityPicker(
                 title = "Streaming over Wi-Fi",
                 selected = wifiQ,
-                showFlacWarning = wifiQ == StreamQuality.LOSSLESS,
-                onDeezerLogin = { navController.navigate(com.music.spotui.ui.navigation.Routes.DeezerLogin.route) }
             ) { wifiQ = it; setWifiQuality(context, it) }
 
             QualityPicker(
                 title = "Streaming over cellular",
                 selected = cellQ,
-                showFlacWarning = cellQ == StreamQuality.LOSSLESS,
-                onDeezerLogin = { navController.navigate(com.music.spotui.ui.navigation.Routes.DeezerLogin.route) }
             ) { cellQ = it; setCellularQuality(context, it) }
 
             QualityPicker(
                 title = "Download quality",
                 selected = dlQ,
-                showFlacWarning = dlQ == StreamQuality.LOSSLESS,
-                onDeezerLogin = { navController.navigate(com.music.spotui.ui.navigation.Routes.DeezerLogin.route) }
             ) { dlQ = it; setDownloadQuality(context, it) }
 
             Spacer(Modifier.height(6.dp))
@@ -390,143 +363,16 @@ fun SettingsScreen(navController: NavController) {
                 )
             }
 
-            var losslessStatusSummary by remember { mutableStateOf("Checking lossless mirrors…") }
-            LaunchedEffect(Unit) {
-                providerStatuses = com.metrolist.spotify.SpotiFlac.getProviderStatuses()
-                val upCount = providerStatuses.count { it.isUp && !it.isCooldown }
-                losslessStatusSummary = "$upCount/${providerStatuses.size} online • Tap to inspect providers"
-            }
-
-            Spacer(Modifier.height(6.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable {
-                        scope.launch {
-                            isRefreshingStatuses = true
-                            providerStatuses = com.metrolist.spotify.SpotiFlac.getProviderStatuses()
-                            val upCount = providerStatuses.count { it.isUp && !it.isCooldown }
-                            losslessStatusSummary = "$upCount/${providerStatuses.size} online • Tap to inspect providers"
-                            isRefreshingStatuses = false
-                            showProviderStatusDialog = true
-                        }
-                    }
-                    .background(Color(0xFF1E1E24))
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Lossless Provider Status", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Text(losslessStatusSummary, color = Color(0xFFB3B3B3), fontSize = 12.sp)
-                }
-                Icon(
-                    imageVector = Icons.Filled.Refresh,
-                    contentDescription = "Inspect Status",
-                    tint = AppPalette,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-
-            Spacer(Modifier.height(6.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable { showProviderOrderDialog = true }
-                    .background(Color(0xFF1E1E24))
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Audio Provider Priority", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Text(providerOrder.joinToString(" → ") { it.displayName }, color = Color(0xFFB3B3B3), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                Icon(
-                    imageVector = Icons.Filled.SwapVert,
-                    contentDescription = "Priority Order",
-                    tint = AppPalette,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-
             Spacer(Modifier.height(12.dp))
-            SectionTitle("Deezer (preferred source)")
-            var deezerEnabled by remember { mutableStateOf(com.music.spotui.data.preferences.isDeezerEnabled(context)) }
-            val deezerConnected = com.music.spotui.data.preferences.getDeezerArl(context) != null
-            val deezerTier = com.music.spotui.data.preferences.getDeezerTier(context)
-
+            SectionTitle("Audio Normalization")
             SettingsSwitchRow(
-                title = "Use Deezer",
-                subtitle = "Stream from Deezer first, fall back to YouTube",
-                checked = deezerEnabled,
+                title = "Normalize Volume",
+                subtitle = "Make all songs sound at a consistent volume level",
+                checked = audioNormalization,
             ) {
-                deezerEnabled = it
-                com.music.spotui.data.preferences.setDeezerEnabled(context, it)
-                com.music.spotui.di.SongPlayer.deezerEnabled = it
+                audioNormalization = it
+                com.music.spotui.data.preferences.setAudioNormalizationEnabled(context, it)
             }
-            Text(
-                text = if (deezerConnected) {
-                    "Connected" + if (deezerTier.isNotBlank()) " — $deezerTier" else ""
-                } else "Not connected",
-                color = Color(0xFFB3B3B3),
-                fontSize = 12.sp,
-                modifier = Modifier.padding(start = 4.dp, top = 2.dp),
-            )
-            Text(
-                text = if (deezerConnected) "Reconnect / switch account" else "Log in to Deezer",
-                color = AppPalette,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable {
-                        navController.navigate(com.music.spotui.ui.navigation.Routes.DeezerLogin.route)
-                    }
-                    .padding(vertical = 14.dp),
-            )
-            if (deezerConnected) {
-                Text(
-                    text = "Disconnect Deezer",
-                    color = Color(0xFFE57373),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable {
-                            com.music.spotui.data.preferences.clearDeezer(context)
-                            navController.navigate(com.music.spotui.ui.navigation.Routes.Settings.route) {
-                                popUpTo(com.music.spotui.ui.navigation.Routes.Settings.route) { inclusive = true }
-                            }
-                        }
-                        .padding(vertical = 12.dp),
-                )
-            }
-
-            Spacer(Modifier.height(12.dp))
-            SectionTitle("SpotiFLAC (experimental)")
-            val sfConnected = com.music.spotui.data.preferences.hasSpotiflacSession(context)
-            Text(
-                text = if (sfConnected) "Verified — signed session active" else "Not verified — tap below to solve Turnstile check",
-                color = Color(0xFFB3B3B3),
-                fontSize = 12.sp,
-                modifier = Modifier.padding(start = 4.dp, top = 2.dp),
-            )
-            Text(
-                text = if (sfConnected) "Re-verify SpotiFLAC" else "Verify SpotiFLAC",
-                color = Color(0xFF00C7B7),
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable {
-                        navController.navigate(com.music.spotui.ui.navigation.Routes.SpotiflacVerify.route)
-                    }
-                    .padding(vertical = 14.dp),
-            )
 
             Spacer(Modifier.height(12.dp))
             SectionTitle("Matching")
@@ -574,7 +420,7 @@ fun SettingsScreen(navController: NavController) {
                 onValueChange = { crossfadeMs = it },
                 onValueChangeFinished = { setCrossfadeMs(context, crossfadeMs.toInt()) },
                 valueRange = 0f..CROSSFADE_MAX_MS.toFloat(),
-                steps = (CROSSFADE_MAX_MS / 1000) - 1, // 1-second stops
+                steps = (CROSSFADE_MAX_MS / 1000) - 1,
                 colors = SliderDefaults.colors(
                     thumbColor = AppPalette,
                     activeTrackColor = AppPalette,
@@ -859,167 +705,6 @@ fun SettingsScreen(navController: NavController) {
                 onDismiss = { showDevicesSheet = false }
             )
         }
-
-        if (showProviderStatusDialog) {
-            AlertDialog(
-                onDismissRequest = { showProviderStatusDialog = false },
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Lossless Provider Status", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        if (isRefreshingStatuses) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = AppPalette)
-                        } else {
-                            Icon(
-                                imageVector = Icons.Filled.Refresh,
-                                contentDescription = "Refresh",
-                                tint = Color.White,
-                                modifier = Modifier
-                                    .size(22.dp)
-                                    .clickable {
-                                        scope.launch {
-                                            isRefreshingStatuses = true
-                                            com.metrolist.spotify.SpotiFlac.clearStatusCache()
-                                            providerStatuses = com.metrolist.spotify.SpotiFlac.getProviderStatuses()
-                                            isRefreshingStatuses = false
-                                        }
-                                    }
-                            )
-                        }
-                    }
-                },
-                text = {
-                    Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                        Text(
-                            "Real-time availability of lossless audio mirrors (Tidal, Qobuz, Amazon, Deezer, Monochrome). Playback automatically resolves from the fastest available online provider.",
-                            color = Color(0xFFB3B3B3),
-                            fontSize = 12.sp,
-                            lineHeight = 16.sp
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        providerStatuses.forEach { status ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color(0xFF1A1A20))
-                                    .padding(10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(status.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                                    Text(status.detail, color = Color(0xFF999999), fontSize = 11.sp)
-                                }
-                                Spacer(Modifier.width(6.dp))
-                                val (statusText, statusBg, statusFg) = when {
-                                    status.isCooldown -> Triple("Cooldown (${status.cooldownRemainingSec}s)", Color(0x33FFB74D), Color(0xFFFFB74D))
-                                    status.isUp -> Triple("Online", Color(0x3381C784), Color(0xFF81C784))
-                                    else -> Triple("Offline", Color(0x33E57373), Color(0xFFE57373))
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(statusBg)
-                                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    Text(statusText, color = statusFg, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { showProviderStatusDialog = false }) {
-                        Text("Close", color = AppPalette)
-                    }
-                },
-                containerColor = Color(0xFF141418),
-                titleContentColor = Color.White,
-                textContentColor = Color.White,
-            )
-        }
-
-        if (showProviderOrderDialog) {
-            var disabledSet by remember { mutableStateOf(com.music.spotui.data.preferences.getDisabledAudioProviders(context)) }
-            AlertDialog(
-                onDismissRequest = { showProviderOrderDialog = false },
-                title = { Text("Audio Provider Priority", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
-                text = {
-                    Column {
-                        Text("Check to enable/disable and re-order providers for streaming & downloads:", color = Color.Gray, fontSize = 12.sp)
-                        Spacer(Modifier.height(8.dp))
-                        providerOrder.forEachIndexed { index, item ->
-                            val isYoutube = item == AudioProviderOrderItem.YOUTUBE_MUSIC
-                            val isEnabled = if (isYoutube) true else item.id !in disabledSet
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                if (isYoutube) {
-                                    Spacer(Modifier.width(48.dp))
-                                } else {
-                                    Checkbox(
-                                        checked = isEnabled,
-                                        onCheckedChange = { checked ->
-                                            setAudioProviderEnabled(context, item.id, checked)
-                                            disabledSet = com.music.spotui.data.preferences.getDisabledAudioProviders(context)
-                                        },
-                                        colors = CheckboxDefaults.colors(
-                                            checkedColor = AppPalette,
-                                            uncheckedColor = Color.Gray,
-                                            checkmarkColor = Color.Black,
-                                        )
-                                    )
-                                }
-                                Text(
-                                    text = "${index + 1}. ${item.displayName}" + if (isYoutube) " (Always Fallback)" else "",
-                                    color = if (isEnabled) Color.White else Color.Gray,
-                                    fontSize = 14.sp,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                if (index > 0) {
-                                    IconButton(onClick = {
-                                        val mutable = providerOrder.toMutableList()
-                                        val temp = mutable[index]
-                                        mutable[index] = mutable[index - 1]
-                                        mutable[index - 1] = temp
-                                        providerOrder = mutable
-                                        setAudioProviderOrder(context, mutable)
-                                    }) {
-                                        Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Move up", tint = AppPalette)
-                                    }
-                                }
-                                if (index < providerOrder.size - 1) {
-                                    IconButton(onClick = {
-                                        val mutable = providerOrder.toMutableList()
-                                        val temp = mutable[index]
-                                        mutable[index] = mutable[index + 1]
-                                        mutable[index + 1] = temp
-                                        providerOrder = mutable
-                                        setAudioProviderOrder(context, mutable)
-                                    }) {
-                                        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Move down", tint = AppPalette)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { showProviderOrderDialog = false }) {
-                        Text("Done", color = AppPalette)
-                    }
-                },
-                containerColor = Color(0xFF141418),
-                titleContentColor = Color.White,
-                textContentColor = Color.White,
-            )
-        }
     }
 }
 
@@ -1068,13 +753,8 @@ private fun SettingsSwitchRow(
 private fun QualityPicker(
     title: String,
     selected: StreamQuality,
-    showFlacWarning: Boolean = false,
-    onDeezerLogin: (() -> Unit)? = null,
     onSelect: (StreamQuality) -> Unit
 ) {
-    val context = LocalContext.current
-    val deezerConnected = remember(selected) { com.music.spotui.data.preferences.getDeezerArl(context) != null }
-
     Column(modifier = Modifier.padding(vertical = 8.dp)) {
         Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
@@ -1101,56 +781,6 @@ private fun QualityPicker(
                             tint = AppPalette,
                             modifier = Modifier.size(20.dp)
                         )
-                    }
-                }
-                if (isSel && q == StreamQuality.LOSSLESS && showFlacWarning) {
-                    Spacer(Modifier.height(6.dp))
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0x33FFB74D))
-                            .border(1.dp, Color(0x66FFB74D), RoundedCornerShape(8.dp))
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
-                    ) {
-                        Text(
-                            text = "⚠️ Deezer Login Recommended for Lossless",
-                            color = Color(0xFFFFB74D),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = "Deezer is the most reliable & successful provider for Lossless FLAC playback and downloads. Please log in to Deezer for optimal Lossless availability.",
-                            color = Color(0xFFFFE0B2),
-                            fontSize = 12.sp,
-                            lineHeight = 16.sp,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        if (deezerConnected) {
-                            Text(
-                                text = "✓ Deezer account connected (Lossless ready)",
-                                color = Color(0xFF1ED760),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        } else if (onDeezerLogin != null) {
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(AppPalette)
-                                    .clickable { onDeezerLogin() }
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "Log in to Deezer now",
-                                    color = Color.Black,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
                     }
                 }
             }

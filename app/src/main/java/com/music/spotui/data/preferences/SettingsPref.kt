@@ -17,7 +17,6 @@ enum class StreamQuality(
     LOW("Low", "Data saver — smallest size", AudioQuality.LOW, false),
     NORMAL("Normal", "Balanced for the network", AudioQuality.AUTO, false),
     HIGH("High", "Best compressed quality", AudioQuality.HIGH, false),
-    LOSSLESS("Lossless", "FLAC when available, else High", AudioQuality.HIGH, true),
 }
 
 private const val PREF = "settings_prefs"
@@ -33,6 +32,7 @@ private const val KEY_LIBRARY_GRID = "library_grid_view"
 private const val KEY_AUTO_PLAY = "auto_play_startup"
 private const val KEY_IGNORE_BATTERY_OPT = "ignore_battery_optimization"
 private const val KEY_UPDATE_REPO_URL = "update_repo_url"
+private const val KEY_AUDIO_NORMALIZATION = "audio_normalization_enabled"
 const val DEFAULT_UPDATE_REPO_URL = "https://github.com/Carlossb02/spotui"
 
 /** Off (0s) … 12s. 0 disables crossfade. */
@@ -60,7 +60,7 @@ fun setCellularQuality(c: Context, q: StreamQuality) {
     com.music.spotui.di.SongPlayer.onQualitySettingChanged(c)
 }
 
-fun getDownloadQuality(c: Context): StreamQuality = readQ(c, KEY_DL_Q, StreamQuality.LOSSLESS)
+fun getDownloadQuality(c: Context): StreamQuality = readQ(c, KEY_DL_Q, StreamQuality.HIGH)
 fun setDownloadQuality(c: Context, q: StreamQuality) {
     writeQ(c, KEY_DL_Q, q)
     com.music.spotui.di.SongPlayer.onQualitySettingChanged(c)
@@ -210,4 +210,11 @@ fun setAudioProviderEnabled(c: Context, providerId: String, enabled: Boolean) {
 fun getEnabledAudioProviderOrder(c: Context): List<AudioProviderOrderItem> {
     return getAudioProviderOrder(c).filter { isAudioProviderEnabled(c, it.id) }
 }
+
+fun isAudioNormalizationEnabled(c: Context): Boolean = prefs(c).getBoolean(KEY_AUDIO_NORMALIZATION, false)
+fun setAudioNormalizationEnabled(c: Context, v: Boolean) {
+    prefs(c).edit().putBoolean(KEY_AUDIO_NORMALIZATION, v).apply()
+    com.music.spotui.di.SongPlayer.onNormalizationSettingChanged(c)
+}
+
 
