@@ -427,6 +427,8 @@ class PlaybackService : MediaLibraryService() {
         const val NODE_DOWNLOADS = "downloads"
         const val NODE_PLAYLISTS = "playlists"
         const val NODE_ALBUMS = "albums"
+        const val NODE_ARTISTS = "artists"
+        const val NODE_SONGS = "songs"
     }
 
     /**
@@ -681,6 +683,16 @@ class PlaybackService : MediaLibraryService() {
                         "Albums",
                         mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_ALBUMS
                     ),
+                    folder(
+                        NODE_ARTISTS,
+                        "Artists",
+                        mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_ARTISTS
+                    ),
+                    folder(
+                        NODE_SONGS,
+                        "All Songs",
+                        mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_MIXED
+                    ),
                 )
 
                 parentId == NODE_LIKED ->
@@ -717,6 +729,22 @@ class PlaybackService : MediaLibraryService() {
                         )
                     }
 
+                parentId == NODE_ARTISTS ->
+                    lastSuccess(repository.provideArtists()).orEmpty().map {
+                        folder(
+                            "artist/${android.net.Uri.encode(it.name)}",
+                            it.name,
+                            it.coverUri,
+                            mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_ARTISTS
+                        )
+                    }
+
+                parentId == NODE_SONGS ->
+                    registerTracks(
+                        NODE_SONGS,
+                        lastSuccess(repository.provideSongs()).orEmpty()
+                    )
+
                 parentId.startsWith("playlist/") -> {
                     val songs =
                         lastSuccess(repository.providePlaylistSongs(parentId.removePrefix("playlist/")))
@@ -730,6 +758,14 @@ class PlaybackService : MediaLibraryService() {
                     registerTracks(
                         parentId,
                         lastSuccess(repository.provideAlbumSongs(name, artist)).orEmpty()
+                    )
+                }
+
+                parentId.startsWith("artist/") -> {
+                    val artistName = android.net.Uri.decode(parentId.removePrefix("artist/"))
+                    registerTracks(
+                        parentId,
+                        lastSuccess(repository.provideArtistSongs(artistName)).orEmpty()
                     )
                 }
 
@@ -773,6 +809,7 @@ class PlaybackService : MediaLibraryService() {
         songs.forEach { song ->
             trackById["song/${song.id}"] = song
             queueByTrackId["song/${song.id}"] = songs
+            com.music.spotui.util.ArtworkHelper.ensureDownloadedCover(applicationContext, song)
         }
         return songs.map { playable(it) }
     }
@@ -789,8 +826,9 @@ class PlaybackService : MediaLibraryService() {
             .setIsPlayable(false)
             .setMediaType(mediaType)
         if (coverUri.isNotBlank()) {
+            com.music.spotui.util.ArtworkHelper.ensureDownloadedCover(this, id, coverUri)
             com.music.spotui.util.ArtworkHelper.attachArtwork(
-                builder, this, coverUri, id.removePrefix("song/").removePrefix("playlist/").removePrefix("album/")
+                builder, this, coverUri, id.removePrefix("song/").removePrefix("playlist/").removePrefix("album/").removePrefix("artist/")
             )
         }
         return MediaItem.Builder()

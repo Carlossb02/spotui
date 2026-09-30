@@ -117,9 +117,15 @@ object ArtworkHelper {
 
     /** Ensure a downloaded song has its cover image cached/saved locally to disk. */
     fun ensureDownloadedCover(context: Context, song: com.music.spotui.data.entity.SongsModel) {
-        if (song.coverUri.isBlank()) return
+        ensureDownloadedCover(context, song.id.toString(), song.coverUri)
+    }
+
+    /** Ensure a cover image for any item (song, playlist, album, artist) is cached/saved locally to disk. */
+    fun ensureDownloadedCover(context: Context, id: String, coverUri: String) {
+        if (coverUri.isBlank()) return
+        val cleanId = cleanSongId(id) ?: id.trim()
         val dir = File(context.filesDir, "downloads").apply { mkdirs() }
-        val coverFile = File(dir, "${song.id}_cover.jpg")
+        val coverFile = File(dir, "${cleanId}_cover.jpg")
         if (coverFile.exists() && coverFile.length() > 0) return
 
         val appContext = context.applicationContext
@@ -127,7 +133,7 @@ object ArtworkHelper {
             val file = runCatching {
                 com.bumptech.glide.Glide.with(appContext)
                     .downloadOnly()
-                    .load(song.coverUri)
+                    .load(coverUri)
                     .submit()
                     .get()
             }.getOrNull()
@@ -135,7 +141,7 @@ object ArtworkHelper {
                 runCatching { file.copyTo(coverFile, overwrite = true) }
             } else {
                 runCatching {
-                    val conn = (java.net.URL(song.coverUri).openConnection() as java.net.HttpURLConnection).apply {
+                    val conn = (java.net.URL(coverUri).openConnection() as java.net.HttpURLConnection).apply {
                         connectTimeout = 10000
                         readTimeout = 10000
                         instanceFollowRedirects = true
