@@ -5,7 +5,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.compose.runtime.snapshotFlow
@@ -57,6 +56,7 @@ import javax.inject.Inject
  * browse the library — Liked Songs, Downloads, playlists and albums — and start
  * playback from the car.
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @AndroidEntryPoint
 class PlaybackService : MediaLibraryService() {
 
@@ -280,11 +280,12 @@ class PlaybackService : MediaLibraryService() {
             addAction("com.android.music.togglepause")
             addAction("com.android.music.stop")
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(mediaControlReceiver, musicFilter, Context.RECEIVER_EXPORTED)
-        } else {
-            registerReceiver(mediaControlReceiver, musicFilter)
-        }
+        androidx.core.content.ContextCompat.registerReceiver(
+            this,
+            mediaControlReceiver,
+            musicFilter,
+            androidx.core.content.ContextCompat.RECEIVER_EXPORTED
+        )
     }
 
     /** Point the media session at whichever engine is currently producing audio. */
@@ -593,7 +594,7 @@ class PlaybackService : MediaLibraryService() {
             mediaId: String,
         ): ListenableFuture<LibraryResult<MediaItem>> = Futures.immediateFuture(
             trackById[mediaId]?.let { LibraryResult.ofItem(playable(it), null) }
-                ?: LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE),
+                ?: LibraryResult.ofError(androidx.media3.session.SessionError.ERROR_BAD_VALUE),
         )
 
         // A browsed track was tapped in the car: queue the list it came from and
