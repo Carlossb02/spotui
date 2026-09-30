@@ -2150,6 +2150,18 @@ object SongPlayer {
             return resolvedIds
         }
 
+        if (hits.isNotEmpty()) {
+            val fallbackBest = hits.first()
+            if (forPlayback) logResolution("YouTube last-resort match: '${fallbackBest.title}' | ${fallbackBest.artists.joinToString { it.name }}")
+            Log.w(TAG, "⚠️ LAST RESORT WINNER: '${fallbackBest.title}' (ID: ${fallbackBest.id})")
+            val resolvedIds = listOf(fallbackBest.id)
+            videoCandidatesCache[cacheKey] = resolvedIds
+            appCtx?.let { ctx ->
+                com.music.spotui.data.preferences.setCachedVideoIds(ctx, cacheKey, resolvedIds)
+            }
+            return resolvedIds
+        }
+
         if (forPlayback) logResolution("YouTube: no candidate matched (${hits.size} hits, want ${wantSec}s, album '${targetAlbum ?: ""}')")
         Log.w(TAG, "❌ NO SUITABLE CANDIDATES for '$query' (see per-candidate lines above)")
         Log.d(TAG, "==================================================")
