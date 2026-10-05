@@ -7,6 +7,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.res.painterResource
 import com.music.spotui.R
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Surface
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -90,6 +94,7 @@ import com.music.spotui.util.DefaultLinkHelper
 import com.music.spotui.ui.theme.AppBackground
 import com.music.spotui.ui.theme.AppPalette
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(navController: NavController) {
@@ -102,6 +107,9 @@ fun SettingsScreen(navController: NavController) {
     var videoFallback by remember { mutableStateOf(isVideoFallbackEnabled(context)) }
     var autoPlay by remember { mutableStateOf(isAutoPlayEnabled(context)) }
     var audioNormalization by remember { mutableStateOf(com.music.spotui.data.preferences.isAudioNormalizationEnabled(context)) }
+    var equalizerEnabled by remember { mutableStateOf(com.music.spotui.data.preferences.isEqualizerEnabled(context)) }
+    var equalizerPreset by remember { mutableStateOf(com.music.spotui.data.preferences.getEqualizerPreset(context)) }
+    var equalizerGains by remember { mutableStateOf(com.music.spotui.data.preferences.getEqualizerBandGains(context)) }
     var batteryOptExempt by remember { mutableStateOf(BatteryOptimizationHelper.isIgnoringBatteryOptimization(context)) }
     var updateRepoUrl by remember { mutableStateOf(getUpdateRepoUrl(context)) }
     var isDefaultLinkHandler by remember { mutableStateOf(DefaultLinkHelper.isAppDefaultLinkHandler(context)) }
@@ -148,6 +156,9 @@ fun SettingsScreen(navController: NavController) {
                     videoFallback = isVideoFallbackEnabled(context)
                     autoPlay = isAutoPlayEnabled(context)
                     audioNormalization = com.music.spotui.data.preferences.isAudioNormalizationEnabled(context)
+                    equalizerEnabled = com.music.spotui.data.preferences.isEqualizerEnabled(context)
+                    equalizerPreset = com.music.spotui.data.preferences.getEqualizerPreset(context)
+                    equalizerGains = com.music.spotui.data.preferences.getEqualizerBandGains(context)
                     updateRepoUrl = getUpdateRepoUrl(context)
                     backupDirUri = BackupPref.getDirectoryUri(context)
                     isAutoBackup = BackupPref.isAutoBackupEnabled(context)
@@ -372,6 +383,136 @@ fun SettingsScreen(navController: NavController) {
             ) {
                 audioNormalization = it
                 com.music.spotui.data.preferences.setAudioNormalizationEnabled(context, it)
+            }
+
+            Spacer(Modifier.height(12.dp))
+            SectionTitle("Equalizer")
+            SettingsSwitchRow(
+                title = "Equalizer",
+                subtitle = "Apply Spotify frequency equalization to audio",
+                checked = equalizerEnabled,
+            ) {
+                equalizerEnabled = it
+                com.music.spotui.data.preferences.setEqualizerEnabled(context, it)
+            }
+
+            if (equalizerEnabled) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Preset",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+
+                val presets = remember { com.music.spotui.audio.EqualizerAudioProcessor.PRESETS.keys.toList() + "Custom" }
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                ) {
+                    items(presets) { preset ->
+                        val isSelected = (preset == equalizerPreset)
+                        Surface(
+                            onClick = {
+                                equalizerPreset = preset
+                                if (preset != "Custom") {
+                                    val gains = com.music.spotui.audio.EqualizerAudioProcessor.PRESETS[preset]
+                                        ?: floatArrayOf(0f, 0f, 0f, 0f, 0f)
+                                    equalizerGains = gains
+                                    com.music.spotui.data.preferences.setEqualizerPreset(context, preset)
+                                    com.music.spotui.data.preferences.setEqualizerBandGains(context, gains)
+                                } else {
+                                    com.music.spotui.data.preferences.setEqualizerPreset(context, "Custom")
+                                }
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (isSelected) AppPalette else Color(0xFF28282E),
+                            contentColor = if (isSelected) Color.Black else Color.White,
+                        ) {
+                            Text(
+                                text = preset,
+                                fontSize = 13.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
+
+                val bandLabels = remember { com.music.spotui.audio.EqualizerAudioProcessor.FREQUENCY_LABELS }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF1E1E24))
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    for (i in 0 until 5) {
+                        val gainValue = equalizerGains.getOrElse(i) { 0f }
+                        Column {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(bandLabels[i], color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    text = if (gainValue > 0) "+${String.format("%.1f", gainValue)} dB" else "${String.format("%.1f", gainValue)} dB",
+                                    color = if (gainValue != 0f) AppPalette else Color.Gray,
+                                    fontSize = 12.sp
+                                )
+                            }
+                            Slider(
+                                value = gainValue,
+                                onValueChange = { newGain ->
+                                    val newGains = equalizerGains.copyOf()
+                                    newGains[i] = newGain
+                                    equalizerGains = newGains
+                                    equalizerPreset = "Custom"
+                                    com.music.spotui.data.preferences.setEqualizerPreset(context, "Custom")
+                                    com.music.spotui.data.preferences.setEqualizerBandGains(context, newGains)
+                                },
+                                valueRange = -12f..12f,
+                                colors = SliderDefaults.colors(
+                                    thumbColor = AppPalette,
+                                    activeTrackColor = AppPalette,
+                                    inactiveTrackColor = Color(0xFF383840)
+                                )
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable {
+                            try {
+                                val intent = Intent(android.media.audiofx.AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL)
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                android.widget.Toast.makeText(context, "System equalizer not supported on this device", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        .background(Color(0xFF1E1E24))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("System Equalizer", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Open device built-in audio effects settings", color = Color.Gray, fontSize = 11.sp)
+                    }
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "System Equalizer",
+                        tint = Color.Gray,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
 
             Spacer(Modifier.height(12.dp))

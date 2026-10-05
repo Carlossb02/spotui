@@ -33,6 +33,9 @@ private const val KEY_AUTO_PLAY = "auto_play_startup"
 private const val KEY_IGNORE_BATTERY_OPT = "ignore_battery_optimization"
 private const val KEY_UPDATE_REPO_URL = "update_repo_url"
 private const val KEY_AUDIO_NORMALIZATION = "audio_normalization_enabled"
+private const val KEY_EQUALIZER_ENABLED = "equalizer_enabled"
+private const val KEY_EQUALIZER_PRESET = "equalizer_preset"
+private const val KEY_EQUALIZER_BANDS = "equalizer_bands"
 const val DEFAULT_UPDATE_REPO_URL = "https://github.com/Carlossb02/spotui"
 
 /** Off (0s) … 12s. 0 disables crossfade. */
@@ -216,5 +219,40 @@ fun setAudioNormalizationEnabled(c: Context, v: Boolean) {
     prefs(c).edit().putBoolean(KEY_AUDIO_NORMALIZATION, v).apply()
     com.music.spotui.di.SongPlayer.onNormalizationSettingChanged(c)
 }
+
+fun isEqualizerEnabled(c: Context): Boolean = prefs(c).getBoolean(KEY_EQUALIZER_ENABLED, false)
+fun setEqualizerEnabled(c: Context, v: Boolean) {
+    prefs(c).edit().putBoolean(KEY_EQUALIZER_ENABLED, v).apply()
+    com.music.spotui.di.SongPlayer.onEqualizerSettingChanged(c)
+}
+
+fun getEqualizerPreset(c: Context): String = prefs(c).getString(KEY_EQUALIZER_PRESET, "Flat") ?: "Flat"
+fun setEqualizerPreset(c: Context, preset: String) {
+    prefs(c).edit().putString(KEY_EQUALIZER_PRESET, preset).apply()
+    com.music.spotui.di.SongPlayer.onEqualizerSettingChanged(c)
+}
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+fun getEqualizerBandGains(c: Context): FloatArray {
+    val raw = prefs(c).getString(KEY_EQUALIZER_BANDS, "") ?: ""
+    if (raw.isBlank()) {
+        val preset = getEqualizerPreset(c)
+        return com.music.spotui.audio.EqualizerAudioProcessor.PRESETS[preset]
+            ?: floatArrayOf(0f, 0f, 0f, 0f, 0f)
+    }
+    return try {
+        val parts = raw.split(",").map { it.toFloat() }
+        if (parts.size == 5) parts.toFloatArray() else floatArrayOf(0f, 0f, 0f, 0f, 0f)
+    } catch (e: Exception) {
+        floatArrayOf(0f, 0f, 0f, 0f, 0f)
+    }
+}
+
+fun setEqualizerBandGains(c: Context, gains: FloatArray) {
+    val str = gains.joinToString(",") { it.toString() }
+    prefs(c).edit().putString(KEY_EQUALIZER_BANDS, str).apply()
+    com.music.spotui.di.SongPlayer.onEqualizerSettingChanged(c)
+}
+
 
 

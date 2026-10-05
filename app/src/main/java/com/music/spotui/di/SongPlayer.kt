@@ -745,6 +745,7 @@ object SongPlayer {
 
     private const val PRELOAD_BYTES = 1L * 1024 * 1024
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     @Volatile private var mediaCache: androidx.media3.datasource.cache.SimpleCache? = null
 
     private fun mediaCache(context: Context): androidx.media3.datasource.cache.SimpleCache =
@@ -2237,11 +2238,23 @@ object SongPlayer {
             .build()
 
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private data class PlayerAudioComponents(
+        val player: ExoPlayer,
+        val filter: com.music.spotui.audio.CrossfadeFilterAudioProcessor,
+        val equalizer: com.music.spotui.audio.EqualizerAudioProcessor,
+        val normalizer: com.music.spotui.audio.VolumeNormalizationAudioProcessor,
+    )
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     private fun createPlayerWithFilter(
         context: Context,
         handleAudioFocus: Boolean,
-    ): Triple<ExoPlayer, com.music.spotui.audio.CrossfadeFilterAudioProcessor, com.music.spotui.audio.VolumeNormalizationAudioProcessor> {
+    ): PlayerAudioComponents {
         val filter = com.music.spotui.audio.CrossfadeFilterAudioProcessor()
+        val equalizer = com.music.spotui.audio.EqualizerAudioProcessor().apply {
+            enabled = com.music.spotui.data.preferences.isEqualizerEnabled(context)
+            setBandGains(com.music.spotui.data.preferences.getEqualizerBandGains(context))
+        }
         val normalizer = com.music.spotui.audio.VolumeNormalizationAudioProcessor().apply {
             enabled = com.music.spotui.data.preferences.isAudioNormalizationEnabled(context)
         }
@@ -2256,7 +2269,7 @@ object SongPlayer {
                     .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
                     .setAudioProcessorChain(
                         androidx.media3.exoplayer.audio.DefaultAudioSink.DefaultAudioProcessorChain(
-                            filter, normalizer,
+                            filter, equalizer, normalizer,
                         ),
                     ).build()
         }
@@ -2271,17 +2284,18 @@ object SongPlayer {
             .setHandleAudioBecomingNoisy(handleAudioFocus)
             .setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK)
             .build()
-        return Triple(p, filter, normalizer)
+        return PlayerAudioComponents(p, filter, equalizer, normalizer)
     }
 
     private fun ensurePlayer(context: Context) {
         appCtx = context.applicationContext
         if (player == null) {
-            val (p, filter, normalizer) = createPlayerWithFilter(context, handleAudioFocus = true)
-            player = p
-            currentPlayerFilter = filter
-            currentPlayerNormalizer = normalizer
-            onPlayerCreated?.invoke(p)
+            val comp = createPlayerWithFilter(context, handleAudioFocus = true)
+            player = comp.player
+            currentPlayerFilter = comp.filter
+            currentPlayerEqualizer = comp.equalizer
+            currentPlayerNormalizer = comp.normalizer
+            onPlayerCreated?.invoke(comp.player)
         }
     }
 
@@ -2490,9 +2504,11 @@ object SongPlayer {
     @Volatile private var appCtx: Context? = null
     @Volatile private var boundState: CurrentSongState? = null
     @Volatile private var currentPlayerFilter: com.music.spotui.audio.CrossfadeFilterAudioProcessor? = null
+    @Volatile private var currentPlayerEqualizer: com.music.spotui.audio.EqualizerAudioProcessor? = null
     @Volatile private var currentPlayerNormalizer: com.music.spotui.audio.VolumeNormalizationAudioProcessor? = null
     @Volatile private var secondaryPlayer: ExoPlayer? = null
     @Volatile private var secondaryPlayerFilter: com.music.spotui.audio.CrossfadeFilterAudioProcessor? = null
+    @Volatile private var secondaryPlayerEqualizer: com.music.spotui.audio.EqualizerAudioProcessor? = null
     @Volatile private var secondaryPlayerNormalizer: com.music.spotui.audio.VolumeNormalizationAudioProcessor? = null
     @Volatile private var isCrossfading = false
     @Volatile private var crossfadeJob: kotlinx.coroutines.Job? = null
@@ -2506,6 +2522,19 @@ object SongPlayer {
         val enabled = com.music.spotui.data.preferences.isAudioNormalizationEnabled(context)
         currentPlayerNormalizer?.enabled = enabled
         secondaryPlayerNormalizer?.enabled = enabled
+    }
+
+    fun onEqualizerSettingChanged(context: Context) {
+        val enabled = com.music.spotui.data.preferences.isEqualizerEnabled(context)
+        val gains = com.music.spotui.data.preferences.getEqualizerBandGains(context)
+        currentPlayerEqualizer?.apply {
+            this.enabled = enabled
+            setBandGains(gains)
+        }
+        secondaryPlayerEqualizer?.apply {
+            this.enabled = enabled
+            setBandGains(gains)
+        }
     }
 
     fun isCrossfadeActive(): Boolean = isCrossfading
@@ -2523,11 +2552,17 @@ object SongPlayer {
         crossfadeJob = null
         currentPlayerFilter?.enabled = false
         secondaryPlayerFilter?.enabled = false
+        currentPlayerEqualizer?.apply {
+            enabled = com.music.spotui.data.preferences.isEqualizerEnabled(appCtx ?: return)
+            setBandGains(com.music.spotui.data.preferences.getEqualizerBandGains(appCtx ?: return))
+        }
+        secondaryPlayerEqualizer?.enabled = false
         currentPlayerNormalizer?.enabled = com.music.spotui.data.preferences.isAudioNormalizationEnabled(appCtx ?: return)
         secondaryPlayerNormalizer?.enabled = false
         runCatching { secondaryPlayer?.release() }
         secondaryPlayer = null
         secondaryPlayerFilter = null
+        secondaryPlayerEqualizer = null
         secondaryPlayerNormalizer = null
         player?.volume = 1f
         isCrossfading = false
@@ -2597,10 +2632,11 @@ object SongPlayer {
                 val djMode = com.music.spotui.data.preferences.isCrossfadeDjMode(ctx)
 
                 withContext(Dispatchers.Main) {
-                    val (sp, sf, sn) = createPlayerWithFilter(ctx, handleAudioFocus = false)
-                    secondaryPlayer = sp
-                    secondaryPlayerFilter = sf
-                    secondaryPlayerNormalizer = sn
+                    val comp = createPlayerWithFilter(ctx, handleAudioFocus = false)
+                    secondaryPlayer = comp.player
+                    secondaryPlayerFilter = comp.filter
+                    secondaryPlayerEqualizer = comp.equalizer
+                    secondaryPlayerNormalizer = comp.normalizer
                     val metadataBuilder = androidx.media3.common.MediaMetadata.Builder()
                         .setTitle(nextSong.title)
                         .setArtist(nextSong.singer)
@@ -2617,10 +2653,10 @@ object SongPlayer {
                         .apply { streamMimeType(nextUrl)?.let { setMimeType(it) } }
                         .setMediaMetadata(metadataBuilder.build())
                         .build()
-                    sp.setMediaItem(item)
-                    sp.prepare()
-                    sp.volume = 0f
-                    sp.playWhenReady = true
+                    comp.player.setMediaItem(item)
+                    comp.player.prepare()
+                    comp.player.volume = 0f
+                    comp.player.playWhenReady = true
                 }
                 performCrossfade(effectiveMs, djMode, nextSong, cur + 1)
             } catch (e: Exception) {
@@ -2688,13 +2724,17 @@ object SongPlayer {
             val old = player
             currentPlayerFilter?.enabled = false
             secondaryPlayerFilter?.enabled = false
+            currentPlayerEqualizer?.enabled = false
+            secondaryPlayerEqualizer?.enabled = false
             currentPlayerNormalizer?.enabled = false
             secondaryPlayerNormalizer?.enabled = false
             player = incoming
             currentPlayerFilter = secondaryPlayerFilter
+            currentPlayerEqualizer = secondaryPlayerEqualizer
             currentPlayerNormalizer = secondaryPlayerNormalizer
             secondaryPlayer = null
             secondaryPlayerFilter = null
+            secondaryPlayerEqualizer = null
             secondaryPlayerNormalizer = null
             incoming.volume = 1f
 
