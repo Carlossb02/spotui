@@ -89,6 +89,9 @@ object SongPlayer {
     private val sourceCache = java.util.concurrent.ConcurrentHashMap<String, String>()
     // Cache of resolved YouTube video candidates keyed by the play query
     private val videoCandidatesCache = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+    // When a cached stream URL was last confirmed valid. Fresh URLs skip the network re-validation.
+    private val streamValidatedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private const val STREAM_REVALIDATE_MS = 5 * 60_000L
 
     @kotlin.OptIn(androidx.media3.common.util.UnstableApi::class)
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -99,6 +102,7 @@ object SongPlayer {
         qualityCache.clear()
         qualityTierCache.clear()
         videoCandidatesCache.clear()
+        streamValidatedAt.clear()
         inFlightResolutions.values.forEach { runCatching { it.cancel() } }
         inFlightResolutions.clear()
         alternativeKeyRegistry.clear()
@@ -166,12 +170,19 @@ object SongPlayer {
         while (resolutionLogs.size > 50) resolutionLogs.poll()
     }
 
+    private val trackPrefixRegex = Regex("^(spotify:track:[a-zA-Z0-9]+|yt:[a-zA-Z0-9_-]+)")
+    private val youtubeIdRegex = Regex("""[A-Za-z0-9_-]{11}""")
+    private val artistSplitRegex = Regex("""[,&]|\band\b""", RegexOption.IGNORE_CASE)
+    private val remixSuffixRegex = Regex("(remix|rmx)$", RegexOption.IGNORE_CASE)
+    private val radioEditRegex = Regex("\\b(radio (version|edit|mix)|single (version|edit))\\b", RegexOption.IGNORE_CASE)
+    private val lyricsUploadRegex = Regex("\\b(lyrics?|lyric video)\\b", RegexOption.IGNORE_CASE)
+
     private fun cleanTrackTitle(raw: String, artist: String): String {
         var title = raw
         if (title.contains("|")) {
             title = title.substringAfter("|")
         }
-        title = title.replace(Regex("^(spotify:track:[a-zA-Z0-9]+|yt:[a-zA-Z0-9_-]+)"), "").trim()
+        title = title.replace(trackPrefixRegex, "").trim()
         if (artist.isNotBlank()) {
             val artistPattern = Regex("""\s*[-–—]?\s*${Regex.escape(artist)}\s*$""", RegexOption.IGNORE_CASE)
             title = title.replace(artistPattern, "").trim()
@@ -233,7 +244,10 @@ object SongPlayer {
 
     fun registerDuration(pairs: List<Pair<String, Int>>) {
         pairs.forEach { (query, ms) ->
-            if (query.isNotBlank() && ms > 0) durationRegistry[query] = ms
+            if (query.isNotBlank() && ms > 0) {
+                durationRegistry[query] = ms
+                approxDurationQueries.remove(query)
+            }
         }
     }
 
@@ -366,7 +380,7 @@ object SongPlayer {
 
     fun videoIdFromYouTubeLink(text: String): String? =
         YouTubeUrlParser.extractVideoId(text)
-            ?: text.trim().takeIf { it.matches(Regex("""[A-Za-z0-9_-]{11}""")) }
+            ?: text.trim().takeIf { it.matches(youtubeIdRegex) }
 
     fun clearMediaCacheForTrack(context: Context, song: String) {
         runCatching {
@@ -382,8 +396,9 @@ object SongPlayer {
         sourceCache.remove(song)
         qualityCache.remove(song)
         qualityTierCache.remove(song)
-        videoCandidatesCache.remove("$song|FILTER_SONG|MATCH_V11")
-        videoCandidatesCache.remove("$song|FILTER_VIDEO|MATCH_V11")
+        streamValidatedAt.remove(song)
+        videoCandidatesCache.remove("$song|FILTER_SONG|MATCH_V12")
+        videoCandidatesCache.remove("$song|FILTER_VIDEO|MATCH_V12")
         appCtx?.let { ctx ->
             com.music.spotui.data.preferences.clearCachedVideoId(ctx, song)
             com.music.spotui.data.preferences.clearCachedStream(ctx, song)
@@ -470,6 +485,14 @@ object SongPlayer {
 
     @Volatile private var currentMediaId: String? = null
 
+    private suspend fun streamStillValid(song: String, url: String): Boolean {
+        val t = streamValidatedAt[song]
+        if (t != null && System.currentTimeMillis() - t < STREAM_REVALIDATE_MS) return true
+        val ok = YTPlayerUtils.validateStatus(url)
+        if (ok) streamValidatedAt[song] = System.currentTimeMillis()
+        return ok
+    }
+
     // ── Recording verification (safety net for every non-YouTube provider) ────
     //
     // Amazon / Qobuz / TIDAL / Deezer / SoundCloud match on their own. When one of them hands
@@ -481,7 +504,7 @@ object SongPlayer {
     /** Turn off if a provider reports unreliable durations. */
     @Volatile var durationGuardEnabled = true
 
-    private const val MATCH_PURGE_KEY = "match_v7_purged"
+    private const val MATCH_PURGE_KEY = "match_v8_purged"
     private val providerBlocklist = java.util.concurrent.ConcurrentHashMap<String, Set<String>>()
     private val durationVerified: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     private var durationGuard: androidx.media3.common.Player.Listener? = null
@@ -525,7 +548,7 @@ object SongPlayer {
                     p.playWhenReady = playWhenResolved
                     return
                 }
-                val tolerance = maxOf(3_000L, wantMs / 100)
+                val tolerance = if (song in approxDurationQueries) maxOf(8_000L, wantMs / 25) else maxOf(3_000L, wantMs / 100)
                 if (abs(actual - wantMs) <= tolerance) {
                     durationVerified.add(song)
                     logResolution("✓ duration verified: ${actual / 1000}s vs ${wantMs / 1000}s ($source)")
@@ -555,8 +578,12 @@ object SongPlayer {
      * The matcher changed: streams cached by the previous version (disk cache, resolved video
      * ids, ExoPlayer media cache) may point at the wrong recording. Purge them once.
      */
+    @Volatile private var legacyPurgeChecked = false
+
     private fun purgeLegacyMatchCachesOnce(ctx: Context) {
+        if (legacyPurgeChecked) return
         val prefs = ctx.getSharedPreferences("spotui_matcher", Context.MODE_PRIVATE)
+        legacyPurgeChecked = true
         if (prefs.getBoolean(MATCH_PURGE_KEY, false)) return
         prefs.edit().putBoolean(MATCH_PURGE_KEY, true).apply()
         runCatching {
@@ -572,14 +599,14 @@ object SongPlayer {
         purgeLegacyMatchCachesOnce(appContext)
         currentRequest = song
         val queue = boundState?.queue?.value.orEmpty()
-        if (queue.isNotEmpty()) {
+        // Neighbours are prefetched only AFTER the requested song has been handed to the
+        // player, so they never compete with it for network/CPU while it is being resolved.
+        val upcomingSongs: List<String> = if (queue.isNotEmpty()) {
             val cur = queue.indexOfFirst { it.url == song || (mediaId != null && it.id.toString() == mediaId.removePrefix("song/")) }
-            if (cur >= 0) {
-                val nextSongs = queue.drop(cur + 1).take(4).map { it.url }
-                if (nextSongs.isNotEmpty()) {
-                    prefetchList(nextSongs, appContext, 4)
-                }
-            }
+            if (cur >= 0) queue.drop(cur + 1).take(4).map { it.url } else emptyList()
+        } else emptyList()
+        val startPrefetch: () -> Unit = {
+            if (upcomingSongs.isNotEmpty()) prefetchList(upcomingSongs, appContext, 4)
         }
         val resolvedMediaId = mediaId ?: boundState?.queue?.value?.firstOrNull { it.url == song }?.let { "song/${it.id}" }
         ?: boundState?.songId?.value?.let { if (it != 0) "song/$it" else null }
@@ -617,6 +644,7 @@ object SongPlayer {
             }
             boundState?.updateResolveDetailNote("Source: Downloaded Local File • Format: $currentQuality")
             updateResolveStatus(false)
+            startPrefetch()
             return
         }
 
@@ -630,8 +658,7 @@ object SongPlayer {
             return
         }
 
-        val downloadedPath = com.music.spotui.data.preferences.downloadedPathForQuery(appContext, song)
-        if (downloadedPath == null && webPlayerEnabled &&
+        if (webPlayerEnabled &&
             com.music.spotui.data.preferences.isWebPlaybackEnabled(appContext) &&
             SpotifyWebPlayer.canPlay
         ) {
@@ -675,6 +702,8 @@ object SongPlayer {
                     updateResolveStatus(false)
                     return@launch
                 }
+                // Built off the main thread (artwork lookup / cache key) so the UI thread only swaps items.
+                val mediaItem = buildMediaItem(streamUrl, streamMimeType(streamUrl), song)
                 withContext(Dispatchers.Main) {
                     if (currentRequest != song) {
                         releaseWakeLock("spotui:playSong")
@@ -682,7 +711,7 @@ object SongPlayer {
                         return@withContext
                     }
                     ensurePlayer(appContext)
-                    player!!.setMediaItem(buildMediaItem(streamUrl, streamMimeType(streamUrl), song))
+                    player!!.setMediaItem(mediaItem)
                     player!!.prepare()
                     if (song == restoreQuery && restorePositionMs > 0) {
                         player!!.seekTo(restorePositionMs)
@@ -695,6 +724,7 @@ object SongPlayer {
                     loadedQuery = song
                     updateResolveStatus(false)
                 }
+                startPrefetch()
                 startPositionWatch()
             } catch (e: Exception) {
                 releaseWakeLock("spotui:playSong")
@@ -759,27 +789,60 @@ object SongPlayer {
         }
     }
 
-    fun prefetch(song: String, context: Context) {
+    private val prefetchSemaphore = Semaphore(2)
+    private val prefetchInFlight: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    @Volatile private var prefetchTargets: Set<String> = emptySet()
+
+    fun prefetch(song: String, context: Context) = prefetchInternal(song, context, listed = false)
+
+    private fun prefetchInternal(song: String, context: Context, listed: Boolean) {
         if (song.isBlank() || streamCache.containsKey(song)) return
         val appContext = context.applicationContext
         if (webPlaybackActive()) return
+        if (!prefetchInFlight.add(song)) return
         scope.launch {
-            acquireWakeLock(appContext, "spotui:prefetch", 30_000L)
             try {
-                val url = runCatching { resolveStreamUrl(song, appContext, forPlayback = false) }.getOrNull()
-                if (url != null) cacheIntro(url, appContext, song)
+                prefetchSemaphore.withPermit {
+                    // The queue may have moved on while we waited for a slot.
+                    if (listed && song !in prefetchTargets) return@withPermit
+                    if (streamCache.containsKey(song)) return@withPermit
+                    acquireWakeLock(appContext, "spotui:prefetch", 30_000L)
+                    try {
+                        val url = withTimeoutOrNull(45_000L) {
+                            runCatching { resolveStreamUrl(song, appContext, forPlayback = false) }.getOrNull()
+                        }
+                        if (url != null && !(listed && song !in prefetchTargets)) {
+                            awaitCurrentPlaybackReady()
+                            cacheIntro(url, appContext, song)
+                        }
+                    } finally {
+                        releaseWakeLock("spotui:prefetch")
+                    }
+                }
             } finally {
-                releaseWakeLock("spotui:prefetch")
+                prefetchInFlight.remove(song)
+            }
+        }
+    }
+
+    /** Don't start heavy preloading while the current song is still buffering its first bytes. */
+    private suspend fun awaitCurrentPlaybackReady(timeoutMs: Long = 8_000L) {
+        withTimeoutOrNull(timeoutMs) {
+            while (true) {
+                val state = withContext(Dispatchers.Main) { player?.playbackState }
+                if (state != androidx.media3.common.Player.STATE_BUFFERING) break
+                delay(200L)
             }
         }
     }
 
     fun prefetchList(songs: List<String>, context: Context, count: Int = 4) {
         val targetSongs = songs.take(count)
+        prefetchTargets = targetSongs.toSet()
         if (targetSongs.isNotEmpty()) {
             Log.d(TAG, "Preloading next ${targetSongs.size} songs in queue: $targetSongs")
             targetSongs.forEach { songUrl ->
-                prefetch(songUrl, context)
+                prefetchInternal(songUrl, context, listed = true)
             }
         }
     }
@@ -976,6 +1039,7 @@ object SongPlayer {
                     }
 
                     streamCache[song] = playback.streamUrl
+                    streamValidatedAt[song] = System.currentTimeMillis()
                     sourceCache[song] = if (forPlayback) currentSource else "Alternative YouTube"
                     qualityCache[song] = if (forPlayback) currentQuality else ytQuality
 
@@ -994,7 +1058,7 @@ object SongPlayer {
         val networkAvailable = isNetworkAvailable(appContext)
         streamCache[song]?.let { url ->
             if (qualityTierCache[song] == expectedTier || qualityTierCache[song] == null) {
-                if (!networkAvailable || YTPlayerUtils.validateStatus(url)) {
+                if (!networkAvailable || streamStillValid(song, url)) {
                     if (forPlayback) {
                         currentSource = sourceCache[song] ?: "YouTube"
                         currentQuality = qualityCache[song] ?: ""
@@ -1023,7 +1087,7 @@ object SongPlayer {
             updateResolveStatus(true, "Checking saved cache...")
         }
         com.music.spotui.data.preferences.getCachedStream(appContext, song, expectedTier = expectedTier)?.let { (url, source, cachedQuality) ->
-            if (!networkAvailable || YTPlayerUtils.validateStatus(url)) {
+            if (!networkAvailable || streamStillValid(song, url)) {
                 streamCache[song] = url
                 sourceCache[song] = source
                 qualityCache[song] = cachedQuality
@@ -1108,7 +1172,7 @@ object SongPlayer {
                         if (forPlayback) logResolution("⊘ ${item.displayName}: skipped (previously returned a different version)")
                         return@map item to null
                     }
-                    item to scope.async {
+                    item to scope.async(Dispatchers.IO) {
                         when (item) {
                             com.music.spotui.data.preferences.AudioProviderOrderItem.AMAZON -> {
                                 if (forPlayback) logResolution("Attempting Amazon Music...")
@@ -1318,6 +1382,7 @@ object SongPlayer {
                     updateResolveStatus(false)
                 }
                 streamCache[song] = url
+                streamValidatedAt.remove(song)
                 sourceCache[song] = sourceLabel
                 qualityCache[song] = flacQuality
                 qualityTierCache[song] = expectedTier
@@ -1357,7 +1422,7 @@ object SongPlayer {
         val playback = ytDeferred!!.await()
         if (playback == null) {
             if (forPlayback) {
-                val cacheKey = "$song|${com.metrolist.innertube.YouTube.SearchFilter.FILTER_SONG.value}|MATCH_V11"
+                val cacheKey = "$song|${com.metrolist.innertube.YouTube.SearchFilter.FILTER_SONG.value}|MATCH_V12"
                 val cachedCandidates = videoCandidatesCache[cacheKey]
                 val reason = when {
                     cachedCandidates == null -> "YouTube search failed"
@@ -1379,6 +1444,7 @@ object SongPlayer {
             updateResolveStatus(false)
         }
         streamCache[song] = playback.streamUrl
+        streamValidatedAt[song] = System.currentTimeMillis()
         sourceCache[song] = "YouTube"
         qualityCache[song] = ytQuality
         qualityTierCache[song] = expectedTier
@@ -1743,29 +1809,23 @@ object SongPlayer {
         """\b(greatest hits|best of|the best|hits|collection|essential|anthology|complete|number ones|now that|ultimate|very best|playlist|top \d+|bravo)\b"""
     )
 
-    /**
-     * Normalises text for comparison: no accents, lowercase, brackets and a trailing
-     * "feat./ft./featuring …" credit removed, letters/digits only. Unicode-aware, so Korean,
-     * Japanese, Cyrillic… titles are comparable too. "with" is NOT stripped: it's a real
-     * word in many titles ("Stay With Me", "Dancing With Myself").
-     */
+    private val cleanTextCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     private fun cleanTextForMatch(text: String): String {
+        cleanTextCache[text]?.let { return it }
         val lower = Normalizer.normalize(text, Normalizer.Form.NFD).replace(diacriticsRegex, "").lowercase()
         val noBrackets = lower.replace(bracketRegex, " ")
         val noFeat = noBrackets.replace(featTailRegex, " ")
         val clean = noFeat.replace(nonAlnumRegex, "")
-        // If aggressive cleaning destroyed the string, fall back to plain letters/digits.
-        return clean.ifEmpty { lower.replace(nonAlnumRegex, "") }
+        val result = clean.ifEmpty { lower.replace(nonAlnumRegex, "") }
+        if (cleanTextCache.size > 4096) cleanTextCache.clear()
+        cleanTextCache[text] = result
+        return result
     }
 
     private fun artistKey(name: String): String =
         cleanTextForMatch(name.trim().replace(artistNoiseRegex, ""))
 
-    /**
-     * Compara nombres de artista ignorando diferencias editoriales como el prefijo
-     * inglés "The". No cambia artistKey(), porque el valor normalizado original
-     * sigue siendo útil para logs, cachés y otras comparaciones.
-     */
     private fun artistComparisonKey(name: String): String =
         artistKey(name).removePrefix("the").ifBlank { artistKey(name) }
 
@@ -1786,12 +1846,10 @@ object SongPlayer {
             .replace(whitespaceRegex, " ")
             .trim()
 
-    /** A title split into its comparable core and its decorations (brackets / " - suffix"). */
     private class TitleParts(val baseKey: String, val decorations: String)
 
     private fun parseTitle(title: String, artistKeys: Collection<String>): TitleParts {
         var current = title
-        // "Maroon 5 - Sugar (Official Video)": drop the artist prefix that video uploads carry.
         val first = current.split(dashSplitRegex, limit = 2)
         if (first.size == 2 && artistKeys.any { sameArtist(cleanTextForMatch(first[0]), it) }) {
             current = first[1]
@@ -1806,12 +1864,6 @@ object SongPlayer {
         return TitleParts(key, decorations.toString())
     }
 
-    /**
-     * Recording "flavours". Two tracks are only the same recording if they carry the same set.
-     * Deliberately NOT flagged (same recording): remaster, deluxe, explicit, official audio/video.
-     * They are evaluated on the decorations only: a marker inside the core title ("Live Forever")
-     * makes the core keys differ, so it is already handled by the title comparison.
-     */
     private val versionPatterns: List<Pair<String, Regex>> = listOf(
         "remix" to Regex("""\b(remix(es|ed)?|rmx|rework(ed)?|bootleg|flip|mashup|refix|vip|club mix|dub mix|extended (mix|version)|megamix|dance mix|re-?edit)\b"""),
         "live" to Regex("""\b(live|en vivo|ao vivo|dal vivo|en directo|in concert|concert|unplugged)\b"""),
@@ -1827,25 +1879,25 @@ object SongPlayer {
         "language" to Regex("""\b((spanish|espanol|portuguese|french|german|italian|japanese|korean|chinese|mandarin|hindi|arabic|russian|turkish|english) (version|ver)|version (en|in) \w+|en espanol|en ingles|in spanish|in english|latin version|spanglish( version)?)\b"""),
         "mono" to Regex("""\bmono\b"""),
     )
-    // Flags that are also meaningful when they appear in an ALBUM name (e.g. "Live at Knebworth").
     private val albumRelevantFlags = setOf(
         "live", "cover", "acoustic", "remix", "instrumental", "sped", "slowed", "fx", "demo", "acapella",
     )
 
+    private val versionFlagsCache = java.util.concurrent.ConcurrentHashMap<String, Set<String>>()
+
     private fun versionFlags(text: String): Set<String> {
         if (text.isBlank()) return emptySet()
+        versionFlagsCache[text]?.let { return it }
         val t = Normalizer.normalize(text.lowercase(), Normalizer.Form.NFD).replace(diacriticsRegex, "")
-        return versionPatterns.filter { it.second.containsMatchIn(t) }.map { it.first }.toSet()
+        val flags = versionPatterns.filter { it.second.containsMatchIn(t) }.map { it.first }.toSet()
+        if (versionFlagsCache.size > 4096) versionFlagsCache.clear()
+        versionFlagsCache[text] = flags
+        return flags
     }
 
     private fun albumFlags(album: String?): Set<String> =
         if (album.isNullOrBlank()) emptySet() else versionFlags(album).intersect(albumRelevantFlags)
 
-    /**
-     * Recording identity is stricter than generic flavour flags.
-     * A remaster is a distinct Spotify recording/release selection even when
-     * title and duration happen to be identical to the original.
-     */
     private val remasterIdentityRegex = Regex(
         """\b(\d{4}\s*)?remaster(ed)?\b|\b(remaster(ed)?\s*(version|mix))\b""",
         RegexOption.IGNORE_CASE,
@@ -1858,17 +1910,12 @@ object SongPlayer {
         return flags
     }
 
-    // Album-derived flavours that ALWAYS disqualify a candidate. "acoustic"/"demo" are weaker
-    // (album names like "Sessions" or "Strings" are ambiguous) and may be relaxed in stage 2.
     private val strongFlags = setOf("live", "cover", "remix", "instrumental", "sped", "slowed", "fx", "acapella")
 
-    /** A single named after the song ("Live Forever"): its album name says nothing about the version. */
     private fun isPlainSingleAlbum(album: String?, baseKey: String): Boolean =
         !album.isNullOrBlank() && albumKey(album) == baseKey &&
                 !bracketRegex.containsMatchIn(album) && !dashSplitRegex.containsMatchIn(album)
 
-    // Decorations that don't change the recording. Anything else left in the brackets
-    // ("XXV", "From Better Man: Soundtrack", "con Carter J. Murphy"…) is an unknown edition.
     private val neutralDecorationRegex = Regex(
         """\b(remaster(ed)?|digitally|explicit|clean|official|audio|video|lyrics?|visualizer|hd|hq|version|album|original|deluxe|edition|feat|ft|featuring|with|\d{4})\b"""
     )
@@ -1884,19 +1931,204 @@ object SongPlayer {
 
     private val featMarkerRegex = Regex("""\b(feat|ft|featuring|with)\b""")
 
-    /** A YouTube Music candidate that passed a matching stage. Lower stage = more trustworthy. */
     private class MatchCandidate(val item: SongItem, val stage: Int, val score: Int, val index: Int)
+
+    private class VideoSearchPlan(
+        val album: String?,
+        val artist: String?,
+        val title: String,
+        val queries: List<String>,
+    )
+
+    private const val DURATION_PREFS = "spotui_duration_cache"
+    private const val HTTP_UA =
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+
+    private val approxDurationQueries: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    private class DurationRoute(val name: String, val approx: Boolean, val job: kotlinx.coroutines.Deferred<Int?>)
+
+    private fun plausibleDurationMs(ms: Int): Boolean = ms in 1_000..10_800_000
+
+    private fun cachedDurationMs(spotifyId: String?): Int? {
+        if (spotifyId.isNullOrBlank()) return null
+        val ctx = appCtx ?: return null
+        return runCatching {
+            ctx.getSharedPreferences(DURATION_PREFS, Context.MODE_PRIVATE).getInt(spotifyId, 0)
+        }.getOrNull()?.takeIf { it > 0 }
+    }
+
+    private fun persistDurationMs(spotifyId: String?, ms: Int) {
+        if (spotifyId.isNullOrBlank() || !plausibleDurationMs(ms)) return
+        val ctx = appCtx ?: return
+        runCatching {
+            ctx.getSharedPreferences(DURATION_PREFS, Context.MODE_PRIVATE).edit().putInt(spotifyId, ms).apply()
+        }
+    }
+
+    private fun httpGetText(url: String, timeoutMs: Int = 3000, headers: Map<String, String> = emptyMap()): String? {
+        var conn: java.net.HttpURLConnection? = null
+        return try {
+            conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = timeoutMs
+                readTimeout = timeoutMs
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", HTTP_UA)
+                setRequestProperty("Accept-Language", "en")
+                headers.forEach { (k, v) -> setRequestProperty(k, v) }
+            }
+            if (conn.responseCode !in 200..299) null
+            else conn.inputStream.bufferedReader().use { it.readText() }
+        } catch (e: Exception) {
+            Log.w(TAG, "duration route: GET failed for $url (${e.javaClass.simpleName}: ${e.message})")
+            null
+        } finally {
+            runCatching { conn?.disconnect() }
+        }
+    }
+
+    private fun durationFromSpotifyEmbed(id: String): Int? {
+        val html = httpGetText("https://open.spotify.com/embed/track/$id") ?: return null
+        val m = Regex("\"duration\"\\s*:\\s*(\\d{4,8})").find(html) ?: return null
+        return m.groupValues[1].toIntOrNull()?.takeIf { plausibleDurationMs(it) }
+    }
+
+    private fun durationFromSpotifyPage(id: String): Int? {
+        val html = httpGetText("https://open.spotify.com/track/$id") ?: return null
+        val a = Regex("<meta[^>]+property=[\"']music:duration[\"'][^>]*content=[\"'](\\d+)[\"']", RegexOption.IGNORE_CASE)
+        val b = Regex("<meta[^>]+content=[\"'](\\d+)[\"'][^>]*property=[\"']music:duration[\"']", RegexOption.IGNORE_CASE)
+        val sec = (a.find(html) ?: b.find(html))?.groupValues?.get(1)?.toIntOrNull() ?: return null
+        return (sec * 1000).takeIf { plausibleDurationMs(it) }
+    }
+
+    private fun durationFromDeezerIsrc(isrc: String): Int? {
+        val body = httpGetText("https://api.deezer.com/track/isrc:$isrc") ?: return null
+        val json = org.json.JSONObject(body)
+        if (json.has("error")) return null
+        return (json.optInt("duration", 0) * 1000).takeIf { plausibleDurationMs(it) }
+    }
+
+    private fun durationFromMusicBrainz(isrc: String): Int? {
+        val body = httpGetText(
+            "https://musicbrainz.org/ws/2/recording?query=isrc:$isrc&fmt=json&limit=15",
+            headers = mapOf("User-Agent" to "SpotUI/1.0 (android)", "Accept" to "application/json"),
+        ) ?: return null
+        val arr = org.json.JSONObject(body).optJSONArray("recordings") ?: return null
+        val lengths = ArrayList<Int>()
+        for (i in 0 until arr.length()) {
+            val len = arr.optJSONObject(i)?.optInt("length", 0) ?: 0
+            if (plausibleDurationMs(len)) lengths += len
+        }
+        if (lengths.isEmpty()) return null
+        val bySecond = lengths.groupBy { it / 1000 }
+        val bestCount = bySecond.values.maxOf { it.size }
+        val top = bySecond.values.filter { it.size == bestCount }.map { it.sorted()[it.size / 2] }.sorted()
+        return top[top.size / 2]
+    }
+
+    private fun durationFromDeezerSearch(title: String, artist: String, album: String?): Int? {
+        val primaryArtist = artist.split(",", "&").first().trim()
+        if (primaryArtist.isEmpty()) return null
+        val q = "artist:\"$primaryArtist\" track:\"${cleanSpotifySearchTitle(title)}\""
+        val body = httpGetText(
+            "https://api.deezer.com/search?limit=15&q=" + java.net.URLEncoder.encode(q, "UTF-8")
+        ) ?: return null
+        val arr = org.json.JSONObject(body).optJSONArray("data") ?: return null
+        val wantArtistKey = artistKey(primaryArtist)
+        val artistKeys = listOf(wantArtistKey)
+        val wantTitle = parseTitle(title, artistKeys)
+        val wantFlags = recordingIdentityFlags(wantTitle.decorations)
+        val wantAlbumKey = albumKey(album)
+        val matches = ArrayList<Pair<Int, Boolean>>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val candArtist = o.optJSONObject("artist")?.optString("name").orEmpty()
+            if (!sameArtist(artistKey(candArtist), wantArtistKey)) continue
+            val candTitle = parseTitle(o.optString("title"), artistKeys)
+            if (candTitle.baseKey != wantTitle.baseKey) continue
+            if (recordingIdentityFlags(candTitle.decorations) != wantFlags) continue
+            val ms = o.optInt("duration", 0) * 1000
+            if (!plausibleDurationMs(ms)) continue
+            val candAlbumKey = albumKey(o.optJSONObject("album")?.optString("title"))
+            matches += ms to (wantAlbumKey.isNotEmpty() && candAlbumKey == wantAlbumKey)
+        }
+        matches.firstOrNull { it.second }?.let { return it.first }
+        val ds = matches.map { it.first }
+        val lo = ds.minOrNull() ?: return null
+        val hi = ds.maxOrNull() ?: return null
+        return if (hi - lo <= 2000) ds.first() else null
+    }
+
+    private suspend fun resolveDurationFallbacks(
+        query: String,
+        spotifyId: String?,
+        isrcHint: String?,
+        title: String?,
+        artist: String?,
+        album: String?,
+    ): Int? {
+        durationRegistry[query]?.takeIf { it > 0 }?.let { return it }
+
+        boundState?.queue?.value?.firstOrNull { it.url == query }?.durationMs?.toLong()?.takeIf { it > 0 }
+            ?.let { ms ->
+                durationRegistry[query] = ms.toInt()
+                Log.w(TAG, "duration for '$query': ${ms}ms via queue item")
+                return ms.toInt()
+            }
+
+        cachedDurationMs(spotifyId)?.let { ms ->
+            durationRegistry[query] = ms
+            Log.w(TAG, "duration for '$query': ${ms}ms via persistent cache")
+            return ms
+        }
+
+        val isrc = isrcHint?.takeIf { it.isNotBlank() } ?: spotifyId?.let { isrcRegistry[it] }
+        fun route(name: String, approx: Boolean, block: () -> Int?) =
+            DurationRoute(name, approx, scope.async(Dispatchers.IO) { runCatching { block() }.getOrNull() })
+
+        val routes = ArrayList<DurationRoute>()
+        if (!spotifyId.isNullOrBlank()) {
+            routes += route("Spotify embed", false) { durationFromSpotifyEmbed(spotifyId) }
+            routes += route("Spotify page", false) { durationFromSpotifyPage(spotifyId) }
+        }
+        if (!isrc.isNullOrBlank()) {
+            routes += route("Deezer ISRC", false) { durationFromDeezerIsrc(isrc) }
+            routes += route("MusicBrainz ISRC", true) { durationFromMusicBrainz(isrc) }
+        }
+        if (!title.isNullOrBlank() && !artist.isNullOrBlank()) {
+            routes += route("Deezer search", true) { durationFromDeezerSearch(title, artist, album) }
+        }
+        if (routes.isEmpty()) {
+            Log.w(TAG, "duration for '$query': no fallback route available")
+            return null
+        }
+
+        val deadline = System.currentTimeMillis() + 6000L
+        var found: Pair<DurationRoute, Int>? = null
+        for (r in routes) {
+            val remaining = (deadline - System.currentTimeMillis()).coerceAtLeast(1L)
+            val ms = withTimeoutOrNull(remaining) { r.job.await() }
+            Log.d(TAG, "duration route '${r.name}' -> ${ms ?: "none"}")
+            if (ms != null && plausibleDurationMs(ms)) { found = r to ms; break }
+        }
+        routes.forEach { it.job.cancel() }
+
+        val (chosen, ms) = found ?: run {
+            Log.w(TAG, "duration for '$query': all fallback routes failed")
+            return null
+        }
+        durationRegistry[query] = ms
+        if (chosen.approx) approxDurationQueries.add(query) else approxDurationQueries.remove(query)
+        if (!chosen.approx) persistDurationMs(spotifyId, ms)
+        Log.w(TAG, "duration for '$query': ${ms}ms via ${chosen.name}${if (chosen.approx) " (approximate)" else ""}")
+        return ms
+    }
 
     private suspend fun ensureSpotifyMatchMetadata(query: String): TrackMatchMetadata? {
         val currentMeta = metadataRegistry[query]
         val hasUsefulMeta = currentMeta?.let {
             it.title.isNotBlank() && it.artist.isNotBlank() && it.album.isNotBlank()
         } ?: false
-        // Metadata registered by the queue can be stale or can contain the title of a
-        // different edition. If it already claims a strong recording flavour (remix/live/
-        // cover/etc.), do not trust it blindly: the Spotify track ID is authoritative.
-        // A real Spotify remix will still come back as a remix, so this only repairs
-        // stale/mis-associated metadata without changing legitimate versions.
         val currentStrongFlags = currentMeta?.let {
             (versionFlags(it.title) + versionFlags(it.album)).intersect(strongFlags)
         }.orEmpty()
@@ -1905,14 +2137,22 @@ object SongPlayer {
             return currentMeta
         }
 
-        val spotifyId = trackIdRegistry[query] ?: spotifyTrackIdForPlayback(query) ?: return currentMeta
-        val track = (0 until 2).firstNotNullOfOrNull { attempt ->
-            if (attempt > 0) delay(200L)
-            runCatching { com.metrolist.spotify.Spotify.track(spotifyId).getOrNull() }
+        val spotifyId = trackIdRegistry[query] ?: spotifyTrackIdForPlayback(query)
+        if (spotifyId == null) {
+            resolveDurationFallbacks(query, null, null, currentMeta?.title, currentMeta?.artist, currentMeta?.album)
+            return currentMeta
+        }
+        val track = (0 until 3).firstNotNullOfOrNull { attempt ->
+            if (attempt > 0) delay(250L * attempt)
+            runCatching {
+                withTimeoutOrNull(5000L) { com.metrolist.spotify.Spotify.track(spotifyId).getOrNull() }
+            }
                 .onFailure { Log.w(TAG, "Spotify metadata repair failed for $spotifyId (attempt ${attempt + 1})", it) }
                 .getOrNull()
-        } ?: run {
-            Log.w(TAG, "Spotify metadata unavailable for $spotifyId: duration/explicit unknown")
+        }
+        if (track == null) {
+            Log.w(TAG, "Spotify metadata unavailable for $spotifyId: trying duration fallbacks")
+            resolveDurationFallbacks(query, spotifyId, null, currentMeta?.title, currentMeta?.artist, currentMeta?.album)
             return currentMeta
         }
 
@@ -1924,8 +2164,16 @@ object SongPlayer {
         metadataRegistry[query] = repaired
         trackIdRegistry[query] = spotifyId
         explicitRegistry[query] = track.explicit
-        if (track.durationMs > 0) durationRegistry[query] = track.durationMs
+        if (track.durationMs > 0) {
+            durationRegistry[query] = track.durationMs
+            approxDurationQueries.remove(query)
+            persistDurationMs(spotifyId, track.durationMs)
+        }
         track.isrc?.takeIf { it.isNotBlank() }?.let { isrcRegistry[spotifyId] = it }
+        if (durationRegistry[query] == null) {
+            Log.w(TAG, "Spotify returned no duration for $spotifyId: trying duration fallbacks")
+            resolveDurationFallbacks(query, spotifyId, track.isrc, track.name, repaired.artist, repaired.album)
+        }
         return repaired
     }
 
@@ -1934,7 +2182,7 @@ object SongPlayer {
         filter: YouTube.SearchFilter = YouTube.SearchFilter.FILTER_SONG,
         forPlayback: Boolean = false,
     ): List<String> {
-        val cacheKey = "$query|${filter.value}|MATCH_V11"
+        val cacheKey = "$query|${filter.value}|MATCH_V12"
         videoCandidatesCache[cacheKey]?.let { return it }
         appCtx?.let { ctx ->
             com.music.spotui.data.preferences.getCachedVideoIds(ctx, cacheKey)?.let { cached ->
@@ -1952,85 +2200,78 @@ object SongPlayer {
 
         if (searchText.length == 11 && !searchText.contains(' ')) return listOf(searchText)
 
-        // Resolve metadata independently from the first YouTube search. This lets the
-        // broad/original query start immediately while we prepare the more precise queries.
-        // Each search is isolated below: one failed fallback must never cancel the others.
-        val (exactMeta, baseSearchResult) = kotlinx.coroutines.supervisorScope {
+        // Same targets / queries as before, derived from whatever metadata we have at this point.
+        fun buildPlan(exactMeta: TrackMatchMetadata?): VideoSearchPlan {
+            val registeredMeta = metadataRegistry[query]
+            val queuedSong = boundState?.queue?.value?.firstOrNull { it.url == query }
+            val album: String? = exactMeta?.album?.ifBlank { null }
+                ?: registeredMeta?.album?.ifBlank { null }
+                ?: queuedSong?.album?.ifBlank { null }
+            val artist: String? = exactMeta?.artist?.ifBlank { null }
+                ?: registeredMeta?.artist?.ifBlank { null }
+                ?: queuedSong?.singer?.ifBlank { null }
+                ?: if (forPlayback) metaArtist.ifBlank { null } else baseSearchText
+            val title: String = exactMeta?.title?.ifBlank { null }
+                ?: registeredMeta?.title?.ifBlank { null }
+                ?: queuedSong?.title?.ifBlank { null }
+                ?: cleanTrackTitle(query, artist ?: "")
+
+            val artistForSearch = artist.orEmpty().trim()
+            val titleForSearch = cleanSpotifySearchTitle(title).trim()
+            val albumForSearch = album?.let { albumSearchText(it) }.orEmpty()
+            val queries = linkedSetOf<String>().apply {
+                add(searchText)
+                if (titleForSearch.isNotBlank() && artistForSearch.isNotBlank()) {
+                    add("$titleForSearch $artistForSearch")
+                    if (albumForSearch.isNotBlank() && !albumForSearch.equals(titleForSearch, ignoreCase = true)) {
+                        add("$titleForSearch $artistForSearch $albumForSearch")
+                    }
+                    add("$artistForSearch $titleForSearch")
+                    add("$titleForSearch $artistForSearch official audio")
+                }
+            }.filter { it.isNotBlank() && !(it.length == 11 && !it.contains(' ')) }
+            return VideoSearchPlan(album, artist, title, queries)
+        }
+
+        val (_, plan, hits) = kotlinx.coroutines.supervisorScope {
+            fun launchSearch(q: String) = async {
+                YouTube.search(q, filter)
+                    .onFailure {
+                        Log.w(TAG, "resolveVideoId: YouTube search failed for: $q", it)
+                    }
+                    .getOrNull()
+                    ?.items
+                    ?.filterIsInstance<SongItem>()
+                    ?: emptyList()
+            }
+
+            val searches = HashMap<String, kotlinx.coroutines.Deferred<List<SongItem>>>()
             val metadataDeferred = async {
                 runCatching { ensureSpotifyMatchMetadata(query) }.getOrNull()
             }
-            val baseSearchDeferred = async {
-                YouTube.search(searchText, filter)
-                    .onFailure {
-                        Log.w(TAG, "resolveVideoId: YouTube search failed for: $searchText", it)
-                    }
-                    .getOrNull()
-            }
-            metadataDeferred.await() to baseSearchDeferred.await()
+            searches[searchText] = launchSearch(searchText)
+            // Speculative start: fire the secondary searches from the metadata we already have
+            // while Spotify metadata is still being fetched. They are only reused if the final
+            // plan asks for the very same query strings; otherwise they are cancelled.
+            buildPlan(null).queries.forEach { q -> if (q !in searches) searches[q] = launchSearch(q) }
+
+            val exactMeta = metadataDeferred.await()
+            val finalPlan = buildPlan(exactMeta)
+            finalPlan.queries.forEach { q -> if (q !in searches) searches[q] = launchSearch(q) }
+            searches.entries.filter { it.key !in finalPlan.queries }.forEach { it.value.cancel() }
+
+            val allHits = finalPlan.queries
+                .flatMap { q -> searches.getValue(q).await() }
+                .distinctBy { it.id }
+            Triple(exactMeta, finalPlan, allHits)
         }
-        val registeredMeta = metadataRegistry[query]
+        val searchQueries = plan.queries
+        val targetAlbum: String? = plan.album
+        val targetArtist: String? = plan.artist
+        val targetTitle: String = plan.title
         val queuedSong = boundState?.queue?.value?.firstOrNull { it.url == query }
         val wantSec: Int? = durationRegistry[query]?.let { it / 1000 }
             ?: queuedSong?.durationMs?.toLong()?.takeIf { it > 0 }?.let { (it / 1000).toInt() }
-        val targetAlbum: String? = exactMeta?.album?.ifBlank { null }
-            ?: registeredMeta?.album?.ifBlank { null }
-            ?: queuedSong?.album?.ifBlank { null }
-        val targetArtist = exactMeta?.artist?.ifBlank { null }
-            ?: registeredMeta?.artist?.ifBlank { null }
-            ?: queuedSong?.singer?.ifBlank { null }
-            ?: if (forPlayback) metaArtist.ifBlank { null } else null
-                ?: baseSearchText
-        val targetTitle = exactMeta?.title?.ifBlank { null }
-            ?: registeredMeta?.title?.ifBlank { null }
-            ?: queuedSong?.title?.ifBlank { null }
-            ?: cleanTrackTitle(query, targetArtist ?: "")
-
-        // Keep the original query first, then title/artist(/album) permutations. Including the
-        // album steers YouTube Music towards the original release instead of live/compilation cuts.
-        val artistForSearch = targetArtist.orEmpty().trim()
-        val titleForSearch = cleanSpotifySearchTitle(targetTitle).trim()
-        val albumForSearch = targetAlbum?.let { albumSearchText(it) }.orEmpty()
-        val searchQueries = linkedSetOf<String>().apply {
-            add(searchText)
-            if (titleForSearch.isNotBlank() && artistForSearch.isNotBlank()) {
-                add("$titleForSearch $artistForSearch")
-                if (albumForSearch.isNotBlank() && !albumForSearch.equals(titleForSearch, ignoreCase = true)) {
-                    add("$titleForSearch $artistForSearch $albumForSearch")
-                }
-                add("$artistForSearch $titleForSearch")
-                add("$titleForSearch $artistForSearch official audio")
-            }
-        }.filter { it.isNotBlank() && !(it.length == 11 && !it.contains(' ')) }
-
-        // Run independent YouTube searches concurrently, but isolate every fallback.
-        // supervisorScope is important here: one thrown exception/cancellation must not
-        // cancel the other queries and make us lose a valid recording.
-        val hits = kotlinx.coroutines.supervisorScope {
-            val deferredHits = searchQueries.map { candidateQuery ->
-                if (candidateQuery == searchText) {
-                    async { baseSearchResult }
-                } else {
-                    async {
-                        YouTube.search(candidateQuery, filter)
-                            .onFailure {
-                                Log.w(TAG, "resolveVideoId: YouTube search failed for: $candidateQuery", it)
-                            }
-                            .getOrNull()
-                    }
-                }
-            }
-
-            deferredHits.awaitAll()
-                .asSequence()
-                .flatMap { result ->
-                    result?.items
-                        ?.asSequence()
-                        ?.filterIsInstance<SongItem>()
-                        ?: emptySequence()
-                }
-                .distinctBy { it.id }
-                .toList()
-        }
         Log.w(TAG, "MATCH '$query': ${hits.size} raw hits from ${searchQueries.size} parallel queries")
 
         if (hits.isEmpty()) {
@@ -2038,8 +2279,7 @@ object SongPlayer {
             return emptyList()
         }
 
-        // ── Target description ───────────────────────────────────────────────
-        val expectedArtistsList = (targetArtist ?: "").split(Regex("""[,&]|\band\b""", RegexOption.IGNORE_CASE))
+        val expectedArtistsList = (targetArtist ?: "").split(artistSplitRegex)
             .map { artistKey(it) }
             .filter { it.isNotEmpty() }
         val fullArtistKey = artistKey(targetArtist ?: "")
@@ -2053,15 +2293,9 @@ object SongPlayer {
         val targetTitleFlags = versionFlags(target.decorations)
         val targetRecordingFlags = recordingIdentityFlags(target.decorations)
         val targetAlbumFlags = if (isPlainSingleAlbum(targetAlbum, target.baseKey)) emptySet() else albumFlags(targetAlbum)
-        // IMPORTANT: album names describe the release/container, not necessarily this track. A remix
-        // album may contain the original track alongside a remix, so album flags must never become
-        // target track-version flags.
         val expectedFlags = targetTitleFlags
         val targetIsCompilation = targetAlbum?.let { compilationRegex.containsMatchIn(it.lowercase()) } ?: false
 
-        // Duration is the strongest recording fingerprint we have. Tight window for real audio
-        // tracks; video uploads (intros, fades) get a bit more room. `wideTol` is only usable
-        // together with a matching album.
         val isSongFilter = filter == YouTube.SearchFilter.FILTER_SONG
         val tightTol = if (isSongFilter) maxOf(5, (wantSec ?: 0) / 40) else maxOf(7, (wantSec ?: 0) / 35)
         val wideTol = maxOf(8, (wantSec ?: 0) / 20)
@@ -2073,33 +2307,15 @@ object SongPlayer {
         Log.d(TAG, "▶ TARGET: duration=${wantSec}s (tight ±${tightTol}s, wide ±${wideTol}s) | explicit=$wantExplicit")
         Log.d(TAG, "--------------------------------------------------")
 
-        // ── Candidate evaluation ─────────────────────────────────────────────
-        // Stage 1: exact artist + exact title + same recording flavour from the TRACK title + duration.
-        // Album names are contextual metadata only: a remix album can contain both the original
-        // recording and one or more remixes (e.g. "Anybody Else (Alyx Ander Remix)").
-        // Stage 2: same, with album context used only as a supporting consistency check. Album-derived
-        //          remix/live/cover labels never turn the track itself into that version.
-        // Stage 3: same album, looser duration (edition/padding differences)
-        // Stage 4: near-exact artist (no tribute/karaoke names) and duration within 3s
-        // Only the best non-empty stage is returned, so a lower-quality "version" never sits
-        // behind the right recording as a silent fallback.
         val scored = ArrayList<MatchCandidate>()
         hits.forEachIndexed { index, item ->
             val cand = parseTitle(item.title, targetArtistKeys)
             val candArtistKeys = item.artists.map { artistKey(it.name) }.filter { it.isNotEmpty() }
-            // Official-label uploads often expose the label as YouTube's artist metadata,
-            // while the actual artist credits are written in the video title.
             val titleArtistKey = artistKey(item.title)
             val artistsCreditedInTitle = expectedArtistsList.isNotEmpty() &&
                     expectedArtistsList.all { expected ->
                         expected.length >= 4 && titleArtistKey.contains(expected)
                     }
-            // For collaborations/duets, matching only the first artist is not enough:
-            // "Carlos Baute" must NOT match a track requested as "Carlos Baute, Marta Sánchez".
-            // Keep the old single-artist behaviour unchanged, but require every expected artist
-            // when Spotify gives us multiple credited artists. A title that explicitly contains
-            // all expected credits is also accepted because YouTube Music sometimes exposes only
-            // the uploader/label in item.artists.
             val allExpectedArtistsPresent = expectedArtistsList.size <= 1 || artistsCreditedInTitle ||
                     expectedArtistsList.all { expected ->
                         candArtistKeys.any { candidate ->
@@ -2119,12 +2335,6 @@ object SongPlayer {
                         !coverArtistRegex.containsMatchIn(a.name.lowercase())
             }
 
-            // A duet/collab is a different recording: artists (or a "feat." credit) that the
-            // request doesn't have disqualify the candidate.
-            // In FILTER_SONG, YouTube Music may expose the channel/distributor as an
-            // artist even when the title itself explicitly credits every requested artist.
-            // In that case treat unmatched metadata names as uploader metadata, not as a
-            // new collaborator. Without full title credits, retain the strict collab check.
             val candExtraArtists = if (artistsCreditedInTitle) emptyList() else candArtistKeys.filter { k ->
                 k !in targetArtistKeys && !targetArtistKeys.any { t ->
                     t.length >= 4 && k.length >= 4 && (k.contains(t) || t.contains(k))
@@ -2135,12 +2345,8 @@ object SongPlayer {
             val featEq = candExtraArtists.isEmpty() &&
                     (!candHasFeat || targetHasFeat || expectedArtistsList.size >= 2)
             val artistOk = artistExact && featEq
-            // Search titles frequently append artist credits (e.g. "... Remix Amaarae Kali Uchis Moliy")
-            // while YouTube Music may return the canonical title without those credits. Compare a
-            // normalized core as well as exact keys, but only accept a prefix/core match when the
-            // shorter title is substantial; duration and version-flavour checks below still apply.
-            val targetCoreKey = target.baseKey.replace(Regex("(remix|rmx)$", RegexOption.IGNORE_CASE), "")
-            val candidateCoreKey = cand.baseKey.replace(Regex("(remix|rmx)$", RegexOption.IGNORE_CASE), "")
+            val targetCoreKey = target.baseKey.replace(remixSuffixRegex, "")
+            val candidateCoreKey = cand.baseKey.replace(remixSuffixRegex, "")
             val titleEq = cand.baseKey.isNotEmpty() && (
                     cand.baseKey == target.baseKey ||
                             (candidateCoreKey.length >= 10 && targetCoreKey.length >= 10 &&
@@ -2150,15 +2356,7 @@ object SongPlayer {
             val candRecordingFlags = recordingIdentityFlags(cand.decorations)
             val candAlbumName = item.album?.name
             val candAlbumFlags = if (isPlainSingleAlbum(candAlbumName, cand.baseKey)) emptySet() else albumFlags(candAlbumName)
-            // Same rule for candidates: only the candidate TRACK title can assert that this specific
-            // recording is a remix/live/cover/etc. Album flags remain available through strongAlbumEq.
             val candFlags = candTitleFlags
-            // Language labels are frequently omitted from official video titles. Treat a
-            // missing language marker as unknown, not as a different recording; explicit
-            // conflicting remix/live/cover/edit markers remain subject to normal checks.
-            // Keep specific edit subtypes distinct when Spotify explicitly requests a radio version.
-            // A generic "edit" match must not make an extended vocal edit equivalent to a radio edit.
-            val radioEditRegex = Regex("\\b(radio (version|edit|mix)|single (version|edit))\\b", RegexOption.IGNORE_CASE)
             val targetIsRadioEdit = radioEditRegex.containsMatchIn(target.decorations)
             val candidateIsRadioEdit = radioEditRegex.containsMatchIn(cand.decorations)
             val editSubtypeEq = !targetIsRadioEdit || candidateIsRadioEdit
@@ -2172,27 +2370,34 @@ object SongPlayer {
             val durDiff: Int? = if (wantSec != null && itemDur != null) abs(wantSec - itemDur) else null
             val tightOk = durDiff == null || durDiff <= tightTol
             val wideOk = durDiff == null || durDiff <= wideTol
-            val explicitOk = true // soft signal only, see score below
+            val explicitOk = true
             val explicitMatch = wantExplicit == null || item.explicit == wantExplicit
             val lastResortOk = durDiff == null || durDiff <= maxOf(15, (wantSec ?: 0) / 10)
 
             val candAlbumKey = albumKey(candAlbumName)
             val albumEq = targetAlbumKey.isNotEmpty() && candAlbumKey == targetAlbumKey
 
+            val candR = candRecordingFlags - "language"
+            val targetR = targetRecordingFlags - "language"
+            val onlyEditDiff = "edit" !in targetR && (candR - targetR) == setOf("edit") && (targetR - candR).isEmpty()
+            val editBase = artistOk && titleEq && !recordingFlagsEq && onlyEditDiff && explicitOk
+            val albumAnchored = editBase && albumEq && (durDiff == null || durDiff <= tightTol)
+            val durationAnchored = editBase && durDiff != null && durDiff <= 3
+            val editAnchored = albumAnchored || durationAnchored
+
             val stage = when {
+                albumAnchored -> 1
                 artistOk && titleEq && recordingFlagsEq && explicitOk && tightOk -> 1
+                durationAnchored -> 2
                 artistOk && titleEq && recordingFlagsEq && strongAlbumEq && explicitOk && tightOk -> 2
                 artistOk && titleEq && recordingFlagsEq && explicitOk && albumEq && wideOk -> 3
                 artistPartial && titleEq && recordingFlagsEq && explicitOk &&
                         wantSec != null && durDiff != null && durDiff <= 3 -> 4
-                // 5/6: right artist+title, no version markers anywhere; duration (5) and even
-                // explicit flag (6) unverifiable. Last resort, ranked by closeness.
                 artistOk && titleEq && recordingFlagsEq && strongAlbumEq && explicitOk && lastResortOk -> 5
                 artistOk && titleEq && recordingFlagsEq && strongAlbumEq && lastResortOk -> 6
                 else -> 99
             }
 
-            // Ranking inside a stage.
             var score = if (artistExact) 30 else 10
             if (durDiff != null) {
                 score += when {
@@ -2203,14 +2408,7 @@ object SongPlayer {
                     else -> 2
                 }
             }
-            // Album metadata is useful when we also have a duration to identify the
-            // recording. If Spotify did not provide a duration, an exact album match
-            // must NOT overpower an otherwise identical artist+title candidate: the
-            // same track can legitimately exist on a single, album, compilation, etc.
             if (durDiff != null) {
-                // Album is useful context, but it must never overpower a materially
-                // better duration match: the same album can contain originals, edits,
-                // remixes and alternate uploads. Keep it as a small tie-breaker.
                 if (albumEq) {
                     score += when {
                         durDiff <= 1 -> 6
@@ -2232,13 +2430,14 @@ object SongPlayer {
             ) {
                 score -= 8
             }
+            if (durDiff == null && albumEq) {
+                if (albumAnchored) score += 35
+                else if (recordingFlagsEq) score += 15
+            }
             if (targetTitleFlags.isEmpty() && cand.decorations.isBlank()) score += 3
-            // Lyrics/lyric videos can be the only surfaced copy of a valid recording.
-            // Keep them eligible, but prefer an otherwise equivalent clean/audio upload.
-            val isLyricsUpload = Regex("\\b(lyrics?|lyric video)\\b", RegexOption.IGNORE_CASE)
-                .containsMatchIn(item.title)
+            val isLyricsUpload = lyricsUploadRegex.containsMatchIn(item.title)
             if (isLyricsUpload) score -= 15
-            if (hasUnknownDecoration(cand.decorations) && decorationKey(cand.decorations) != decorationKey(target.decorations)) score -= 40
+            if (!editAnchored && hasUnknownDecoration(cand.decorations) && decorationKey(cand.decorations) != decorationKey(target.decorations)) score -= 40
             score += if (explicitMatch) 8 else -8
 
             Log.d(TAG, "  -> '${item.title}' by ${item.artists.joinToString { it.name }} | album='${candAlbumName ?: ""}' | ${itemDur}s | explicit=${item.explicit}")
@@ -2292,46 +2491,48 @@ object SongPlayer {
         lastYtFailureReason = null
         val connectivityManager =
             appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val cacheKey = "$query|${com.metrolist.innertube.YouTube.SearchFilter.FILTER_SONG.value}|MATCH_V11"
+        val cacheKey = "$query|${com.metrolist.innertube.YouTube.SearchFilter.FILTER_SONG.value}|MATCH_V12"
         val candidatesCached = videoCandidatesCache.containsKey(cacheKey)
         val tried = mutableSetOf<String>()
-        // Stream resolution is slower than candidate search. Resolve at most two candidates
-        // concurrently, isolate failures, then select by original ranking (not completion
-        // order) so parallelism cannot change which matching recording wins.
-        val streamResolutionSemaphore = Semaphore(2)
+        val streamResolutionSemaphore = Semaphore(3)
         suspend fun tryIds(ids: List<String>, skipValidation: Boolean = false): YTPlayerUtils.PlaybackData? {
             val uniqueIds = ids.filter { it.isNotBlank() }.distinct().filter { tried.add(it) }
             if (uniqueIds.isEmpty()) return null
-            return kotlinx.coroutines.supervisorScope {
-                val attempts = uniqueIds.mapIndexed { index, videoId ->
-                    async {
-                        streamResolutionSemaphore.withPermit {
-                            if (forPlayback) {
-                                updateResolveStatus(true, "Resolving YouTube stream ${index + 1}/${uniqueIds.size}...")
-                            }
-                            try {
-                                YTPlayerUtils.playerResponseForPlayback(
-                                    videoId = videoId,
-                                    audioQuality = audioQuality,
-                                    connectivityManager = connectivityManager,
-                                    skipValidation = skipValidation,
-                                ).onFailure { error ->
-                                    lastYtFailureReason = error.message ?: "Stream failed"
-                                    Log.w(TAG, "stream failed for $videoId (${error.message}) — trying next candidate for: ${searchTextForPlayback(query)}")
-                                }.getOrNull()
-                            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                                throw cancelled
-                            } catch (error: Exception) {
+            val attempts = uniqueIds.mapIndexed { index, videoId ->
+                scope.async {
+                    streamResolutionSemaphore.withPermit {
+                        if (forPlayback) {
+                            updateResolveStatus(true, "Resolving YouTube stream ${index + 1}/${uniqueIds.size}...")
+                        }
+                        try {
+                            YTPlayerUtils.playerResponseForPlayback(
+                                videoId = videoId,
+                                audioQuality = audioQuality,
+                                connectivityManager = connectivityManager,
+                                skipValidation = skipValidation,
+                            ).onFailure { error ->
                                 lastYtFailureReason = error.message ?: "Stream failed"
-                                Log.w(TAG, "stream failed for $videoId (${error.message}) — trying next candidate for: ${searchTextForPlayback(query)}", error)
-                                null
-                            }
+                                Log.w(TAG, "stream failed for $videoId (${error.message}) — trying next candidate for: ${searchTextForPlayback(query)}")
+                            }.getOrNull()
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                            throw cancelled
+                        } catch (error: Exception) {
+                            lastYtFailureReason = error.message ?: "Stream failed"
+                            Log.w(TAG, "stream failed for $videoId (${error.message}) — trying next candidate for: ${searchTextForPlayback(query)}", error)
+                            null
                         }
                     }
                 }
-                // awaitAll retains input order; a failed attempt is represented as null and
-                // cannot cancel sibling attempts because this is a supervisorScope.
-                attempts.awaitAll().firstOrNull { it != null }
+            }
+            // All candidates resolve in parallel, but the winner is still the first one (in match
+            // order) that succeeds; as soon as it does, the slower/lower-ranked ones are dropped.
+            try {
+                for (attempt in attempts) {
+                    attempt.await()?.let { return it }
+                }
+                return null
+            } finally {
+                attempts.forEach { it.cancel() }
             }
         }
         tryIds(resolveVideoCandidates(query, forPlayback = forPlayback).take(3), skipValidation = false)?.let { return it }
@@ -2389,10 +2590,10 @@ object SongPlayer {
         }
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                15_000, // minBufferMs
-                50_000, // maxBufferMs
-                1_500,  // bufferForPlaybackMs (fast startup)
-                3_000   // bufferForPlaybackAfterRebufferMs
+                15_000,
+                50_000,
+                1_500,
+                3_000
             )
             .build()
 
@@ -2435,6 +2636,20 @@ object SongPlayer {
     }
 
     fun ensureCreated(context: Context) = ensurePlayer(context.applicationContext)
+
+    /**
+     * Optional: call once at app start. Opens the disk media cache (SQLite + folder scan) and
+     * builds the ExoPlayer ahead of the first play so that work is not on the first song's path.
+     */
+    fun warmUp(context: Context) {
+        val appContext = context.applicationContext
+        appCtx = appContext
+        scope.launch {
+            runCatching { mediaCache(appContext) }
+            runCatching { purgeLegacyMatchCachesOnce(appContext) }
+            withContext(Dispatchers.Main) { runCatching { ensurePlayer(appContext) } }
+        }
+    }
 
     @Volatile var onPlayerCreated: ((ExoPlayer) -> Unit)? = null
 
