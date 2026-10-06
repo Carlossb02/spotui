@@ -77,6 +77,8 @@ class PlaybackService : MediaLibraryService() {
     private var webPlayer: WebMediaPlayer? = null
     private var showingWeb = false
 
+    private val errorRetryCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
     private val playerListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
             currentSongState.updateBufferingState(playbackState == Player.STATE_BUFFERING)
@@ -89,6 +91,7 @@ class PlaybackService : MediaLibraryService() {
                     // The crossfade routine itself handles the transition and promotes the new player.
                     return
                 }
+                errorRetryCounts.clear()
                 SongPlayer.acquireWakeLock(applicationContext, "spotui:advance", 60_000L)
                 when (currentSongState.repeat.value) {
                     RepeatMode.ONE -> {
@@ -154,12 +157,25 @@ class PlaybackService : MediaLibraryService() {
                 "Player error during playback: ${error.message}",
                 error
             )
-            SongPlayer.acquireWakeLock(applicationContext, "spotui:error_advance", 60_000L)
             val queue = currentSongState.queue.value
             val curId = currentSongState.songId.value
             val cur = queue.indexOfFirst { it.id == curId }
+            val songUrl = if (cur >= 0) queue[cur].url else currentSongState.songUrl.value
+            
+            val retries = errorRetryCounts[songUrl] ?: 0
+            if (retries < 2 && (error.errorCodeName.contains("IO") || error.errorCodeName.contains("NETWORK") || error.errorCodeName.contains("TIMEOUT"))) {
+                errorRetryCounts[songUrl] = retries + 1
+                android.util.Log.w("PlaybackService", "Transient loading error for $songUrl (attempt ${retries + 1}), retrying playback instead of skipping...")
+                if (cur >= 0) {
+                    SongPlayer.invalidateResolvedStream(songUrl)
+                    SongPlayer.playSong(songUrl, applicationContext, "song/${queue[cur].id}")
+                }
+                return
+            }
+            errorRetryCounts.remove(songUrl)
+            SongPlayer.acquireWakeLock(applicationContext, "spotui:error_advance", 60_000L)
             if (cur >= 0) {
-                SongPlayer.invalidateResolvedStream(queue[cur].url)
+                SongPlayer.invalidateResolvedStream(songUrl)
             }
             advance(forward = true)
         }
@@ -172,7 +188,7 @@ class PlaybackService : MediaLibraryService() {
         // Order notification buttons: [repeat | prev | play/pause | next | close]
         val notificationProvider = object : DefaultMediaNotificationProvider(this) {
             init {
-                setSmallIcon(R.drawable.ic_spotui_notification)
+                setSmallIcon(R.drawable.logo)
             }
 
             override fun getMediaButtons(

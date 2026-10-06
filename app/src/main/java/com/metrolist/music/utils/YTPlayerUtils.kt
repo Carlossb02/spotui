@@ -557,10 +557,10 @@ object YTPlayerUtils {
             Timber.tag(logTag).w(e, "Stream URL probe failed (IO); accepting optimistically")
             return true
         } catch (e: Exception) {
-            Timber.tag(logTag).e(e, "Stream URL validation failed with exception")
-            reportException(e)
+            // Offline or network error while probing cached URL. Accept optimistically for offline fallback.
+            Timber.tag(logTag).w(e, "Stream URL validation failed (offline/error); accepting optimistically")
+            return true
         }
-        return false
     }
     data class SignatureTimestampResult(
         val timestamp: Int?,

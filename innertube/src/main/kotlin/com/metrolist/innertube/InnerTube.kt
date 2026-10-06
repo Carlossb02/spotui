@@ -170,7 +170,7 @@ class InnerTube {
      */
     private suspend fun <T> withRetry(
         maxAttempts: Int = 3,
-        initialDelay: Long = 500L,
+        initialDelay: Long = 300L,
         factor: Double = 2.0,
         block: suspend () -> T,
     ): T {
@@ -182,7 +182,8 @@ class InnerTube {
             } catch (e: IOException) {
                 attempt++
                 if (attempt >= maxAttempts) throw e
-                delay(currentDelay)
+                val jitter = (Math.random() * 200).toLong()
+                delay(currentDelay + jitter)
                 currentDelay = (currentDelay * factor).toLong()
             }
         }

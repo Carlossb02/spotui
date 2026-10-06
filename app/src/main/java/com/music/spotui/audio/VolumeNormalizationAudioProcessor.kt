@@ -11,13 +11,11 @@ import kotlin.math.sqrt
 import kotlin.math.tanh
 
 /**
- * Media3 [AudioProcessor] providing Spotify-style per-track volume normalization
+ * Media3 [AudioProcessor] providing Spotify-style stable track volume normalization
  * for PCM 16-bit audio streams.
  *
- * Levels overall track loudness to standard -14 LUFS (~0.18 RMS target) using a smooth
- * exponential moving average gain adaptation combined with an instant-attack soft-knee
- * peak limiter. This guarantees uniform audio loudness without hard clipping, pumping,
- * or high-frequency distortion artifacts.
+ * Targets a consistent loudness (-12 to -14 LUFS equivalent) with a stable gain factor
+ * that avoids mid-song volume jumps/pumping and prevents digital distortion or low volume.
  */
 @UnstableApi
 class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
@@ -25,10 +23,12 @@ class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
     @Volatile
     var enabled: Boolean = false
 
-    private val targetRms = 0.18 // ~ -14 LUFS (Spotify standard target)
+    private val targetRms = 0.20 // Standard Spotify/YouTube balanced loudness target
     private var smoothRms = targetRms
     private var currentGain = 1.0
     private var peakEnvelope = 0.0
+    private var isCalibrated = false
+    private var calibrationBufferCount = 0
 
     private var sampleRate = 0
     private var channelCount = 0
@@ -56,7 +56,7 @@ class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
         inputBuffer.order(ByteOrder.nativeOrder())
         val output = replaceOutputBuffer(remaining)
 
-        // Measure buffer RMS to update smooth loudness estimate
+        // Measure buffer RMS
         val pos = inputBuffer.position()
         var sumSquares = 0.0
         var sampleCount = 0
@@ -71,13 +71,23 @@ class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
         if (sampleCount > 0) {
             val bufferRms = sqrt(sumSquares / sampleCount)
             if (bufferRms > 0.005) {
-                smoothRms = smoothRms * 0.98 + bufferRms * 0.02
-                val targetGain = (targetRms / smoothRms).coerceIn(0.25, 2.5) // -12 dB to +8 dB
-                currentGain += (targetGain - currentGain) * 0.05
+                if (!isCalibrated) {
+                    // Fast initial adaptation during the first few buffers to establish baseline
+                    smoothRms = smoothRms * 0.9 + bufferRms * 0.1
+                    calibrationBufferCount++
+                    if (calibrationBufferCount > 15) {
+                        isCalibrated = true
+                    }
+                } else {
+                    // Ultra-slow adaptation once calibrated to completely prevent mid-song volume changes/pumping
+                    smoothRms = smoothRms * 0.9995 + bufferRms * 0.0005
+                }
+                val targetGain = (targetRms / smoothRms).coerceIn(0.7, 1.3) // Safe, distortion-free gain range (-3 dB to +2.3 dB)
+                currentGain += (targetGain - currentGain) * 0.02
             }
         }
 
-        // Process audio with gain adaptation + peak limiter
+        // Process audio with stable gain + transparent peak limiter
         while (inputBuffer.remaining() >= 2) {
             val rawSample = inputBuffer.short.toDouble() / 32767.0
             val scaledSample = rawSample * currentGain
@@ -86,17 +96,17 @@ class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
             if (absScaled > peakEnvelope) {
                 peakEnvelope = absScaled
             } else {
-                peakEnvelope *= 0.9995 // Smooth release (~150-200ms)
+                peakEnvelope *= 0.9999 // Smooth release
             }
 
-            val dynamicGain = if (peakEnvelope > 0.95) (0.95 / peakEnvelope) else 1.0
+            val dynamicGain = if (peakEnvelope > 0.96) (0.96 / peakEnvelope) else 1.0
             var processed = scaledSample * dynamicGain
 
-            // Soft-knee saturation curve above 0.92 to completely prevent hard clipping
-            if (processed > 0.92) {
-                processed = 0.92 + 0.08 * tanh((processed - 0.92) / 0.08)
-            } else if (processed < -0.92) {
-                processed = -0.92 + 0.08 * tanh((processed + 0.92) / 0.08)
+            // Gentle soft-knee saturation above 0.95 to eliminate any possibility of harsh clipping/distortion
+            if (processed > 0.95) {
+                processed = 0.95 + 0.05 * tanh((processed - 0.95) / 0.05)
+            } else if (processed < -0.95) {
+                processed = -0.95 + 0.05 * tanh((processed + 0.95) / 0.05)
             }
 
             val shortSample = (processed * 32767.0).coerceIn(-32768.0, 32767.0).toInt().toShort()
@@ -125,6 +135,8 @@ class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
         smoothRms = targetRms
         currentGain = 1.0
         peakEnvelope = 0.0
+        isCalibrated = false
+        calibrationBufferCount = 0
     }
 
     override fun onReset() {
@@ -133,5 +145,7 @@ class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
         smoothRms = targetRms
         currentGain = 1.0
         peakEnvelope = 0.0
+        isCalibrated = false
+        calibrationBufferCount = 0
     }
 }

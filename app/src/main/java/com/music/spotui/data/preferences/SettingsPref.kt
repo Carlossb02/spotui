@@ -232,12 +232,18 @@ fun setEqualizerPreset(c: Context, preset: String) {
     com.music.spotui.di.SongPlayer.onEqualizerSettingChanged(c)
 }
 
+private const val KEY_CUSTOM_EQUALIZER_BANDS = "custom_equalizer_bands"
+
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 fun getEqualizerBandGains(c: Context): FloatArray {
-    val raw = prefs(c).getString(KEY_EQUALIZER_BANDS, "") ?: ""
-    if (raw.isBlank()) {
-        val preset = getEqualizerPreset(c)
+    val preset = getEqualizerPreset(c)
+    if (preset != "Custom") {
         return com.music.spotui.audio.EqualizerAudioProcessor.PRESETS[preset]
+            ?: floatArrayOf(0f, 0f, 0f, 0f, 0f)
+    }
+    val raw = prefs(c).getString(KEY_CUSTOM_EQUALIZER_BANDS, "") ?: ""
+    if (raw.isBlank()) {
+        return com.music.spotui.audio.EqualizerAudioProcessor.PRESETS["Flat"]
             ?: floatArrayOf(0f, 0f, 0f, 0f, 0f)
     }
     return try {
@@ -250,7 +256,8 @@ fun getEqualizerBandGains(c: Context): FloatArray {
 
 fun setEqualizerBandGains(c: Context, gains: FloatArray) {
     val str = gains.joinToString(",") { it.toString() }
-    prefs(c).edit().putString(KEY_EQUALIZER_BANDS, str).apply()
+    prefs(c).edit().putString(KEY_CUSTOM_EQUALIZER_BANDS, str).apply()
+    setEqualizerPreset(c, "Custom")
     com.music.spotui.di.SongPlayer.onEqualizerSettingChanged(c)
 }
 

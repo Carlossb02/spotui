@@ -421,9 +421,9 @@ fun SettingsScreen(navController: NavController) {
                                         ?: floatArrayOf(0f, 0f, 0f, 0f, 0f)
                                     equalizerGains = gains
                                     com.music.spotui.data.preferences.setEqualizerPreset(context, preset)
-                                    com.music.spotui.data.preferences.setEqualizerBandGains(context, gains)
                                 } else {
                                     com.music.spotui.data.preferences.setEqualizerPreset(context, "Custom")
+                                    equalizerGains = com.music.spotui.data.preferences.getEqualizerBandGains(context)
                                 }
                             },
                             shape = RoundedCornerShape(16.dp),

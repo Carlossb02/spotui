@@ -59,7 +59,18 @@ class CurrentSongState @Inject constructor() {
     val queue: State<List<SongsModel>> get() = _queue
 
     fun updateQueue(songs: List<SongsModel>) {
-        _queue.value = songs
+        var finalSongs = songs
+        if (shuffle.value) {
+            val curId = _songId.value
+            val curSong = songs.firstOrNull { it.id == curId } ?: songs.firstOrNull()
+            if (curSong != null) {
+                finalSongs = listOf(curSong) + songs.filter { it.id != curSong.id }.shuffled()
+            } else {
+                finalSongs = songs.shuffled()
+            }
+            unshuffledQueue = songs
+        }
+        _queue.value = finalSongs
         // Seed the lossless resolver: map each track's play query → its Spotify id so
         // SongPlayer can resolve a FLAC stream from a play site that only has the query.
         SongPlayer.registerLossless(songs.map { it.url to it.spotifyTrackId })
