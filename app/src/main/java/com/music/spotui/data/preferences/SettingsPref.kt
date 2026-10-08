@@ -36,6 +36,7 @@ private const val KEY_AUDIO_NORMALIZATION = "audio_normalization_enabled"
 private const val KEY_EQUALIZER_ENABLED = "equalizer_enabled"
 private const val KEY_EQUALIZER_PRESET = "equalizer_preset"
 private const val KEY_EQUALIZER_BANDS = "equalizer_bands"
+private const val KEY_LANGUAGE = "app_language"
 const val DEFAULT_UPDATE_REPO_URL = "https://github.com/Carlossb02/spotui"
 
 /** Off (0s) … 12s. 0 disables crossfade. */
@@ -260,6 +261,23 @@ fun setEqualizerBandGains(c: Context, gains: FloatArray) {
     setEqualizerPreset(c, "Custom")
     com.music.spotui.di.SongPlayer.onEqualizerSettingChanged(c)
 }
+
+fun getAppLanguage(c: Context): String = prefs(c).getString(KEY_LANGUAGE, "es") ?: "es"
+
+private tailrec fun Context.findActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+fun setAppLanguage(c: Context, lang: String) {
+    prefs(c).edit().putString(KEY_LANGUAGE, lang).apply()
+    androidx.appcompat.app.AppCompatDelegate.setApplicationLocales(
+        androidx.core.os.LocaleListCompat.forLanguageTags(lang)
+    )
+    c.findActivity()?.recreate()
+}
+
 
 
 

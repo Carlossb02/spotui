@@ -48,6 +48,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -203,7 +204,7 @@ fun HomeScreen(navController: NavController){
                                 modifier = Modifier.padding(24.dp)
                             ) {
                                 Text(
-                                    text = "Spotify session expired or unauthenticated",
+                                    text = stringResource(R.string.login_expired_title),
                                     color = Color.White,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 18.sp,
@@ -211,7 +212,7 @@ fun HomeScreen(navController: NavController){
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "Log in to load your personalized playlists, recommendations, and library.",
+                                    text = stringResource(R.string.login_expired_desc),
                                     color = Color.Gray,
                                     fontSize = 13.sp,
                                     textAlign = TextAlign.Center
@@ -225,7 +226,7 @@ fun HomeScreen(navController: NavController){
                                         .padding(horizontal = 24.dp, vertical = 12.dp)
                                 ) {
                                     Text(
-                                        text = "Log in to Spotify",
+                                        text = stringResource(R.string.login_to_spotify),
                                         color = Color.Black,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 14.sp
@@ -233,7 +234,7 @@ fun HomeScreen(navController: NavController){
                                 }
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Text(
-                                    text = "Go to Downloads",
+                                    text = stringResource(R.string.go_to_downloads),
                                     color = Color.White,
                                     fontWeight = FontWeight.Medium,
                                     fontSize = 14.sp,
@@ -371,7 +372,7 @@ private fun HomeHeaderRow(
                                 .padding(horizontal = 16.dp, vertical = 8.dp),
                         ) {
                             Text(
-                                text = "All",
+                                text = stringResource(R.string.filter_all),
                                 color = if (isSel) Color.Black else Color.White,
                                 fontSize = 14.sp,
                                 fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
@@ -394,7 +395,7 @@ private fun HomeHeaderRow(
                                         .padding(horizontal = 16.dp, vertical = 8.dp)
                                 ) {
                                     Text(
-                                        text = "Music",
+                                        text = stringResource(R.string.filter_music),
                                         color = Color.Black,
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold
@@ -411,7 +412,7 @@ private fun HomeHeaderRow(
                                         .padding(start = 24.dp, end = 16.dp, top = 8.dp, bottom = 8.dp)
                                 ) {
                                     Text(
-                                        text = "Following",
+                                        text = stringResource(R.string.following),
                                         color = if (isFollowingOnly) Color.Black else Color.White,
                                         fontSize = 14.sp,
                                         fontWeight = if (isFollowingOnly) FontWeight.Bold else FontWeight.Medium
@@ -427,7 +428,7 @@ private fun HomeHeaderRow(
                                     .padding(horizontal = 16.dp, vertical = 8.dp),
                             ) {
                                 Text(
-                                    text = "Music",
+                                    text = stringResource(R.string.filter_music),
                                     color = Color.White,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Medium,
@@ -451,7 +452,7 @@ private fun HomeHeaderRow(
                                         .padding(horizontal = 16.dp, vertical = 8.dp)
                                 ) {
                                     Text(
-                                        text = "Podcasts",
+                                        text = stringResource(R.string.filter_podcasts),
                                         color = Color.Black,
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold
@@ -468,7 +469,7 @@ private fun HomeHeaderRow(
                                         .padding(start = 24.dp, end = 16.dp, top = 8.dp, bottom = 8.dp)
                                 ) {
                                     Text(
-                                        text = "Following",
+                                        text = stringResource(R.string.following),
                                         color = if (isFollowingOnly) Color.Black else Color.White,
                                         fontSize = 14.sp,
                                         fontWeight = if (isFollowingOnly) FontWeight.Bold else FontWeight.Medium
@@ -484,7 +485,7 @@ private fun HomeHeaderRow(
                                     .padding(horizontal = 16.dp, vertical = 8.dp),
                             ) {
                                 Text(
-                                    text = "Podcasts",
+                                    text = stringResource(R.string.filter_podcasts),
                                     color = Color.White,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Medium,
@@ -504,7 +505,7 @@ private fun HomeHeaderRow(
                                 .padding(horizontal = 16.dp, vertical = 8.dp),
                         ) {
                             Text(
-                                text = "Audiobooks",
+                                text = stringResource(R.string.filter_audiobooks),
                                 color = if (isSel) Color.Black else Color.White,
                                 fontSize = 14.sp,
                                 fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
@@ -576,7 +577,7 @@ private fun HomeMusicFeedContent(
             // ── Spotify "Latest releases" Feed ──
             item {
                 Text(
-                    text = "Latest releases",
+                    text = stringResource(R.string.latest_releases),
                     color = Color.White,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
@@ -612,7 +613,7 @@ private fun HomeMusicFeedContent(
             if (filteredSongs.isNotEmpty()) {
                 item {
                     Text(
-                        text = "Top Songs",
+                        text = stringResource(R.string.top_songs),
                         color = Color.White,
                         fontSize = 21.sp,
                         fontWeight = FontWeight.Bold,
@@ -915,7 +916,7 @@ private fun LatestReleaseCard(
                         modifier = Modifier.size(22.dp)
                     )
                     Spacer(modifier = Modifier.width(14.dp))
-                    Text(text = "Go to album", color = Color.White, fontSize = 15.sp)
+                    Text(text = stringResource(R.string.go_to_album), color = Color.White, fontSize = 15.sp)
                 }
 
                 // Option 2: Go to artist
@@ -942,7 +943,7 @@ private fun LatestReleaseCard(
                             modifier = Modifier.size(22.dp)
                         )
                         Spacer(modifier = Modifier.width(14.dp))
-                        Text(text = "Go to artist", color = Color.White, fontSize = 15.sp)
+                        Text(text = stringResource(R.string.go_to_artist), color = Color.White, fontSize = 15.sp)
                     }
                 }
 
@@ -966,7 +967,7 @@ private fun LatestReleaseCard(
                     )
                     Spacer(modifier = Modifier.width(14.dp))
                     Text(
-                        text = if (isSaved) "Remove from Your Library" else "Save to Your Library",
+                        text = if (isSaved) stringResource(R.string.remove_from_library) else stringResource(R.string.save_to_library),
                         color = Color.White,
                         fontSize = 15.sp
                     )
@@ -995,7 +996,7 @@ private fun LatestReleaseCard(
                         modifier = Modifier.size(22.dp)
                     )
                     Spacer(modifier = Modifier.width(14.dp))
-                    Text(text = "Share release", color = Color.White, fontSize = 15.sp)
+                    Text(text = stringResource(R.string.share_release), color = Color.White, fontSize = 15.sp)
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -1106,7 +1107,7 @@ private fun HomePodcastsFeedContent(
 
         item {
             Text(
-                text = "Podcasts & Shows",
+                text = stringResource(R.string.podcasts_and_shows),
                 color = Color.White,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
@@ -1123,7 +1124,7 @@ private fun HomePodcastsFeedContent(
         if (shows.isNotEmpty()) {
             item {
                 Text(
-                    text = "Top Shows",
+                    text = stringResource(R.string.top_shows),
                     color = Color.White,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
@@ -1175,7 +1176,7 @@ private fun HomePodcastsFeedContent(
         if (episodes.isNotEmpty()) {
             item {
                 Text(
-                    text = "Recent Episodes",
+                    text = stringResource(R.string.recent_episodes),
                     color = Color.White,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
@@ -1235,7 +1236,7 @@ private fun HomeAudiobooksFeedContent(
 
         item {
             Text(
-                text = "Audiobooks & Stories",
+                text = stringResource(R.string.audiobooks_and_stories),
                 color = Color.White,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
@@ -1246,7 +1247,7 @@ private fun HomeAudiobooksFeedContent(
         if (albums.isNotEmpty()) {
             item {
                 Text(
-                    text = "Popular Audiobooks",
+                    text = stringResource(R.string.popular_audiobooks),
                     color = Color.White,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
@@ -1463,9 +1464,9 @@ fun SumUpHomeScreen(
 fun GreetingSection(name : String = "User") {
     val currentHour = LocalTime.now().hour
     val greeting = when {
-        currentHour < 12 -> "Good Morning"
-        currentHour < 17 -> "Good Afternoon"
-        else -> "Good Evening"
+        currentHour < 12 -> stringResource(R.string.good_morning)
+        currentHour < 17 -> stringResource(R.string.good_afternoon)
+        else -> stringResource(R.string.good_evening)
     }
     Row(
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1483,7 +1484,7 @@ fun GreetingSection(name : String = "User") {
                 fontWeight = FontWeight.Bold
                 )
             Text(
-                text = "Have a Nice Day",
+                text = stringResource(R.string.have_a_nice_day),
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color.White,
                 fontSize = 13.sp

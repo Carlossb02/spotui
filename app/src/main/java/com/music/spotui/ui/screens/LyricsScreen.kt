@@ -1,6 +1,7 @@
 package com.music.spotui.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
@@ -251,6 +252,7 @@ fun LyricsScreen(
     }
     val state by vm.state.collectAsState()
     val positionMs by rememberPlaybackPositionMs()
+    val context = LocalContext.current
 
     Box(
         modifier = Modifier
@@ -287,7 +289,7 @@ fun LyricsScreen(
                     .padding(16.dp, 8.dp)
             ) {
                 Column(modifier = Modifier.padding(end = 12.dp)) {
-                    Text("Lyrics", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text(com.music.spotui.util.AppLang.get(context, "lyrics"), color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -318,7 +320,7 @@ fun LyricsScreen(
                         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("Couldn't find lyrics for this track", color = Color.White.copy(alpha = 0.7f), fontSize = 15.sp)
+                        Text(com.music.spotui.util.AppLang.get(context, "no_lyrics"), color = Color.White.copy(alpha = 0.7f), fontSize = 15.sp)
                     }
                 is LyricsViewModel.State.Loaded -> {
                     val lyrics = s.lyrics

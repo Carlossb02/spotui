@@ -107,6 +107,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Velocity
@@ -888,13 +889,13 @@ fun PlayerTopBar(
         // Spotify shows the source context here (album/playlist), not a generic label.
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                text = "PLAYING FROM",
+                text = stringResource(R.string.playing_from),
                 color = Color(0xFFB3B3B3),
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Medium,
             )
             Text(
-                text = contextName.ifBlank { "Now Playing" },
+                text = contextName.ifBlank { stringResource(R.string.now_playing) },
                 color = Color.White,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
@@ -2147,7 +2148,7 @@ fun PlayerOptionsSheet(
                 }
                 PlayerMenuRow(
                     icon = Icons.Default.Notifications,
-                    label = "Sleep timer",
+                    label = stringResource(R.string.sleep_timer),
                     subtitle = if (minutesLeft > 0) "$minutesLeft min left" else null,
                     trailingArrow = true
                 ) { showSleep = true }
@@ -2168,7 +2169,7 @@ fun PlayerOptionsSheet(
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
-                        "Sleep timer",
+                        stringResource(R.string.sleep_timer),
                         color = Color.White,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,

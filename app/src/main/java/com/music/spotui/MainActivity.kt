@@ -37,6 +37,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?){
 
         super.onCreate(savedInstanceState)
+        androidx.appcompat.app.AppCompatDelegate.setApplicationLocales(
+            androidx.core.os.LocaleListCompat.forLanguageTags(com.music.spotui.data.preferences.getAppLanguage(this))
+        )
         this.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
 
         // Ask for notification permission (Android 13+) so the media notification shows.

@@ -541,12 +541,12 @@ fun DownloadsScreen(navController: NavController) {
                                     android.widget.Toast.LENGTH_SHORT,
                                 ).show()
                             }) {
-                                Text("Clear", color = Color(0xFFE57373))
+                                Text(com.music.spotui.util.AppLang.get(context, "clear"), color = Color(0xFFE57373))
                             }
                         },
                         dismissButton = {
                             TextButton(onClick = { showClearConfirmDialog = false }) {
-                                Text("Cancel", color = Color.White)
+                                Text(com.music.spotui.util.AppLang.get(context, "cancel"), color = Color.White)
                             }
                         },
                         containerColor = Color(0xFF1A1A1A),

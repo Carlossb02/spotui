@@ -7,15 +7,18 @@ import androidx.media3.common.util.UnstableApi
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.abs
+import kotlin.math.pow
 import kotlin.math.sqrt
 import kotlin.math.tanh
 
 /**
- * Media3 [AudioProcessor] providing Spotify-style stable track volume normalization
+ * Media3 [AudioProcessor] providing Spotify-grade track volume normalization
  * for PCM 16-bit audio streams.
  *
- * Targets a consistent loudness (-12 to -14 LUFS equivalent) with a stable gain factor
- * that avoids mid-song volume jumps/pumping and prevents digital distortion or low volume.
+ * Normalizes all tracks to standard reference loudness (-14 LUFS / EBU R128)
+ * using exact track metadata when available, or an imperceptible smooth RMS
+ * estimation fallback. Uses a continuous soft-knee brickwall limiter to eliminate
+ * any digital clipping, popping ("petardeos"), white noise, or volume pumping.
  */
 @UnstableApi
 class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
@@ -23,15 +26,67 @@ class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
     @Volatile
     var enabled: Boolean = false
 
-    private val targetRms = 0.20 // Standard Spotify/YouTube balanced loudness target
-    private var smoothRms = targetRms
+    // Spotify reference target loudness (-14 LUFS / RMS ~0.20)
+    private val targetRms = 0.20
+
+    @Volatile
+    private var trackTargetGain = 1.0
+
+    @Volatile
     private var currentGain = 1.0
-    private var peakEnvelope = 0.0
-    private var isCalibrated = false
-    private var calibrationBufferCount = 0
+
+    @Volatile
+    private var isMetadataDriven = false
+
+    // Slew rate limit per sample (~0.1 dB/sec at 44.1kHz) for smooth fallback adjustment
+    private val maxSlewPerSample = 0.0000005
+
+    private var accumulatedSumSquares = 0.0
+    private var accumulatedSampleCount = 0L
 
     private var sampleRate = 0
     private var channelCount = 0
+
+    /**
+     * Set explicit track loudness in dB relative to -14 LUFS target (from YouTube/InnerTube API metadata).
+     * For example, loudnessDb = +3.0 means track is 3 dB louder than target -14 LUFS.
+     * Gain will be applied as 10^(-3.0 / 20) = 0.707 (-3 dB).
+     */
+    fun setTrackLoudness(loudnessDb: Double?) {
+        if (loudnessDb != null && !loudnessDb.isNaN() && !loudnessDb.isInfinite()) {
+            val gainFactor = 10.0.pow(-loudnessDb / 20.0).coerceIn(0.25, 2.0)
+            trackTargetGain = gainFactor
+            currentGain = gainFactor
+            isMetadataDriven = true
+        } else {
+            resetToFallbackEstimation()
+        }
+    }
+
+    /**
+     * Direct track gain setting in dB.
+     */
+    fun setTrackGainDb(gainDb: Double?) {
+        if (gainDb != null && !gainDb.isNaN() && !gainDb.isInfinite()) {
+            val gainFactor = 10.0.pow(gainDb / 20.0).coerceIn(0.25, 2.0)
+            trackTargetGain = gainFactor
+            currentGain = gainFactor
+            isMetadataDriven = true
+        } else {
+            resetToFallbackEstimation()
+        }
+    }
+
+    /**
+     * Reset normalizer for a new track with unknown loudness metadata.
+     */
+    fun resetToFallbackEstimation() {
+        isMetadataDriven = false
+        trackTargetGain = 1.0
+        currentGain = 1.0
+        accumulatedSumSquares = 0.0
+        accumulatedSampleCount = 0L
+    }
 
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT) {
@@ -56,64 +111,71 @@ class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
         inputBuffer.order(ByteOrder.nativeOrder())
         val output = replaceOutputBuffer(remaining)
 
-        // Measure buffer RMS
-        val pos = inputBuffer.position()
-        var sumSquares = 0.0
-        var sampleCount = 0
+        // Fallback smooth RMS estimation when metadata is absent
+        if (!isMetadataDriven) {
+            val startPos = inputBuffer.position()
+            var sumSquares = 0.0
+            var count = 0
+            while (inputBuffer.remaining() >= 2) {
+                val s = inputBuffer.short.toDouble() / 32768.0
+                sumSquares += s * s
+                count++
+            }
+            inputBuffer.position(startPos)
 
-        while (inputBuffer.remaining() >= 2) {
-            val sample = inputBuffer.short.toDouble() / 32767.0
-            sumSquares += sample * sample
-            sampleCount++
-        }
-        inputBuffer.position(pos)
+            if (count > 0) {
+                accumulatedSumSquares += sumSquares
+                accumulatedSampleCount += count.toLong()
 
-        if (sampleCount > 0) {
-            val bufferRms = sqrt(sumSquares / sampleCount)
-            if (bufferRms > 0.005) {
-                if (!isCalibrated) {
-                    // Fast initial adaptation during the first few buffers to establish baseline
-                    smoothRms = smoothRms * 0.9 + bufferRms * 0.1
-                    calibrationBufferCount++
-                    if (calibrationBufferCount > 15) {
-                        isCalibrated = true
+                // Update estimated target gain smoothly every ~1 second of samples
+                if (accumulatedSampleCount >= sampleRate * channelCount) {
+                    val measuredRms = sqrt(accumulatedSumSquares / accumulatedSampleCount)
+                    if (measuredRms > 0.001) {
+                        trackTargetGain = (targetRms / measuredRms).coerceIn(0.35, 2.0)
                     }
-                } else {
-                    // Ultra-slow adaptation once calibrated to completely prevent mid-song volume changes/pumping
-                    smoothRms = smoothRms * 0.9995 + bufferRms * 0.0005
                 }
-                val targetGain = (targetRms / smoothRms).coerceIn(0.7, 1.3) // Safe, distortion-free gain range (-3 dB to +2.3 dB)
-                currentGain += (targetGain - currentGain) * 0.02
             }
         }
 
-        // Process audio with stable gain + transparent peak limiter
+        // Apply constant or ultra-smooth gain with soft-knee saturation limiter
+        val targetG = trackTargetGain
+        var cg = currentGain
+
         while (inputBuffer.remaining() >= 2) {
-            val rawSample = inputBuffer.short.toDouble() / 32767.0
-            val scaledSample = rawSample * currentGain
-
-            val absScaled = abs(scaledSample)
-            if (absScaled > peakEnvelope) {
-                peakEnvelope = absScaled
-            } else {
-                peakEnvelope *= 0.9999 // Smooth release
+            // Imperceptible slew-rate limited gain transition for fallback mode
+            if (cg != targetG) {
+                val diff = targetG - cg
+                if (abs(diff) <= maxSlewPerSample) {
+                    cg = targetG
+                } else {
+                    cg += if (diff > 0) maxSlewPerSample else -maxSlewPerSample
+                }
             }
 
-            val dynamicGain = if (peakEnvelope > 0.96) (0.96 / peakEnvelope) else 1.0
-            var processed = scaledSample * dynamicGain
+            val rawSample = inputBuffer.short.toDouble() / 32768.0
+            val amplified = rawSample * cg
+            val limited = softKneeSaturation(amplified)
 
-            // Gentle soft-knee saturation above 0.95 to eliminate any possibility of harsh clipping/distortion
-            if (processed > 0.95) {
-                processed = 0.95 + 0.05 * tanh((processed - 0.95) / 0.05)
-            } else if (processed < -0.95) {
-                processed = -0.95 + 0.05 * tanh((processed + 0.95) / 0.05)
-            }
-
-            val shortSample = (processed * 32767.0).coerceIn(-32768.0, 32767.0).toInt().toShort()
+            val shortSample = (limited * 32767.0).coerceIn(-32768.0, 32767.0).toInt().toShort()
             output.putShort(shortSample)
         }
+        currentGain = cg
 
         output.flip()
+    }
+
+    /**
+     * Continuous soft-knee saturation limiter.
+     * Linearly passes samples up to threshold T = 0.85 (-1.4 dBFS).
+     * Smoothly compresses peaks using tanh saturation for samples exceeding T.
+     * Prevents digital clipping, popping, white noise and harsh distortion.
+     */
+    private inline fun softKneeSaturation(sample: Double): Double {
+        val absVal = abs(sample)
+        if (absVal <= 0.85) return sample
+        val over = absVal - 0.85
+        val compressed = 0.85 + 0.15 * tanh(over / 0.15)
+        return if (sample > 0.0) compressed else -compressed
     }
 
     private fun copyBuffer(src: ByteBuffer, dst: ByteBuffer, size: Int) {
@@ -132,20 +194,17 @@ class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
     @Suppress("DEPRECATION")
     override fun onFlush() {
         super.onFlush()
-        smoothRms = targetRms
-        currentGain = 1.0
-        peakEnvelope = 0.0
-        isCalibrated = false
-        calibrationBufferCount = 0
+        // Do NOT reset trackTargetGain or currentGain on seek/flush!
+        // Preserves constant track volume throughout the entire song.
     }
 
     override fun onReset() {
         super.onReset()
         enabled = false
-        smoothRms = targetRms
+        trackTargetGain = 1.0
         currentGain = 1.0
-        peakEnvelope = 0.0
-        isCalibrated = false
-        calibrationBufferCount = 0
+        isMetadataDriven = false
+        accumulatedSumSquares = 0.0
+        accumulatedSampleCount = 0L
     }
 }

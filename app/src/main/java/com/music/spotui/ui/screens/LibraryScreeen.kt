@@ -74,6 +74,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -156,7 +157,7 @@ fun LibraryFilterChips(
 
         item {
             LibraryChipItem(
-                label = "Playlists",
+                label = stringResource(R.string.playlists),
                 isSelected = selectedFilter == LibraryFilterType.PLAYLISTS,
                 onClick = { onFilterSelected(LibraryFilterType.PLAYLISTS) }
             )
@@ -164,7 +165,7 @@ fun LibraryFilterChips(
 
         item {
             LibraryChipItem(
-                label = "Albums",
+                label = stringResource(R.string.albums),
                 isSelected = selectedFilter == LibraryFilterType.ALBUMS,
                 onClick = { onFilterSelected(LibraryFilterType.ALBUMS) }
             )
@@ -172,7 +173,7 @@ fun LibraryFilterChips(
 
         item {
             LibraryChipItem(
-                label = "Artists",
+                label = stringResource(R.string.artists),
                 isSelected = selectedFilter == LibraryFilterType.ARTISTS,
                 onClick = { onFilterSelected(LibraryFilterType.ARTISTS) }
             )
@@ -180,7 +181,7 @@ fun LibraryFilterChips(
 
         item {
             LibraryChipItem(
-                label = "Downloaded",
+                label = stringResource(R.string.downloaded),
                 isSelected = isDownloadedOnly,
                 onClick = { onToggleDownloaded() }
             )
@@ -319,7 +320,7 @@ fun LibraryScreen(navController: NavController) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Your Library",
+                text = stringResource(R.string.your_library),
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
                 fontSize = 22.sp,
@@ -726,7 +727,7 @@ fun SumUpLibraryScreen(
                         Icon(Icons.Default.DateRange, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
                     }
                     Column(modifier = Modifier.padding(start = 12.dp)) {
-                        Text(text = "Listening history", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text(text = stringResource(R.string.listening_history), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                         Text(text = "Your plays and stats", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     }
                 }
@@ -759,7 +760,7 @@ fun SumUpLibraryScreen(
                     )
                 }
                 Column(modifier = Modifier.padding(start = 12.dp)) {
-                    Text(text = "Local files", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Text(text = stringResource(R.string.local_files), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                     Text(text = "Music imported from this device", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 }
             }
@@ -984,7 +985,7 @@ fun LibraryGridScreen(
                         Icon(Icons.Default.DateRange, contentDescription = null, tint = Color.White, modifier = Modifier.size(32.dp))
                     }
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text(text = "Listening history", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(text = stringResource(R.string.listening_history), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(text = "Your plays and stats", color = Color.Gray, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }

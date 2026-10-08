@@ -454,9 +454,9 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun buildCustomLayout(mode: RepeatMode): ImmutableList<CommandButton> {
         val repeatIconRes = when (mode) {
-            RepeatMode.OFF -> R.drawable.ic_repeat_off  // slashed arrows = disabled
-            RepeatMode.ONE -> R.drawable.ic_repeat_one  // arrows + "1"
-            RepeatMode.ALL -> R.drawable.ic_repeat      // plain arrows = loop all
+            RepeatMode.OFF -> R.drawable.ic_repeat_off
+            RepeatMode.ONE -> R.drawable.ic_repeat_one
+            RepeatMode.ALL -> R.drawable.ic_repeat
         }
         val repeatLabel = when (mode) {
             RepeatMode.OFF -> "Repeat off"
@@ -469,13 +469,21 @@ class PlaybackService : MediaLibraryService() {
             .setIconResId(repeatIconRes)
             .build()
 
+        val shuffleIconRes = if (currentSongState.shuffle.value) R.drawable.ic_player_shuffle else R.drawable.ic_player_shuffle // need to add or check if there is an inactive shuffle icon
+        val shuffleLabel = if (currentSongState.shuffle.value) "Shuffle on" else "Shuffle off"
+        val shuffleButton = CommandButton.Builder()
+            .setDisplayName(shuffleLabel)
+            .setSessionCommand(SessionCommand("ACTION_SHUFFLE", Bundle.EMPTY))
+            .setIconResId(shuffleIconRes)
+            .build()
+
         val closeButton = CommandButton.Builder()
             .setDisplayName("Close")
             .setSessionCommand(SessionCommand("ACTION_CLOSE", Bundle.EMPTY))
             .setIconResId(R.drawable.ic_close)
             .build()
 
-        return ImmutableList.of(repeatButton, closeButton)
+        return ImmutableList.of(repeatButton, shuffleButton, closeButton)
     }
 
     private inner class LibraryCallback : MediaLibrarySession.Callback {
@@ -545,6 +553,7 @@ class PlaybackService : MediaLibraryService() {
             val sessionCommands = baseResult.availableSessionCommands.buildUpon()
                 .add(SessionCommand("ACTION_CLOSE", Bundle.EMPTY))
                 .add(SessionCommand("ACTION_REPEAT", Bundle.EMPTY))
+                .add(SessionCommand("ACTION_SHUFFLE", Bundle.EMPTY))
                 .build()
 
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
@@ -579,6 +588,13 @@ class PlaybackService : MediaLibraryService() {
                     currentSongState.updateRepeatState(next)
                     // Update the custom layout so the notification icon reflects the new mode
                     val newLayout = buildCustomLayout(next)
+                    mediaSession?.setCustomLayout(newLayout)
+                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+
+                "ACTION_SHUFFLE" -> {
+                    currentSongState.updateShuffleState(!currentSongState.shuffle.value)
+                    val newLayout = buildCustomLayout(currentSongState.repeat.value)
                     mediaSession?.setCustomLayout(newLayout)
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                 }

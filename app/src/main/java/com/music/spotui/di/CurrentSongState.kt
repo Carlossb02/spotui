@@ -120,29 +120,23 @@ class CurrentSongState @Inject constructor() {
         val q = _queue.value
         if (newShuffleState) {
             unshuffledQueue = q
-            val curIdx = q.indexOfFirst { it.id == _songId.value }
-            if (curIdx >= 0) {
-                _queue.value = listOf(q[curIdx]) +
-                    q.filterIndexed { i, _ -> i != curIdx }.shuffled()
+            val curId = _songId.value
+            val curSong = q.firstOrNull { it.id == curId }
+            if (curSong != null) {
+                _queue.value = listOf(curSong) + q.filter { it.id != curId }.shuffled()
                 _songIndex.value = 0
             } else {
                 _queue.value = q.shuffled()
             }
         } else {
             val original = unshuffledQueue
-            unshuffledQueue = null
-            // Restore only if we're still inside that queue (it may have been
-            // replaced by another list while shuffled). Keep tracks appended in
-            // the meantime (queue edits, autoplay radio).
-            if (original != null && original.any { it.id == _songId.value }) {
-                val appended = q.filter { s -> original.none { it.id == s.id } }
-                val restored = original + appended
-                _queue.value = restored
-                val idx = restored.indexOfFirst { it.id == _songId.value }
-                if (idx >= 0) _songIndex.value = idx
+            if (original != null) {
+                _queue.value = original
+                val curIdx = original.indexOfFirst { it.id == _songId.value }
+                if (curIdx >= 0) _songIndex.value = curIdx
+                unshuffledQueue = null
             }
         }
-        // Persist the current queue after shuffle changes.
         com.music.spotui.data.preferences.saveLastQueue(com.music.spotui.MyApplication.instance, _queue.value)
     }
 

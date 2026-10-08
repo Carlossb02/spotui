@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.ui.res.stringResource
 import androidx.compose.material3.Icon
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -170,7 +171,7 @@ fun QueueContent(
                     ) { onClose() }
             )
             Spacer(modifier = Modifier.width(12.dp))
-            Text("Queue", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.queue), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
         }
 
         val listState = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -184,7 +185,7 @@ fun QueueContent(
                 current?.let {
                     item {
                         Text(
-                            "Now playing",
+                            stringResource(R.string.now_playing),
                             color = Color.White,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,

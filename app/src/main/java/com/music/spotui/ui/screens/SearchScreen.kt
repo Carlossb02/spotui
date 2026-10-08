@@ -51,6 +51,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -211,7 +212,7 @@ fun SumUpSearchScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Text(
-                                "Recent searches",
+                                stringResource(R.string.recent_searches),
                                 color = Color.White,
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
@@ -818,7 +819,7 @@ private val browseCategories: List<Triple<String, Color, String>> = listOf(
 fun BrowseAllSection(onCategoryClick: (genre: String, title: String) -> Unit) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = "Browse all",
+            text = stringResource(R.string.browse_all),
             color = Color.White,
             fontSize = 22.sp,
             fontWeight = FontWeight.Bold,
@@ -937,7 +938,7 @@ fun SearchStickyBar(
         query = text,
         onQueryChange = onTextChange,
         modifier = Modifier.padding(10.dp),
-        placeholder = "What do you want to listen to?",
+        placeholder = stringResource(R.string.search_placeholder),
         focusRequester = focusRequester,
         onFocusChange = onFocusChange,
     )

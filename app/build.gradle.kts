@@ -11,11 +11,11 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.music.spotydroid"
+        applicationId = "com.music.spotidroid"
         minSdk = 26
         targetSdk = 37
         versionCode = 202608150
-        versionName = "1.7.10"
+        versionName = "1.8.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

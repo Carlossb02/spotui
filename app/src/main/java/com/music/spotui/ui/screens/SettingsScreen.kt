@@ -6,6 +6,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import com.music.spotui.R
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -100,6 +101,7 @@ import com.music.spotui.ui.theme.AppPalette
 fun SettingsScreen(navController: NavController) {
     val context = LocalContext.current
 
+    var appLang by remember { mutableStateOf(com.music.spotui.data.preferences.getAppLanguage(context)) }
     var wifiQ by remember { mutableStateOf(getWifiQuality(context)) }
     var cellQ by remember { mutableStateOf(getCellularQuality(context)) }
     var dlQ by remember { mutableStateOf(getDownloadQuality(context)) }
@@ -188,7 +190,7 @@ fun SettingsScreen(navController: NavController) {
         containerColor = AppBackground,
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("Settings", color = Color.White, fontWeight = FontWeight.Bold) },
+                title = { Text(stringResource(R.string.settings), color = Color.White, fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -214,7 +216,48 @@ fun SettingsScreen(navController: NavController) {
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 200.dp)
         ) {
-            SectionTitle("Devices & Bluetooth")
+            SectionTitle(stringResource(R.string.language))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF1A1A20))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("App Language / Idioma", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(if (appLang == "es") "Español" else "English", color = Color(0xFF1ED760), fontSize = 12.sp)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        onClick = {
+                            appLang = "en"
+                            com.music.spotui.data.preferences.setAppLanguage(context, "en")
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (appLang == "en") AppPalette else Color(0xFF28282E),
+                        contentColor = if (appLang == "en") Color.Black else Color.White
+                    ) {
+                        Text("EN", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+                    }
+                    Surface(
+                        onClick = {
+                            appLang = "es"
+                            com.music.spotui.data.preferences.setAppLanguage(context, "es")
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (appLang == "es") AppPalette else Color(0xFF28282E),
+                        contentColor = if (appLang == "es") Color.Black else Color.White
+                    ) {
+                        Text("ES", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            SectionTitle(stringResource(R.string.devices_bluetooth))
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -225,7 +268,7 @@ fun SettingsScreen(navController: NavController) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Audio Output Devices", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.audio_output_devices), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     Text(
                         com.music.spotui.ui.utils.AudioDeviceHelper.getCurrentAudioRouteName(context),
                         color = Color(0xFF1ED760),
@@ -242,7 +285,7 @@ fun SettingsScreen(navController: NavController) {
 
             Spacer(Modifier.height(16.dp))
 
-            SectionTitle("Background playback")
+            SectionTitle(stringResource(R.string.background_playback))
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -255,7 +298,7 @@ fun SettingsScreen(navController: NavController) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Battery optimization", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.battery_optimization), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     Text(
                         if (batteryOptExempt) "Exempt — app won't be killed" else "Not exempt — tap to change",
                         color = if (batteryOptExempt) Color(0xFF81C784) else Color(0xFFB3B3B3),
@@ -271,28 +314,9 @@ fun SettingsScreen(navController: NavController) {
                     )
                 }
             }
-            BatteryOptimizationHelper.getManufacturerTips()?.let { (name, tip) ->
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "Tip for $name",
-                    color = Color(0xFFB3B3B3),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = tip,
-                    color = Color(0xFF808080),
-                    fontSize = 12.sp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF1A1A20))
-                        .padding(horizontal = 12.dp, vertical = 10.dp)
-                )
-            }
 
             Spacer(Modifier.height(12.dp))
-            SectionTitle("Link handling")
+            SectionTitle(stringResource(R.string.link_handling))
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -333,19 +357,19 @@ fun SettingsScreen(navController: NavController) {
                 }
             }
 
-            SectionTitle("Audio quality")
+            SectionTitle(stringResource(R.string.audio_quality))
             QualityPicker(
-                title = "Streaming over Wi-Fi",
+                title = stringResource(R.string.streaming_wifi),
                 selected = wifiQ,
             ) { wifiQ = it; setWifiQuality(context, it) }
 
             QualityPicker(
-                title = "Streaming over cellular",
+                title = stringResource(R.string.streaming_cellular),
                 selected = cellQ,
             ) { cellQ = it; setCellularQuality(context, it) }
 
             QualityPicker(
-                title = "Download quality",
+                title = stringResource(R.string.download_quality),
                 selected = dlQ,
             ) { dlQ = it; setDownloadQuality(context, it) }
 
@@ -363,7 +387,7 @@ fun SettingsScreen(navController: NavController) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Clear Audio Stream Cache", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.clear_cache), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     Text("Unlocks all cached streams and forces re-resolution", color = Color.Gray, fontSize = 11.sp)
                 }
                 Icon(
@@ -375,10 +399,10 @@ fun SettingsScreen(navController: NavController) {
             }
 
             Spacer(Modifier.height(12.dp))
-            SectionTitle("Audio Normalization")
+            SectionTitle(stringResource(R.string.audio_normalization))
             SettingsSwitchRow(
-                title = "Normalize Volume",
-                subtitle = "Make all songs sound at a consistent volume level",
+                title = stringResource(R.string.normalize_volume),
+                subtitle = stringResource(R.string.normalize_desc),
                 checked = audioNormalization,
             ) {
                 audioNormalization = it
@@ -386,10 +410,10 @@ fun SettingsScreen(navController: NavController) {
             }
 
             Spacer(Modifier.height(12.dp))
-            SectionTitle("Equalizer")
+            SectionTitle(stringResource(R.string.equalizer))
             SettingsSwitchRow(
-                title = "Equalizer",
-                subtitle = "Apply Spotify frequency equalization to audio",
+                title = stringResource(R.string.equalizer),
+                subtitle = stringResource(R.string.equalizer_desc),
                 checked = equalizerEnabled,
             ) {
                 equalizerEnabled = it
@@ -484,41 +508,12 @@ fun SettingsScreen(navController: NavController) {
                         }
                     }
                 }
-
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable {
-                            try {
-                                val intent = Intent(android.media.audiofx.AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL)
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                android.widget.Toast.makeText(context, "System equalizer not supported on this device", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                        .background(Color(0xFF1E1E24))
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("System Equalizer", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        Text("Open device built-in audio effects settings", color = Color.Gray, fontSize = 11.sp)
-                    }
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "System Equalizer",
-                        tint = Color.Gray,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
             }
 
             Spacer(Modifier.height(12.dp))
-            SectionTitle("Matching")
+            SectionTitle(stringResource(R.string.matching))
             SettingsSwitchRow(
-                title = "Allow video fallback",
+                title = stringResource(R.string.allow_video_fallback),
                 subtitle = "Use regular YouTube videos only after Music song results fail",
                 checked = videoFallback,
             ) {
@@ -527,9 +522,9 @@ fun SettingsScreen(navController: NavController) {
             }
 
             Spacer(Modifier.height(12.dp))
-            SectionTitle("Playback")
+            SectionTitle(stringResource(R.string.playback))
             SettingsSwitchRow(
-                title = "Auto-play on startup",
+                title = stringResource(R.string.autoplay_startup),
                 subtitle = "Resume playing the last track when the app opens",
                 checked = autoPlay,
             ) {
@@ -538,12 +533,12 @@ fun SettingsScreen(navController: NavController) {
             }
 
             Spacer(Modifier.height(12.dp))
-            SectionTitle("Crossfade")
+            SectionTitle(stringResource(R.string.crossfade))
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Crossfade", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(stringResource(R.string.crossfade), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 Text(
                     if (crossfadeMs <= 0f) "Off" else "${(crossfadeMs / 1000f).let { String.format("%.0f", it) }}s",
                     color = if (crossfadeMs <= 0f) Color(0xFFB3B3B3) else AppPalette,
@@ -551,11 +546,6 @@ fun SettingsScreen(navController: NavController) {
                     fontWeight = FontWeight.SemiBold,
                 )
             }
-            Text(
-                "Blend the end of a song into the start of the next",
-                color = Color(0xFFB3B3B3),
-                fontSize = 13.sp,
-            )
             Slider(
                 value = crossfadeMs,
                 onValueChange = { crossfadeMs = it },
@@ -569,17 +559,12 @@ fun SettingsScreen(navController: NavController) {
                 ),
             )
             Spacer(Modifier.height(12.dp))
-            SectionTitle("Updates")
+            SectionTitle(stringResource(R.string.updates))
             Text(
-                "Update source repository",
+                stringResource(R.string.update_repo),
                 color = Color.White,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                "GitHub repo URL used to check for new versions",
-                color = Color(0xFFB3B3B3),
-                fontSize = 12.sp,
             )
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
@@ -603,7 +588,7 @@ fun SettingsScreen(navController: NavController) {
                 trailingIcon = {
                     Icon(
                         imageVector = Icons.Filled.Refresh,
-                        contentDescription = "Reset to default",
+                        contentDescription = "Reset",
                         tint = if (updateRepoUrl != DEFAULT_UPDATE_REPO_URL) AppPalette else Color(0xFF444444),
                         modifier = Modifier
                             .padding(end = 4.dp)
@@ -615,7 +600,7 @@ fun SettingsScreen(navController: NavController) {
                 },
             )
             Spacer(Modifier.height(12.dp))
-            SectionTitle("Backup & Restore")
+            SectionTitle(stringResource(R.string.backup_restore))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -642,11 +627,11 @@ fun SettingsScreen(navController: NavController) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Back Up Now", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        Text(stringResource(R.string.back_up_now), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                         Text(
                             when {
-                                isBackingUp -> "Creating backup in background…"
-                                backupDirUri.isNullOrBlank() -> "Tap to choose folder & back up"
+                                isBackingUp -> "Creating backup…"
+                                backupDirUri.isNullOrBlank() -> "Tap to choose folder"
                                 else -> "Folder: $folderName"
                             },
                             color = if (backupDirUri.isNullOrBlank()) Color(0xFFFFB74D) else Color(0xFFB3B3B3),
@@ -663,7 +648,7 @@ fun SettingsScreen(navController: NavController) {
                     } else {
                         Icon(
                             imageVector = Icons.Filled.Save,
-                            contentDescription = "Back Up Now",
+                            contentDescription = "Backup",
                             tint = AppPalette,
                             modifier = Modifier.size(22.dp)
                         )
@@ -682,7 +667,7 @@ fun SettingsScreen(navController: NavController) {
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Folder,
-                            contentDescription = "Change Backup Folder",
+                            contentDescription = "Folder",
                             tint = Color.White,
                             modifier = Modifier.size(22.dp)
                         )
@@ -704,9 +689,9 @@ fun SettingsScreen(navController: NavController) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Restore from File", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.restore_from_file), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     Text(
-                        if (isRestoring) "Restoring backup in background…" else "Import playlists and settings from a Spotui backup file",
+                        if (isRestoring) "Restoring…" else "Import settings from backup file",
                         color = Color(0xFFB3B3B3),
                         fontSize = 12.sp,
                     )
@@ -730,8 +715,8 @@ fun SettingsScreen(navController: NavController) {
             Spacer(Modifier.height(8.dp))
 
             SettingsSwitchRow(
-                title = "Automatic backup",
-                subtitle = if (backupDirUri.isNullOrBlank()) "Automatically backs up settings and playlists when app opens" else "Auto-backup saved to $folderName",
+                title = stringResource(R.string.automatic_backup),
+                subtitle = if (backupDirUri.isNullOrBlank()) "Automatically backup on app open" else "Auto-backup to $folderName",
                 checked = isAutoBackup,
             ) { enabled ->
                 if (enabled && backupDirUri.isNullOrBlank()) {
@@ -746,7 +731,7 @@ fun SettingsScreen(navController: NavController) {
             }
 
             Spacer(Modifier.height(12.dp))
-            SectionTitle("Troubleshooting")
+            SectionTitle(stringResource(R.string.troubleshooting))
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -757,7 +742,7 @@ fun SettingsScreen(navController: NavController) {
                             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                                 android.widget.Toast.makeText(
                                     context,
-                                    "YouTube session & stream caches reset",
+                                    "Session & stream caches reset",
                                     android.widget.Toast.LENGTH_SHORT
                                 ).show()
                             }
@@ -768,25 +753,25 @@ fun SettingsScreen(navController: NavController) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Reset YouTube & Bot Session", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.reset_session), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "Clears session tokens, visitor ID, PoToken generator, and resolved stream caches",
+                        "Clears session tokens and resolved stream caches",
                         color = Color(0xFFB3B3B3),
                         fontSize = 12.sp,
                     )
                 }
                 Icon(
                     imageVector = Icons.Filled.Refresh,
-                    contentDescription = "Reset Session",
+                    contentDescription = "Reset",
                     tint = AppPalette,
                     modifier = Modifier.size(20.dp)
                 )
             }
 
             Spacer(Modifier.height(12.dp))
-            SectionTitle("Account")
+            SectionTitle(stringResource(R.string.account))
             Text(
-                text = "Log out",
+                text = stringResource(R.string.log_out),
                 color = Color(0xFFE57373),
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -802,31 +787,6 @@ fun SettingsScreen(navController: NavController) {
                     }
                     .padding(vertical = 14.dp)
             )
-            Spacer(Modifier.height(24.dp))
-            val uriHandler = LocalUriHandler.current
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Maintained with ♥ by ",
-                    color = Color.Gray,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    text = "Carlossb02",
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.clickable {
-                        uriHandler.openUri("https://github.com/Carlossb02/spotui/")
-                    }
-                )
-            }
             Spacer(Modifier.height(40.dp))
         }
 

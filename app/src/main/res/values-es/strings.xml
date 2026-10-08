@@ -1,0 +1,153 @@
+<resources>
+    <string name="app_name">Spotidroid</string>
+    <string name="settings">Ajustes</string>
+    <string name="language">Idioma / Language</string>
+    <string name="devices_bluetooth">Dispositivos y Bluetooth</string>
+    <string name="audio_output_devices">Dispositivos de salida de audio</string>
+    <string name="background_playback">Reproducción en segundo plano</string>
+    <string name="battery_optimization">Optimización de batería</string>
+    <string name="link_handling">Control de enlaces</string>
+    <string name="audio_quality">Calidad de audio</string>
+    <string name="streaming_wifi">Streaming por Wi-Fi</string>
+    <string name="streaming_cellular">Streaming por datos móviles</string>
+    <string name="download_quality">Calidad de descarga</string>
+    <string name="clear_cache">Borrar caché de streaming de audio</string>
+    <string name="audio_normalization">Normalización de audio</string>
+    <string name="normalize_volume">Normalizar volumen</string>
+    <string name="normalize_desc">Igualar el volumen de todas las canciones a un nivel constante (-14 LUFS)</string>
+    <string name="equalizer">Ecualizador</string>
+    <string name="equalizer_desc">Aplicar ecualización de frecuencias al audio</string>
+    <string name="matching">Coincidencia</string>
+    <string name="allow_video_fallback">Permitir vídeo alternativo</string>
+    <string name="playback">Reproducción</string>
+    <string name="autoplay_startup">Reproducción automática al iniciar</string>
+    <string name="crossfade">Fundido encadenado (Crossfade)</string>
+    <string name="updates">Actualizaciones</string>
+    <string name="update_repo">Repositorio de actualizaciones</string>
+    <string name="backup_restore">Copia de seguridad y restauración</string>
+    <string name="back_up_now">Crear copia ahora</string>
+    <string name="restore_from_file">Restaurar desde archivo</string>
+    <string name="automatic_backup">Copia de seguridad automática</string>
+    <string name="troubleshooting">Solución de problemas</string>
+    <string name="reset_session">Restablecer sesión de YouTube y Bot</string>
+    <string name="account">Cuenta</string>
+    <string name="log_out">Cerrar sesión</string>
+
+    <!-- General Navigation -->
+    <string name="home">Inicio</string>
+    <string name="library">Biblioteca</string>
+    <string name="search">Buscar</string>
+    <string name="queue">Cola de reproducción</string>
+    <string name="now_playing">Reproduciendo ahora</string>
+    <string name="listening_history">Historial de escucha</string>
+    <string name="clear_all">Borrar todo</string>
+    <string name="downloads">Descargas</string>
+    <string name="clear">Borrar</string>
+    <string name="cancel">Cancelar</string>
+    <string name="lyrics">Letra</string>
+    <string name="no_lyrics">No se encontró la letra de esta canción</string>
+    <string name="show_lyrics">Mostrar letra</string>
+    <string name="translate">Traducir</string>
+    <string name="stream_resolution">Información de resolución</string>
+    <string name="copy_logs">Copiar registros</string>
+    <string name="close">Cerrar</string>
+    <string name="search_query">Buscar término</string>
+    <string name="rename_playlist">Renombrar lista</string>
+    <string name="delete_playlist">Eliminar lista</string>
+    <string name="log_in">Iniciar sesión</string>
+    <string name="retry">Reintentar</string>
+    <string name="skip_for_now">Omitir por ahora</string>
+    <string name="open_in_browser">Abrir en el navegador</string>
+    <string name="verified_artist">Artista verificado</string>
+    <string name="liked_songs">Canciones que te gustan</string>
+    <string name="local_files">Archivos locales</string>
+
+    <!-- Home Screen -->
+    <string name="good_morning">Buenos días</string>
+    <string name="good_afternoon">Buenas tardes</string>
+    <string name="good_evening">Buenas noches</string>
+    <string name="have_a_nice_day">Que tengas un buen día</string>
+    <string name="filter_all">Todo</string>
+    <string name="filter_music">Música</string>
+    <string name="filter_podcasts">Pódcasts</string>
+    <string name="filter_audiobooks">Audiolibros</string>
+    <string name="following">Siguiendo</string>
+    <string name="latest_releases">Últimos lanzamientos</string>
+    <string name="top_songs">Canciones populares</string>
+    <string name="podcasts_and_shows">Pódcasts y programas</string>
+    <string name="top_shows">Programas destacados</string>
+    <string name="recent_episodes">Episodios recientes</string>
+    <string name="audiobooks_and_stories">Audiolibros e historias</string>
+    <string name="popular_audiobooks">Audiolibros populares</string>
+    <string name="go_to_album">Ir al álbum</string>
+    <string name="go_to_artist">Ir al artista</string>
+    <string name="save_to_library">Guardar en tu biblioteca</string>
+    <string name="remove_from_library">Quitar de tu biblioteca</string>
+    <string name="share_release">Compartir lanzamiento</string>
+    <string name="login_expired_title">Sesión de Spotify expirada o no autenticada</string>
+    <string name="login_expired_desc">Inicia sesión para cargar tus listas personalizadas, recomendaciones y biblioteca.</string>
+    <string name="login_to_spotify">Iniciar sesión en Spotify</string>
+    <string name="go_to_downloads">Ir a Descargas</string>
+
+    <!-- Library Screen -->
+    <string name="your_library">Tu biblioteca</string>
+    <string name="playlists">Listas</string>
+    <string name="artists">Artistas</string>
+    <string name="albums">Álbumes</string>
+    <string name="podcasts">Pódcasts</string>
+    <string name="downloaded">Descargado</string>
+    <string name="recents">Recientes</string>
+    <string name="search_in_library">Buscar en la biblioteca</string>
+    <string name="create_playlist">Crear lista local</string>
+    <string name="playlist_name">Nombre de la lista</string>
+
+    <!-- Search Screen -->
+    <string name="search_placeholder">¿Qué quieres escuchar?</string>
+    <string name="browse_all">Explorar todo</string>
+    <string name="recent_searches">Búsquedas recientes</string>
+    <string name="clear_search_history">Borrar historial de búsqueda</string>
+    <string name="top_result">Resultado principal</string>
+    <string name="songs">Canciones</string>
+    <string name="profiles">Perfiles</string>
+
+    <!-- Player & Options Sheet -->
+    <string name="playing_from">REPRODUCIENDO DESDE</string>
+    <string name="sleep_timer">Temporizador de apagado</string>
+    <string name="devices">Dispositivos</string>
+    <string name="speed">Velocidad de reproducción</string>
+    <string name="timer_off">Desactivado</string>
+    <string name="timer_15m">15 minutos</string>
+    <string name="timer_30m">30 minutos</string>
+    <string name="timer_45m">45 minutos</string>
+    <string name="timer_1h">1 hora</string>
+    <string name="timer_end_of_track">Fin de la canción</string>
+    <string name="added_to_library">Añadido a tu biblioteca</string>
+    <string name="removed_from_library">Eliminado de tu biblioteca</string>
+
+    <!-- Artist Screen -->
+    <string name="monthly_listeners">oyentes mensuales</string>
+    <string name="popular">Popular</string>
+    <string name="popular_releases">Lanzamientos populares</string>
+    <string name="singles_and_eps">Sencillos y EPs</string>
+    <string name="appears_on">Aparece en</string>
+    <string name="fans_also_like">A los fans también les gusta</string>
+    <string name="about">Acerca de</string>
+    <string name="follow">Seguir</string>
+
+    <!-- Album & Playlist Screens -->
+    <string name="album">Álbum</string>
+    <string name="single">Sencillo</string>
+    <string name="ep">EP</string>
+    <string name="save_album">Guardar álbum</string>
+    <string name="save">Guardar</string>
+    <string name="saved">Guardado</string>
+    <string name="play">Reproducir</string>
+    <string name="shuffle">Aleatorio</string>
+    <string name="add_songs">Añadir canciones</string>
+    <string name="remove_from_playlist">Quitar de la lista</string>
+
+    <!-- Downloads, Local Files & History -->
+    <string name="downloaded_music">Música descargada</string>
+    <string name="no_downloads_yet">Aún no hay descargas</string>
+    <string name="no_local_files_found">No se encontraron archivos de audio locales</string>
+</resources>

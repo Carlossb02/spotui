@@ -196,11 +196,11 @@ fun HistoryScreen(navController: NavController) {
                                     ) { navController.navigateUp() },
                             )
                             Spacer(Modifier.width(16.dp))
-                            Text("Listening history", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                            Text(com.music.spotui.util.AppLang.get(context, "listening_history"), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                         }
                         if (history.isNotEmpty()) {
                             Text(
-                                "Clear all",
+                                com.music.spotui.util.AppLang.get(context, "clear_all"),
                                 color = MutedText,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,

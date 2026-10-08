@@ -117,15 +117,17 @@ fun MainBottomNavigation(navController: NavHostController, bottomBarState: Mutab
                                     )
                                 },
                                 label = {
-                                    if (currentTab == item.route) {
-                                        Text(color = Color.White, text = item.label, fontSize = 11.sp)
-                                    } else {
-                                        Text(
-                                            color = Color.Gray,
-                                            text = item.label,
-                                            fontSize = 11.sp
-                                        )
+                                    val labelText = when (item.route) {
+                                        Routes.Home.route -> androidx.compose.ui.res.stringResource(com.music.spotui.R.string.home)
+                                        Routes.Search.route -> androidx.compose.ui.res.stringResource(com.music.spotui.R.string.search)
+                                        Routes.Library.route -> androidx.compose.ui.res.stringResource(com.music.spotui.R.string.library)
+                                        else -> item.label
                                     }
+                                    Text(
+                                        color = if (currentTab == item.route) Color.White else Color.Gray,
+                                        text = labelText,
+                                        fontSize = 11.sp
+                                    )
                                 },
                                 onClick = {
                                     if (currentTab != item.route) {
