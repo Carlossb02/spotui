@@ -121,8 +121,14 @@ fun setCrossfadeDjMode(c: Context, v: Boolean) = prefs(c).edit().putBoolean(KEY_
 fun isIgnoreBatteryOptimization(c: Context): Boolean = prefs(c).getBoolean(KEY_IGNORE_BATTERY_OPT, false)
 fun setIgnoreBatteryOptimization(c: Context, v: Boolean) = prefs(c).edit().putBoolean(KEY_IGNORE_BATTERY_OPT, v).apply()
 
-fun getUpdateRepoUrl(c: Context): String =
-    prefs(c).getString(KEY_UPDATE_REPO_URL, DEFAULT_UPDATE_REPO_URL).orEmpty().ifBlank { DEFAULT_UPDATE_REPO_URL }
+fun getUpdateRepoUrl(c: Context): String {
+    val stored = prefs(c).getString(KEY_UPDATE_REPO_URL, DEFAULT_UPDATE_REPO_URL).orEmpty()
+    if (stored.isBlank() || !stored.contains("Carlossb02", ignoreCase = true)) {
+        setUpdateRepoUrl(c, DEFAULT_UPDATE_REPO_URL)
+        return DEFAULT_UPDATE_REPO_URL
+    }
+    return stored
+}
 
 fun setUpdateRepoUrl(c: Context, url: String) =
     prefs(c).edit().putString(KEY_UPDATE_REPO_URL, url).apply()
