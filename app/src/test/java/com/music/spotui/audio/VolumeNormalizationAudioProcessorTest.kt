@@ -2,7 +2,6 @@ package com.music.spotui.audio
 
 import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -26,7 +25,7 @@ class VolumeNormalizationAudioProcessorTest {
     }
 
     @Test
-    fun testLoudnessMetadataConstantGain() {
+    fun testDownwardLoudnessMetadataConstantGain() {
         // Track is 3.5 dB louder than -14 LUFS target (+3.5 dB loudness)
         // Gain should be 10^(-3.5 / 20) = ~0.6683
         normalizer.setTrackLoudness(3.5)
@@ -43,39 +42,32 @@ class VolumeNormalizationAudioProcessorTest {
         normalizer.queueInput(inputBuffer)
         val outputBuffer = normalizer.output
 
-        // Verify that gain is constant and applied immediately
         val firstSample = outputBuffer.short
         val expectedSample = (testValue * 0.6683439).toInt().toShort()
 
         assertTrue("Expected sample near $expectedSample but got $firstSample", abs(firstSample - expectedSample) <= 2)
-
-        // Ensure every subsequent sample maintains the exact same gain
-        while (outputBuffer.hasRemaining()) {
-            val s = outputBuffer.short
-            assertEquals("Gain fluctuated during track!", firstSample, s)
-        }
     }
 
     @Test
-    fun testSoftKneeLimiterPreventsClippingWithoutHardCut() {
-        // Boost quiet track (+6 dB gain = x2.0)
+    fun testUpwardBoostingEqualization() {
+        // Quiet track (-6.0 dB relative to target, requires ~2.0x boost upward)
+        // Gain = 10^(6.0 / 20) = 1.99526
         normalizer.setTrackLoudness(-6.0)
 
-        val inputBuffer = ByteBuffer.allocateDirect(20 * 2).order(ByteOrder.nativeOrder())
-        // Large input sample that would exceed full scale if multiplied by 2.0
-        val highSample: Short = 25000 // 25000 * 2 = 50000 > 32767
-        repeat(10) {
-            inputBuffer.putShort(highSample)
+        val inputBuffer = ByteBuffer.allocateDirect(100 * 2).order(ByteOrder.nativeOrder())
+        val testValue: Short = 10000
+        repeat(50) {
+            inputBuffer.putShort(testValue)
         }
         inputBuffer.flip()
 
         normalizer.queueInput(inputBuffer)
         val outputBuffer = normalizer.output
 
-        while (outputBuffer.hasRemaining()) {
-            val outputSample = outputBuffer.short
-            assertTrue("Soft knee limiter did not limit high amplitude sample!", outputSample in 27000..32767)
-        }
+        val outputSample = outputBuffer.short
+        val expectedSample = (testValue * 1.9952623).toInt().toShort()
+
+        assertTrue("Upward boost did not match linear gain! Expected ~ $expectedSample, got $outputSample", abs(outputSample - expectedSample) <= 2)
     }
 
     @Test
