@@ -43,8 +43,14 @@ class ShowViewModel @Inject constructor(
     fun loadShow(showId: String, showName: String = "") {
         if (showKey == showId) return
         showKey = showId
+        if (showName.isNotBlank() && showName != "Podcast") {
+            _show.value = PodcastModel(id = showId, name = showName, publisher = "", coverUri = "")
+        }
         viewModelScope.launch(Dispatchers.IO) {
-            _show.value = repository.provideShow(showId) ?: PodcastModel(id = showId, name = showName, publisher = "", coverUri = "")
+            val loadedShow = repository.provideShow(showId, showName)
+            if (loadedShow != null && loadedShow.name.isNotBlank() && loadedShow.name != "Podcast") {
+                _show.value = loadedShow
+            }
         }
         viewModelScope.launch(Dispatchers.IO) {
             repository.provideShowEpisodes(showId, showName).collect { _episodes.value = it }

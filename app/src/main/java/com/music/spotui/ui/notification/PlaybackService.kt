@@ -80,6 +80,14 @@ class PlaybackService : MediaLibraryService() {
     private val errorRetryCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
     private val playerListener = object : Player.Listener {
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            ensureCurrentArtwork()
+        }
+
+        override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+            ensureCurrentArtwork()
+        }
+
         override fun onPlaybackStateChanged(playbackState: Int) {
             currentSongState.updateBufferingState(playbackState == Player.STATE_BUFFERING)
             if (playbackState == Player.STATE_READY && (SongPlayer.exoPlayer?.playWhenReady == true)) {
@@ -273,6 +281,14 @@ class PlaybackService : MediaLibraryService() {
                 }
         }
 
+        // Cada vez que cambia la canción actual (desde la app, el coche o el crossfade),
+        // asegurar que su carátula esté cargada y republicada en la sesión.
+        serviceScope.launch {
+            snapshotFlow { currentSongState.songId.value }
+                .distinctUntilChanged()
+                .collect { ensureCurrentArtwork() }
+        }
+
         // As the hidden web player streams, keep the notification in sync and swap
         // the session between the web player (during web playback) and the ExoPlayer.
         SpotifyWebPlayer.onStateChanged = {
@@ -370,10 +386,49 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
-    private var activeForwardingPlayer: ForwardingPlayer? = null
+    private var activeForwardingPlayer: AutoPlayer? = null
 
-    private fun wrap(base: Player): ForwardingPlayer {
-        return object : ForwardingPlayer(base) {
+    private fun wrap(base: Player): ForwardingPlayer =
+        AutoPlayer(base).also { activeForwardingPlayer = it }
+
+    private inner class AutoPlayer(private val base: Player) : ForwardingPlayer(base) {
+
+        // Listeners registrados por la sesión: los guardamos para poder emitir
+        // "metadatos cambiados" a mano cuando termina de cargarse la carátula.
+        private val sessionListeners = java.util.concurrent.CopyOnWriteArraySet<Player.Listener>()
+
+        override fun addListener(listener: Player.Listener) {
+            sessionListeners.add(listener)
+            super.addListener(listener)
+        }
+
+        override fun removeListener(listener: Player.Listener) {
+            sessionListeners.remove(listener)
+            super.removeListener(listener)
+        }
+
+        /** Fuerza a la sesión (y por tanto a Android Auto) a releer los metadatos. */
+        fun dispatchMetadataRefresh() {
+            val md = mediaMetadata
+            val events = Player.Events(
+                androidx.media3.common.FlagSet.Builder()
+                    .add(Player.EVENT_MEDIA_METADATA_CHANGED)
+                    .build()
+            )
+            sessionListeners.forEach {
+                it.onMediaMetadataChanged(md)
+                it.onEvents(this, events)
+            }
+        }
+
+        override fun getMediaMetadata(): MediaMetadata = enrichMetadata(super.getMediaMetadata())
+
+        override fun getCurrentMediaItem(): MediaItem? {
+            val item = super.getCurrentMediaItem() ?: return null
+            return item.buildUpon()
+                .setMediaMetadata(enrichMetadata(item.mediaMetadata))
+                .build()
+        }
             override fun getAvailableCommands(): Player.Commands =
                 super.getAvailableCommands().buildUpon()
                     .add(COMMAND_SEEK_TO_NEXT)
@@ -426,7 +481,64 @@ class PlaybackService : MediaLibraryService() {
             override fun seekToNextMediaItem() = advance(forward = true)
             override fun seekToPrevious() = advance(forward = false)
             override fun seekToPreviousMediaItem() = advance(forward = false)
-        }.also { activeForwardingPlayer = it }
+    }
+
+    // ── Carátula del "reproduciendo ahora" (Android Auto) ─────────────────
+
+    private var artworkRefreshJob: kotlinx.coroutines.Job? = null
+
+    /** Canción que la app considera actual, resuelta sin depender de nombres de campos extra. */
+    private fun currentSong(): SongsModel? {
+        val id = currentSongState.songId.value
+        return trackById["song/$id"]
+            ?: currentSongState.queue.value.firstOrNull { it.id == id }
+    }
+
+    /** Completa los metadatos del item actual con título/artista y los bytes de la carátula. */
+    private fun enrichMetadata(base: MediaMetadata): MediaMetadata {
+        val song = currentSong() ?: return base
+        val builder = base.buildUpon()
+        if (base.title.isNullOrBlank()) builder.setTitle(song.title)
+        if (base.artist.isNullOrBlank()) builder.setArtist(song.singer)
+        if (base.albumTitle.isNullOrBlank()) builder.setAlbumTitle(song.album)
+        PlaybackArtwork.get(song.id.toString())?.let {
+            builder.setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+        }
+        return builder.build()
+    }
+
+    private fun refreshNowPlayingArtwork() {
+        if (showingWeb) return
+        activeForwardingPlayer?.dispatchMetadataRefresh()
+    }
+
+    /**
+     * Precarga la carátula de la canción actual (y las 2 siguientes) y la republica en
+     * cuanto está lista. Además reenvía los metadatos 3 veces en los primeros segundos:
+     * Android Auto a veces descarta la primera actualización si llega mientras cambia de pista.
+     */
+    private fun ensureCurrentArtwork() {
+        val song = currentSong() ?: return
+        val songId = song.id
+        val queue = currentSongState.queue.value
+        val idx = queue.indexOfFirst { it.id == songId }
+        val targets = buildList {
+            add(song)
+            if (idx >= 0) for (i in 1..2) queue.getOrNull(idx + i)?.let { add(it) }
+        }
+        targets.forEach { s ->
+            PlaybackArtwork.ensure(applicationContext, s.id.toString(), s.coverUri) {
+                if (s.id == songId && currentSong()?.id == songId) refreshNowPlayingArtwork()
+            }
+        }
+        artworkRefreshJob?.cancel()
+        artworkRefreshJob = serviceScope.launch {
+            for (d in longArrayOf(800, 2000, 4000)) {
+                kotlinx.coroutines.delay(d)
+                if (currentSong()?.id != songId) return@launch
+                refreshNowPlayingArtwork()
+            }
+        }
     }
 
     /** Advance the in-app queue one step in the given direction and start it. */
@@ -652,6 +764,7 @@ class PlaybackService : MediaLibraryService() {
                     song.coverUri, song.title, song.singer, true,
                     song.id, idx, song.album,
                 )
+                ensureCurrentArtwork()
                 SongPlayer.playSong(song.url, applicationContext, "song/${song.id}")
             }
             return Futures.immediateFuture(
@@ -782,8 +895,13 @@ class PlaybackService : MediaLibraryService() {
                     )
 
                 parentId.startsWith("playlist/") -> {
-                    val songs =
-                        lastSuccess(repository.providePlaylistSongs(parentId.removePrefix("playlist/")))
+                    val playlistId = parentId.removePrefix("playlist/")
+                    val songs = if (playlistId.startsWith("local_pl_")) {
+                        com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylist(applicationContext, playlistId)?.songs
+                    } else {
+                        lastSuccess(repository.providePlaylistSongs(playlistId))
+                            ?: com.music.spotui.data.preferences.OfflineCollectionsPref.getCollection(applicationContext, playlistId)?.songs
+                    }
                     registerTracks(parentId, songs.orEmpty())
                 }
 
@@ -813,8 +931,34 @@ class PlaybackService : MediaLibraryService() {
         emptyList()
     }
 
-    private suspend fun libraryEntries() =
-        lastSuccess(repository.provideLibrary()).orEmpty()
+    private suspend fun libraryEntries(): List<com.music.spotui.data.entity.LibraryEntry> {
+        val remote = lastSuccess(repository.provideLibrary()).orEmpty()
+        val localPlaylists = com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylists(applicationContext).map { pl ->
+            com.music.spotui.data.entity.LibraryEntry(
+                spotifyId = pl.id,
+                name = pl.name,
+                subtitle = "Local Playlist • ${pl.songs.size} song" + (if (pl.songs.size == 1) "" else "s"),
+                coverUri = pl.coverUri,
+                isPlaylist = true,
+                isLocal = true,
+            )
+        }
+        val offlineCollections = com.music.spotui.data.preferences.OfflineCollectionsPref.getOfflineCollections(applicationContext).map { col ->
+            com.music.spotui.data.entity.LibraryEntry(
+                spotifyId = col.id,
+                name = col.name,
+                subtitle = if (col.isPlaylist) "Playlist • Available offline" else "Album • ${col.artists} • Available offline",
+                coverUri = col.coverUri,
+                isPlaylist = col.isPlaylist,
+                artists = col.artists,
+            )
+        }
+        val merged = remote + localPlaylists + offlineCollections
+        return merged.distinctBy { entry ->
+            val cleanId = entry.spotifyId.removePrefix("playlist/").removePrefix("album/").trim()
+            if (cleanId.isNotBlank()) cleanId else entry.name.trim().lowercase()
+        }
+    }
 
     /** Runs a paged/cached response flow to completion and keeps the final data. */
     private suspend fun <T> lastSuccess(flow: Flow<Response<T>>): T? {
@@ -909,6 +1053,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     override fun onDestroy() {
+        artworkRefreshJob?.cancel()
         serviceScope.cancel()
         runCatching { unregisterReceiver(mediaControlReceiver) }
         SongPlayer.exoPlayer?.removeListener(playerListener)

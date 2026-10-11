@@ -149,7 +149,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
                 ) {
                     GlideImage(
-                        model = show?.coverUri ?: episodes.firstOrNull()?.coverUri,
+                        model = show?.coverUri?.takeIf { it.isNotBlank() } ?: episodes.firstOrNull()?.coverUri,
                         contentScale = ContentScale.Crop,
                         failure = placeholder(R.drawable.placeholder),
                         modifier = Modifier.size(180.dp).clip(RoundedCornerShape(8.dp)),

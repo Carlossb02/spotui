@@ -686,6 +686,19 @@ object SongPlayer {
         }
 
         if (song.startsWith("episode:")) {
+            val episodeId = song.removePrefix("episode:")
+            if (SpotifyWebPlayer.canPlay) {
+                runCatching { player?.pause() }
+                currentSource = "Spotify"
+                currentQuality = ""
+                updateResolveStatus(true, "Loading Spotify episode...")
+                SpotifyWebPlayer.playEpisode(episodeId)
+                scope.launch {
+                    delay(1500)
+                    updateResolveStatus(false)
+                }
+                return
+            }
             val matchSong = boundState?.queue?.value?.firstOrNull { it.url == song }
             if (matchSong != null && matchSong.singer.isNotBlank() && matchSong.title.isNotBlank()) {
                 val querySong = buildSpotifyPlayQuery("episode_${matchSong.id}", matchSong.title, matchSong.singer)
@@ -2444,14 +2457,20 @@ object SongPlayer {
                 val cand = parseTitle(cleanCandidateTitleForMatch, targetArtistKeys)
                 val candArtistKeys = item.artists.map { artistKey(it.name) }.filter { it.isNotEmpty() }
                 val titleArtistKey = artistKey(item.title)
-                val artistsCreditedInTitle = expectedArtistsList.isNotEmpty() &&
-                        expectedArtistsList.all { expected ->
-                            expected.length >= 4 && titleArtistKey.contains(expected)
-                        }
                 // Full title key (brackets kept): a remixer / extra artist credited only in the title,
                 // e.g. "All Night (Alan Walker Remix)" by Lauren Jauregui, Steve Aoki, still counts as present.
                 val fullTitleKey = Normalizer.normalize(item.title.lowercase(), Normalizer.Form.NFD)
                     .replace(diacriticsRegex, "").replace(nonAlnumRegex, "")
+                // `artistKey` strips the "ft./feat. X" tail, so "PYNNO - Still Miss You ft. Kali J" (re-upload
+                // by a channel that is not either artist) never counted as crediting "Kali J". Only in the
+                // last-resort pass (relaxArtistRequirement), also accept artists credited in the full title,
+                // feat tail included. Normal passes are untouched.
+                val artistsCreditedInTitle = expectedArtistsList.isNotEmpty() && (
+                        expectedArtistsList.all { expected ->
+                            expected.length >= 4 && titleArtistKey.contains(expected)
+                        } || (relaxArtistRequirement && expectedArtistsList.all { expected ->
+                            expected.length >= 4 && fullTitleKey.contains(expected)
+                        }))
                 val allExpectedArtistsPresent = expectedArtistsList.size <= 1 || artistsCreditedInTitle ||
                         expectedArtistsList.all { expected ->
                             candArtistKeys.any { candidate ->
@@ -2545,6 +2564,14 @@ object SongPlayer {
                 val officialRecordingOk = artistOk && titleEq && recordingFlagsEq && strongAlbumEq && explicitOk &&
                         !isUgcUpload && (isOfficialMusicType || hasOfficialTitleMarker) && officialLooseOk
 
+                // Target is a "(2015 Remastered)" / "- Remaster" release but YouTube only has the original
+                // upload under the plain title. Same recording for playback purposes: the ONLY flag difference
+                // allowed is "remaster" missing on the candidate. Used exclusively as the last-resort stage 8
+                // (and only in the relaxed pass), so exact remaster matches and every existing stage win first.
+                val remasterFallbackOk = "remaster" in targetR && "remaster" !in candR &&
+                        candR == targetR - "remaster" && editSubtypeEq &&
+                        artistOk && titleEq && strongAlbumEq && lastResortOk
+
                 val stage = when {
                     albumAnchored -> 1
                     artistOk && titleEq && recordingFlagsEq && explicitOk && tightOk -> 1
@@ -2556,6 +2583,7 @@ object SongPlayer {
                     officialRecordingOk -> 5
                     artistOk && titleEq && recordingFlagsEq && strongAlbumEq && explicitOk && lastResortOk -> 6
                     artistOk && titleEq && recordingFlagsEq && strongAlbumEq && lastResortOk -> 7
+                    relaxArtistRequirement && remasterFallbackOk -> 8
                     else -> 99
                 }
 
@@ -3314,7 +3342,7 @@ object SongPlayer {
                 return@withContext
             }
             val old = player
-            
+
             // Ensure incoming player takes over audio attributes and focus BEFORE stopping old player
             incoming.setAudioAttributes(buildAudioAttributes(), /* handleAudioFocus = */ true)
             incoming.setHandleAudioBecomingNoisy(true)
@@ -3333,7 +3361,7 @@ object SongPlayer {
                 }
                 secondaryPlayerNormalizer?.enabled = com.music.spotui.data.preferences.isAudioNormalizationEnabled(ctx)
             }
-            
+
             player = incoming
             currentPlayerFilter = secondaryPlayerFilter
             currentPlayerEqualizer = secondaryPlayerEqualizer
