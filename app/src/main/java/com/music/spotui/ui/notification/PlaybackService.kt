@@ -257,7 +257,8 @@ class PlaybackService : MediaLibraryService() {
             if (!showingWeb) mediaSession?.player = wrap(newPlayer)
             newPlayer.addListener(playerListener)
         }
-        SongPlayer.onPlayerSwapped = { newPlayer ->
+        SongPlayer.onPlayerSwapped = { oldPlayer, newPlayer ->
+            oldPlayer?.removeListener(playerListener)
             if (!showingWeb) mediaSession?.player = wrap(newPlayer)
             newPlayer.addListener(playerListener)
         }
@@ -606,8 +607,10 @@ class PlaybackService : MediaLibraryService() {
             session: MediaLibrarySession,
             browser: MediaSession.ControllerInfo,
             params: LibraryParams?,
-        ): ListenableFuture<LibraryResult<MediaItem>> =
-            Futures.immediateFuture(LibraryResult.ofItem(folder(ROOT, "spotui"), params))
+        ): ListenableFuture<LibraryResult<MediaItem>> {
+            val logoUri = "android.resource://${packageName}/${R.drawable.logo}"
+            return Futures.immediateFuture(LibraryResult.ofItem(folder(ROOT, "spotui", logoUri), params))
+        }
 
         override fun onGetChildren(
             session: MediaLibrarySession,

@@ -40,14 +40,14 @@ class ShowViewModel @Inject constructor(
 
     private var showKey: String? = null
 
-    fun loadShow(showId: String) {
+    fun loadShow(showId: String, showName: String = "") {
         if (showKey == showId) return
         showKey = showId
         viewModelScope.launch(Dispatchers.IO) {
-            _show.value = repository.provideShow(showId)
+            _show.value = repository.provideShow(showId) ?: PodcastModel(id = showId, name = showName, publisher = "", coverUri = "")
         }
         viewModelScope.launch(Dispatchers.IO) {
-            repository.provideShowEpisodes(showId).collect { _episodes.value = it }
+            repository.provideShowEpisodes(showId, showName).collect { _episodes.value = it }
         }
     }
 }

@@ -32,6 +32,7 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
+        android:logo="@drawable/logo"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
@@ -90,6 +91,8 @@
         <service
             android:name=".ui.notification.PlaybackService"
             android:exported="true"
+            android:icon="@drawable/logo"
+            android:logo="@drawable/logo"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />
@@ -98,6 +101,12 @@
                 <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
+
+        <provider
+            android:name=".util.ArtworkContentProvider"
+            android:authorities="com.music.spotui.artwork"
+            android:exported="true"
+            android:grantUriPermissions="true" />
 
         <!-- Makes Spotui discoverable as a media button target for automation
              apps (MacroDroid, Tasker, etc.) and forwards media key events to

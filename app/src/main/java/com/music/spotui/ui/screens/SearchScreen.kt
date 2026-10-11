@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -161,11 +162,22 @@ fun SumUpSearchScreen(
         com.music.spotui.data.preferences.addRecentItem(context, item)
         recents = com.music.spotui.data.preferences.getRecentItems(context)
     }
+    var selectedCategory by remember { mutableStateOf("All") }
+
     // Live Spotify search results for the current query.
     val searchedList = results.songs
-    // One relevance-mixed list (songs, artists, albums interleaved) instead of
-    // separate type sections — matches how most music apps present search.
+    // One relevance-mixed list (shows, episodes, songs, artists, albums interleaved)
+    // exactly like Spotify search.
     val mixed = remember(results) { mixSearchResults(results) }
+    val filteredMixed = remember(mixed, selectedCategory) {
+        when (selectedCategory) {
+            "Podcasts" -> mixed.filter { it is SearchRow.Show || it is SearchRow.Episode }
+            "Songs" -> mixed.filter { it is SearchRow.Song }
+            "Artists" -> mixed.filter { it is SearchRow.Artist }
+            "Albums" -> mixed.filter { it is SearchRow.Album }
+            else -> mixed
+        }
+    }
 
     // Warm the stream cache for the top search hits so tapping a result plays
     // (near-)instantly instead of resolving YouTube on the tap.
@@ -327,8 +339,60 @@ fun SumUpSearchScreen(
                     }
                 }
             } else {
-                items(mixed.size) { i ->
-                    when (val row = mixed[i]) {
+                item {
+                    val categories = listOf("All", "Podcasts", "Songs", "Artists", "Albums")
+                    LazyRow(
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(categories.size) { cIdx ->
+                            val cat = categories[cIdx]
+                            val isSelected = (cat == selectedCategory)
+                            Surface(
+                                color = if (isSelected) Color(0xFF1ED760) else Color(0xFF2A2A30),
+                                shape = RoundedCornerShape(20.dp),
+                                modifier = Modifier.clickable { selectedCategory = cat }
+                            ) {
+                                Text(
+                                    text = cat,
+                                    color = if (isSelected) Color.Black else Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                items(filteredMixed.size) { i ->
+                    when (val row = filteredMixed[i]) {
+                        is SearchRow.Show -> SearchShowRow(row.show) {
+                            recordRecent(
+                                com.music.spotui.data.preferences.RecentItem(
+                                    type = "show",
+                                    key = row.show.id,
+                                    name = row.show.name,
+                                    singer = row.show.publisher,
+                                    image = row.show.coverUri,
+                                )
+                            )
+                            navController.navigate(showRoute(row.show.id, row.show.name))
+                        }
+
+                        is SearchRow.Episode -> SearchSongRow(
+                            song = row.episode,
+                            songList = results.episodes,
+                            searchViewModel = searchViewModel,
+                            onPlayed = {
+                                recordRecent(row.episode.toRecentItem())
+                            },
+                            onLongClick = {
+                                menuSong = row.episode
+                            },
+                        )
+
                         is SearchRow.Song -> SearchSongRow(
                             song = row.song,
                             songList = searchedList,
@@ -367,42 +431,6 @@ fun SumUpSearchScreen(
                         }
                     }
                 }
-                // ── Podcasts: shows (→ detail) then individual episodes (→ play) ──
-                if (results.shows.isNotEmpty()) {
-                    item { SearchSectionHeader("Podcasts") }
-                    items(results.shows.size) { i ->
-                        val show = results.shows[i]
-                        SearchShowRow(show) {
-                            recordRecent(
-                                com.music.spotui.data.preferences.RecentItem(
-                                    type = "show",
-                                    key = show.id,
-                                    name = show.name,
-                                    singer = show.publisher,
-                                    image = show.coverUri,
-                                )
-                            )
-                            navController.navigate(showRoute(show.id, show.name))
-                        }
-                    }
-                }
-                if (results.episodes.isNotEmpty()) {
-                    item { SearchSectionHeader("Episodes") }
-                    items(results.episodes.size) { i ->
-                        val ep = results.episodes[i]
-                        SearchSongRow(
-                            song = ep,
-                            songList = results.episodes,
-                            searchViewModel = searchViewModel,
-                            onPlayed = {
-                                recordRecent(ep.toRecentItem())
-                            },
-                            onLongClick = {
-                                menuSong = ep
-                            },
-                        )
-                    }
-                }
             }
 
             item {
@@ -419,25 +447,32 @@ fun SumUpSearchScreen(
 
 /** A single row in the search results: a track, an artist, or an album. */
 sealed class SearchRow {
+    data class Show(val show: com.music.spotui.data.entity.PodcastModel) : SearchRow()
+    data class Episode(val episode: SongsModel) : SearchRow()
     data class Song(val song: SongsModel) : SearchRow()
     data class Artist(val artist: com.music.spotui.data.entity.ArtistsModel) : SearchRow()
     data class Album(val album: com.music.spotui.data.entity.AlbumsModel) : SearchRow()
 }
 
 /**
- * Interleaves the three result types into one list, weighted toward songs
- * (2 songs per artist+album cycle) so the list reads as mixed rather than
- * grouped, while songs — the most common search intent — stay prominent.
+ * Interleaves the result types into one list (shows, episodes, songs, artists, albums)
+ * so search reads as mixed and Spotify-style.
  */
 private fun mixSearchResults(results: SearchResults): List<SearchRow> {
+    val shows = results.shows.iterator()
     val songs = results.songs.iterator()
     val artists = results.artists.iterator()
     val albums = results.albums.iterator()
+    val episodes = results.episodes.iterator()
+
     val out = ArrayList<SearchRow>()
-    while (songs.hasNext() || artists.hasNext() || albums.hasNext()) {
+
+    while (shows.hasNext() || songs.hasNext() || artists.hasNext() || albums.hasNext() || episodes.hasNext()) {
+        if (shows.hasNext()) out += SearchRow.Show(shows.next())
         repeat(2) { if (songs.hasNext()) out += SearchRow.Song(songs.next()) }
         if (artists.hasNext()) out += SearchRow.Artist(artists.next())
         if (albums.hasNext()) out += SearchRow.Album(albums.next())
+        if (episodes.hasNext()) out += SearchRow.Episode(episodes.next())
     }
     return out
 }

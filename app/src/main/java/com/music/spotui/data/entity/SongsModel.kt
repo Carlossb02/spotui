@@ -19,7 +19,9 @@ data class SongsModel(
     // Comma-separated artist IDs matching the order of names in [singer].
     // Populated from Spotify's API so tapping a specific artist in the player
     // navigates to the correct artist page.
-    val artistIds : String = ""
+    val artistIds : String = "",
+    // Podcast episode description (if applicable)
+    val description : String = ""
 ){
-    constructor() : this(-1 ,"" ,"" ,"" ,"" ,"", "")
+    constructor() : this(-1 ,"" ,"" ,"" ,"" ,"", "", description = "")
 }

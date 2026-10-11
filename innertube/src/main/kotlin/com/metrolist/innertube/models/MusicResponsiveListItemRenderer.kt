@@ -50,11 +50,14 @@ data class MusicResponsiveListItemRenderer(
             if (navigationEndpoint?.browseEndpoint?.browseEndpointContextSupportedConfigs?.browseEndpointContextMusicConfig?.pageType == MUSIC_PAGE_TYPE_NON_MUSIC_AUDIO_TRACK_PAGE) {
                 return true
             }
-            // Method 2: Check if first subtitle text is "Episode" (for search results)
+            // Method 2: Check if first subtitle text is an episode keyword in any language
             val firstSubtitleText = flexColumns.getOrNull(1)
                 ?.musicResponsiveListItemFlexColumnRenderer
                 ?.text?.runs?.firstOrNull()?.text
-            if (firstSubtitleText == "Episode") {
+                ?.lowercase()
+                ?.trim()
+            val episodeKeywords = listOf("episode", "episodio", "episódio", "épisode", "folge", "aflevering", "odcinek")
+            if (firstSubtitleText != null && episodeKeywords.any { firstSubtitleText.contains(it) }) {
                 return true
             }
             // Method 3: Check for podcast link in subtitle (backup detection).

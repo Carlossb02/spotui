@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -34,6 +35,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
@@ -84,7 +86,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
     val vm: ShowViewModel = hiltViewModel()
     val playerViewModel: PlayerViewModel = hiltViewModel()
     val context = LocalContext.current
-    LaunchedEffect(showId) { vm.loadShow(showId) }
+    LaunchedEffect(showId) { vm.loadShow(showId, showName) }
 
     val episodesState by vm.episodes.collectAsState()
     val show by vm.show.collectAsState()
@@ -258,6 +260,9 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
             } else {
                 items(filteredEpisodes.size) { i ->
                     val ep = filteredEpisodes[i]
+                    var expanded by remember(ep.id) { mutableStateOf(false) }
+                    val chapters = remember(ep.description) { parsePodcastChapters(ep.description) }
+
                     SwipeToPlayNextWrapper(
                         onPlayNext = {
                             playerViewModel.playNext(ep)
@@ -268,8 +273,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                             ).show()
                         }
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(AppBackground)
@@ -283,26 +287,117 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                         SongPlayer.playSong(ep.url, context, "song/${ep.id}")
                                     },
                                 )
-                                .padding(16.dp, 10.dp),
+                                .padding(16.dp, 12.dp),
                         ) {
-                            GlideImage(
-                                model = ep.coverUri,
-                                contentScale = ContentScale.Crop,
-                                failure = placeholder(R.drawable.placeholder),
-                                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)),
-                                contentDescription = null,
-                            )
-                            Column(modifier = Modifier.padding(start = 12.dp)) {
-                                Text(
-                                    ep.title,
-                                    color = if (ep.id == vm.currentSongId.value) Color(0xFF1ED760) else Color.White,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                GlideImage(
+                                    model = ep.coverUri,
+                                    contentScale = ContentScale.Crop,
+                                    failure = placeholder(R.drawable.placeholder),
+                                    modifier = Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)),
+                                    contentDescription = null,
                                 )
-                                Text(ep.singer, color = Color(0xFFB3B3B3), fontSize = 12.sp, maxLines = 1)
+                                Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+                                    Text(
+                                        ep.title,
+                                        color = if (ep.id == vm.currentSongId.value) Color(0xFF1ED760) else Color.White,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (ep.durationMs > 0) {
+                                            Text(
+                                                formatDuration(ep.durationMs),
+                                                color = Color(0xFFB3B3B3),
+                                                fontSize = 12.sp
+                                            )
+                                            Text(" • ", color = Color(0xFFB3B3B3), fontSize = 12.sp)
+                                        }
+                                        Text(
+                                            ep.singer,
+                                            color = Color(0xFFB3B3B3),
+                                            fontSize = 12.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
                             }
+
+                            if (ep.description.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = ep.description,
+                                    color = Color(0xFFD0D0D0),
+                                    fontSize = 13.sp,
+                                    maxLines = if (expanded) Int.MAX_VALUE else 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.clickable { expanded = !expanded }
+                                )
+                            }
+
+                            if (chapters.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Capítulos (${chapters.size})",
+                                    color = Color(0xFF1ED760),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    items(chapters.size) { cIdx ->
+                                        val chapter = chapters[cIdx]
+                                        Surface(
+                                            color = Color(0xFF2A2A30),
+                                            shape = RoundedCornerShape(16.dp),
+                                            modifier = Modifier.clickable {
+                                                vm.updateQueue(filteredEpisodes)
+                                                vm.updateSongState(ep.coverUri, ep.title, ep.singer, true, ep.id, i, ep.album)
+                                                SongPlayer.playSong(ep.url, context, "song/${ep.id}")
+                                                SongPlayer.seekTo(chapter.timeMs)
+                                                android.widget.Toast.makeText(
+                                                    context,
+                                                    "Saltando a ${chapter.timeFormatted}: ${chapter.title}",
+                                                    android.widget.Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = chapter.timeFormatted,
+                                                    color = Color(0xFF1ED760),
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = chapter.title,
+                                                    color = Color.White,
+                                                    fontSize = 12.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                            HorizontalDivider(color = Color(0xFF222222))
                         }
                     }
                 }
@@ -380,5 +475,49 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                 }
             }
         }
+    }
+}
+
+private data class PodcastChapter(
+    val title: String,
+    val timeMs: Long,
+    val timeFormatted: String
+)
+
+private fun parseTimeToMs(time: String): Long {
+    val parts = time.split(":").map { it.toLongOrNull() ?: 0L }
+    return when (parts.size) {
+        3 -> (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000
+        2 -> (parts[0] * 60 + parts[1]) * 1000
+        else -> -1L
+    }
+}
+
+private fun parsePodcastChapters(description: String): List<PodcastChapter> {
+    if (description.isBlank()) return emptyList()
+    val regex = Regex("(\\[?\\d{1,2}:\\d{2}(?::\\d{2})?\\]?)[-:\\s]+(.*)")
+    val chapters = mutableListOf<PodcastChapter>()
+    description.lineSequence().forEach { line ->
+        regex.find(line.trim())?.let { match ->
+            val rawTime = match.groupValues[1].removePrefix("[").removeSuffix("]")
+            val titleStr = match.groupValues[2].trim()
+            val timeMs = parseTimeToMs(rawTime)
+            if (timeMs >= 0 && titleStr.isNotBlank() && chapters.none { it.timeMs == timeMs }) {
+                chapters.add(PodcastChapter(title = titleStr, timeMs = timeMs, timeFormatted = rawTime))
+            }
+        }
+    }
+    return chapters
+}
+
+private fun formatDuration(ms: Int): String {
+    if (ms <= 0) return ""
+    val totalSecs = ms / 1000
+    val hours = totalSecs / 3600
+    val minutes = (totalSecs % 3600) / 60
+    return if (hours > 0) {
+        "$hours h $minutes min"
+    } else {
+        "$minutes min"
     }
 }

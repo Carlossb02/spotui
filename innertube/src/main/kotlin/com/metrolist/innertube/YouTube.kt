@@ -3,6 +3,8 @@ package com.metrolist.innertube
 import com.metrolist.innertube.models.YouTubeClient
 import com.metrolist.innertube.models.YouTubeClient.Companion.WEB_REMIX
 import com.metrolist.innertube.models.YouTubeLocale
+import com.metrolist.innertube.models.EpisodeItem
+import com.metrolist.innertube.models.PodcastItem
 import com.metrolist.innertube.models.getContinuation
 import com.metrolist.innertube.models.getItems
 import com.metrolist.innertube.models.response.PlayerResponse
@@ -108,13 +110,28 @@ object YouTube {
             .jsonPrimitive.content
     }
 
+    suspend fun podcast(browseId: String): Result<PodcastPage> = runCatching {
+        val searchResult = search(browseId, SearchFilter("")).getOrNull()
+        val podcastItem = searchResult?.items?.firstOrNull { it is PodcastItem } as? PodcastItem
+            ?: PodcastItem(id = browseId, title = "Podcast", author = null, episodeCountText = null, thumbnail = null, playEndpoint = null, shuffleEndpoint = null)
+        val episodes = searchResult?.items?.filterIsInstance<EpisodeItem>().orEmpty()
+        PodcastPage(podcast = podcastItem, episodes = episodes)
+    }
+
     @JvmInline
     value class SearchFilter(val value: String) {
         companion object {
             val FILTER_SONG = SearchFilter("EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D")
             val FILTER_VIDEO = SearchFilter("EgWKAQIQAWoKEAkQChAFEAMQBA%3D%3D")
+            val FILTER_PODCAST = SearchFilter("EgWKAQIoAWoKEAkQBRAKEAMQBA%3D%3D")
+            val FILTER_EPISODE = SearchFilter("EgWKAQIsAWoKEAkQBRAKEAMQBA%3D%3D")
         }
     }
+
+data class PodcastPage(
+    val podcast: PodcastItem,
+    val episodes: List<EpisodeItem>
+)
 
     private val VISITOR_DATA_REGEX = Regex("^Cg[t|s]")
 

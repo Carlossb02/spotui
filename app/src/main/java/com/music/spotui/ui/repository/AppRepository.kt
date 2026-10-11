@@ -27,9 +27,9 @@ class AppRepository @Inject constructor(private val api : Api) {
 
     suspend fun providePlaylist(playlistId: String) = api.getPlaylist(playlistId)
 
-    suspend fun provideShowEpisodes(showId: String) = api.getShowEpisodes(showId)
+    suspend fun provideShowEpisodes(showId: String, showName: String = "") = api.getShowEpisodes(showId, showName)
 
-    suspend fun provideShow(showId: String) = api.getShow(showId)
+    suspend fun provideShow(showId: String, showName: String = "") = api.getShow(showId, showName)
 
     suspend fun provideLibrary() = api.getLibrary()
 

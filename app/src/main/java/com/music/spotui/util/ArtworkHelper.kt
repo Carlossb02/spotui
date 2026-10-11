@@ -16,6 +16,18 @@ object ArtworkHelper {
     private fun cleanSongId(songId: String?): String? =
         songId?.removePrefix("song/")?.removePrefix("playlist/")?.removePrefix("album/")?.trim()?.takeIf { it.isNotBlank() }
 
+    fun attachLocalFileArtwork(builder: MediaMetadata.Builder, file: File): MediaMetadata.Builder {
+        val contentUri = ArtworkContentProvider.getContentUri(file)
+        builder.setArtworkUri(contentUri)
+        runCatching {
+            val bytes = file.readBytes()
+            if (bytes.isNotEmpty()) {
+                builder.setArtworkData(bytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+            }
+        }
+        return builder
+    }
+
     /**
      * Attaches the best available artwork (local downloaded cover file, embedded ID3 picture,
      * Glide disk cache, or remote URI) to a [MediaMetadata.Builder] for system notifications.
@@ -38,11 +50,11 @@ object ArtworkHelper {
         if (!rawId.isNullOrBlank()) {
             val localCover = File(dir, "${rawId}_cover.jpg")
             if (localCover.exists() && localCover.length() > 0) {
-                return builder.setArtworkUri(Uri.fromFile(localCover))
+                return attachLocalFileArtwork(builder, localCover)
             }
             val localCoverAlt = File(dir, "${rawId}.jpg")
             if (localCoverAlt.exists() && localCoverAlt.length() > 0) {
-                return builder.setArtworkUri(Uri.fromFile(localCoverAlt))
+                return attachLocalFileArtwork(builder, localCoverAlt)
             }
         }
 
@@ -55,9 +67,8 @@ object ArtworkHelper {
             if (matchedEntry != null) {
                 val localCover = File(dir, "${matchedEntry.first.id}_cover.jpg")
                 if (localCover.exists() && localCover.length() > 0) {
-                    return builder.setArtworkUri(Uri.fromFile(localCover))
+                    return attachLocalFileArtwork(builder, localCover)
                 }
-                // Try eager cover cache for this downloaded song if not present
                 ensureDownloadedCover(context, matchedEntry.first)
             }
         }
@@ -73,21 +84,28 @@ object ArtworkHelper {
                 }
                 val embedded = retriever.embeddedPicture
                 if (embedded != null && embedded.isNotEmpty()) {
-                    return builder.setArtworkData(embedded, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+                    builder.setArtworkData(embedded, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+                    return builder
                 }
             } catch (e: Exception) {
-                // Ignore retriever failure for unparseable streams
+                // Ignore retriever failure
             } finally {
                 runCatching { retriever.release() }
             }
         }
 
         // 4. Check if coverUri is already a local file or content URI
-        if (cleanCover.startsWith("file:") || cleanCover.startsWith("content:")) {
+        if (cleanCover.startsWith("file:")) {
+            val f = runCatching { File(Uri.parse(cleanCover).path ?: "") }.getOrNull()
+            if (f != null && f.exists() && f.length() > 0) {
+                return attachLocalFileArtwork(builder, f)
+            }
+        }
+        if (cleanCover.startsWith("content:")) {
             return builder.setArtworkUri(Uri.parse(cleanCover))
         }
 
-        // 5. Check Glide disk cache safely (Glide submit().get() cannot run on main thread)
+        // 5. Check Glide disk cache safely
         if (cleanCover.isNotBlank()) {
             if (Looper.myLooper() != Looper.getMainLooper()) {
                 val cachedFile = runCatching {
@@ -104,12 +122,25 @@ object ArtworkHelper {
                         val dest = File(dir, "${rawId}_cover.jpg")
                         if (!dest.exists()) runCatching { cachedFile.copyTo(dest, overwrite = true) }
                     }
-                    return builder.setArtworkUri(Uri.fromFile(cachedFile))
+                    return attachLocalFileArtwork(builder, cachedFile)
+                }
+            } else {
+                if (!rawId.isNullOrBlank()) {
+                    val dest = File(dir, "${rawId}_cover.jpg")
+                    if (dest.exists() && dest.length() > 0) {
+                        return attachLocalFileArtwork(builder, dest)
+                    }
                 }
             }
 
-            // 6. Fallback to remote URI
-            return builder.setArtworkUri(Uri.parse(cleanCover))
+            // 6. Fallback
+            if (!rawId.isNullOrBlank()) {
+                val dest = File(dir, "${rawId}_cover.jpg")
+                builder.setArtworkUri(ArtworkContentProvider.getContentUri(dest))
+            } else {
+                builder.setArtworkUri(Uri.parse(cleanCover))
+            }
+            return builder
         }
 
         return builder

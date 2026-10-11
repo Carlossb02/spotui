@@ -353,10 +353,11 @@ object SongPlayer {
                 withContext(Dispatchers.Main) {
                     val p = player ?: return@withContext
                     val item = p.currentMediaItem ?: return@withContext
-                    val localUri = android.net.Uri.fromFile(file)
-                    if (item.mediaMetadata.artworkUri == localUri) return@withContext
-                    val updatedMeta = item.mediaMetadata.buildUpon().setArtworkUri(localUri).build()
-                    val updatedItem = item.buildUpon().setMediaMetadata(updatedMeta).build()
+                    val contentUri = com.music.spotui.util.ArtworkContentProvider.getContentUri(file)
+                    if (item.mediaMetadata.artworkUri == contentUri) return@withContext
+                    val metaBuilder = item.mediaMetadata.buildUpon()
+                    com.music.spotui.util.ArtworkHelper.attachLocalFileArtwork(metaBuilder, file)
+                    val updatedItem = item.buildUpon().setMediaMetadata(metaBuilder.build()).build()
                     p.replaceMediaItem(p.currentMediaItemIndex.coerceAtLeast(0), updatedItem)
                 }
             }
@@ -660,7 +661,9 @@ object SongPlayer {
         cancelCrossfade()
         runCatching {
             ensurePlayer(appContext)
-            player?.pause()
+            if (player?.playbackState != ExoPlayer.STATE_ENDED) {
+                player?.pause()
+            }
         }
 
         val immediateDownloadedPath = com.music.spotui.data.preferences.downloadedPathForQuery(appContext, song)
@@ -682,14 +685,13 @@ object SongPlayer {
             return
         }
 
-        if (song.startsWith("episode:") && webPlayerEnabled && SpotifyWebPlayer.canPlay &&
-            com.music.spotui.data.preferences.isWebPlaybackEnabled(appContext)
-        ) {
-            runCatching { player?.pause() }
-            currentSource = "Spotify"
-            currentQuality = ""
-            SpotifyWebPlayer.playEpisode(song.removePrefix("episode:"))
-            return
+        if (song.startsWith("episode:")) {
+            val matchSong = boundState?.queue?.value?.firstOrNull { it.url == song }
+            if (matchSong != null && matchSong.singer.isNotBlank() && matchSong.title.isNotBlank()) {
+                val querySong = buildSpotifyPlayQuery("episode_${matchSong.id}", matchSong.title, matchSong.singer)
+                playSong(querySong, context, mediaId)
+                return
+            }
         }
 
         if (webPlayerEnabled &&
@@ -729,8 +731,21 @@ object SongPlayer {
                         boundState?.updateResolveError("No stream found")
                     }
                     updateResolveStatus(false)
+                    if (playWhenResolved) {
+                        val q = boundState?.queue?.value.orEmpty()
+                        if (q.size > 1 && consecutiveResolutionFailures < q.size) {
+                            consecutiveResolutionFailures++
+                            Log.w(TAG, "No stream found for $song — auto-skipping (attempt $consecutiveResolutionFailures)")
+                            withContext(Dispatchers.Main) {
+                                next(appContext)
+                            }
+                        } else {
+                            consecutiveResolutionFailures = 0
+                        }
+                    }
                     return@launch
                 }
+                consecutiveResolutionFailures = 0
                 if (currentRequest != song) {
                     releaseWakeLock("spotui:playSong")
                     updateResolveStatus(false)
@@ -767,6 +782,18 @@ object SongPlayer {
                 Log.e(TAG, "playSong failed for query: $song", e)
                 boundState?.updateResolveError(e.message ?: "Playback failed")
                 updateResolveStatus(false)
+                if (playWhenResolved) {
+                    val q = boundState?.queue?.value.orEmpty()
+                    if (q.size > 1 && consecutiveResolutionFailures < q.size) {
+                        consecutiveResolutionFailures++
+                        Log.w(TAG, "Playback failed for $song — auto-skipping (attempt $consecutiveResolutionFailures)")
+                        withContext(Dispatchers.Main) {
+                            next(appContext)
+                        }
+                    } else {
+                        consecutiveResolutionFailures = 0
+                    }
+                }
             }
         }
     }
@@ -3035,8 +3062,9 @@ object SongPlayer {
     @Volatile private var isCrossfading = false
     @Volatile private var crossfadeJob: kotlinx.coroutines.Job? = null
     @Volatile private var positionWatchJob: kotlinx.coroutines.Job? = null
+    @Volatile private var consecutiveResolutionFailures = 0
 
-    @Volatile var onPlayerSwapped: ((ExoPlayer) -> Unit)? = null
+    @Volatile var onPlayerSwapped: ((ExoPlayer?, ExoPlayer) -> Unit)? = null
 
     fun bindState(state: CurrentSongState) { boundState = state }
 
@@ -3092,6 +3120,7 @@ object SongPlayer {
     }
 
     private var posSaveTick = 0
+    @Volatile private var lastAutoAdvanceMs = 0L
 
     private fun startPositionWatch() {
         positionWatchJob?.cancel()
@@ -3108,18 +3137,47 @@ object SongPlayer {
                     }
                 }
                 if (isCrossfading) continue
-                val crossfadeMs = com.music.spotui.data.preferences.getCrossfadeMs(ctx)
-                if (crossfadeMs <= 0) continue
                 val state = boundState ?: continue
-                if (state.repeat.value == RepeatMode.ONE) continue
                 val p = player ?: continue
-                val playing = withContext(Dispatchers.Main) { p.isPlaying }
+                val playing = withContext(Dispatchers.Main) { p.isPlaying || p.playWhenReady }
                 if (!playing) continue
-                val dur = withContext(Dispatchers.Main) { p.duration }
+
+                val currentSongUrl = state.songUrl.value
+                val expectedMs = expectedDurationMs(currentSongUrl)
+                val exoDur = withContext(Dispatchers.Main) { p.duration }
+                val dur = when {
+                    expectedMs != null && expectedMs > 0L -> {
+                        if (exoDur in 1000L..(expectedMs + 10_000L)) minOf(expectedMs, exoDur) else expectedMs
+                    }
+                    exoDur > 0L -> exoDur
+                    else -> 0L
+                }
                 val pos = withContext(Dispatchers.Main) { p.currentPosition }
-                if (dur <= 0 || pos < 0) continue
-                if (pos >= dur - crossfadeMs) {
-                    triggerCrossfade(ctx, crossfadeMs)
+                if (dur <= 0L || pos < 0L) continue
+
+                val crossfadeMs = com.music.spotui.data.preferences.getCrossfadeMs(ctx)
+                val now = System.currentTimeMillis()
+
+                if (crossfadeMs > 0 && state.repeat.value != RepeatMode.ONE) {
+                    if (pos >= dur - crossfadeMs) {
+                        triggerCrossfade(ctx, crossfadeMs)
+                        continue
+                    }
+                }
+
+                if (pos >= dur - 500L) {
+                    if (now - lastAutoAdvanceMs >= 3000L) {
+                        lastAutoAdvanceMs = now
+                        withContext(Dispatchers.Main) {
+                            if (state.repeat.value == RepeatMode.ONE) {
+                                p.seekTo(0)
+                                p.play()
+                            } else {
+                                Log.d(TAG, "startPositionWatch: track end reached (pos=$pos, dur=$dur), auto-advancing")
+                                next(ctx)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -3263,11 +3321,18 @@ object SongPlayer {
             incoming.volume = 1f
 
             currentPlayerFilter?.enabled = false
-            secondaryPlayerFilter?.enabled = false
             currentPlayerEqualizer?.enabled = false
-            secondaryPlayerEqualizer?.enabled = false
             currentPlayerNormalizer?.enabled = false
-            secondaryPlayerNormalizer?.enabled = false
+
+            secondaryPlayerFilter?.enabled = false
+            val ctx = appCtx
+            if (ctx != null) {
+                secondaryPlayerEqualizer?.apply {
+                    enabled = com.music.spotui.data.preferences.isEqualizerEnabled(ctx)
+                    setBandGains(com.music.spotui.data.preferences.getEqualizerBandGains(ctx))
+                }
+                secondaryPlayerNormalizer?.enabled = com.music.spotui.data.preferences.isAudioNormalizationEnabled(ctx)
+            }
             
             player = incoming
             currentPlayerFilter = secondaryPlayerFilter
@@ -3288,10 +3353,13 @@ object SongPlayer {
                 nextSong.id, nextIdx, nextSong.album,
             )
 
+            incoming.playWhenReady = true
+            incoming.play()
+
+            onPlayerSwapped?.invoke(old, incoming)
             runCatching { old?.pause(); old?.stop(); old?.release() }
             isCrossfading = false
             releaseWakeLock("spotui:crossfade")
-            onPlayerSwapped?.invoke(incoming)
         }
         startPositionWatch()
     }

@@ -278,62 +278,31 @@ class Api @Inject constructor(
         }
         Spotify.search(query, types = listOf("track", "album", "artist"), limit = 20).fold(
             onSuccess = { res ->
-                // Podcasts come from the REST catalog search (best-effort — a failure
-                // there must not blank out the music results).
-                val podcasts = Spotify.searchPodcasts(query, limit = 12)
-                    .onFailure { Log.e("Api", "searchPodcasts FAILED: ${it.message}", it) }
-                    .getOrNull()
-                Log.d("Api", "podcasts: shows=${podcasts?.shows?.items?.size ?: -1} episodes=${podcasts?.episodes?.items?.size ?: -1}")
+                val (ytShows, ytEpisodes) = com.music.spotui.providers.PodcastProvider.searchPodcasts(query)
+
+                Log.d("Api", "searchEverything '$query': songs=${res.tracks?.items?.size} shows=${ytShows.size} episodes=${ytEpisodes.size}")
                 emit(Response.Success(SearchResults(
                     songs = res.tracks?.items.orEmpty().map { it.toSongModel() },
                     albums = res.albums?.items.orEmpty().map { it.toAlbumModel() },
                     artists = res.artists?.items.orEmpty().map { it.toArtistModel() },
-                    shows = podcasts?.shows?.items.orEmpty().map { it.toPodcastModel() },
-                    episodes = podcasts?.episodes?.items.orEmpty().map { it.toEpisodeSongModel(null) },
+                    shows = ytShows,
+                    episodes = ytEpisodes,
                 )))
             },
             onFailure = { Log.e("Api", "searchEverything failed", it); emit(Response.Error(it.message ?: "error")) },
         )
     }
 
-    /** A podcast show's episodes, as playable [SongsModel] (url = "episode:<id>"). */
-    suspend fun getShowEpisodes(showId: String): Flow<Response<List<SongsModel>>> = flow {
+    /** A podcast show's episodes, as playable [SongsModel] (url = "https://www.youtube.com/watch?v=..."). */
+    suspend fun getShowEpisodes(showId: String, showName: String = ""): Flow<Response<List<SongsModel>>> = flow {
         emit(Response.Loading())
-        if (!SpotifyTokenProvider.ensureToken(context)) {
-            emit(Response.Error("Spotify not authenticated — set sp_dc cookie")); return@flow
-        }
-        val show = Spotify.show(showId).getOrNull()
-        Spotify.showEpisodes(showId, limit = 50).fold(
-            onSuccess = { paging ->
-                emit(Response.Success(paging.items.map { it.toEpisodeSongModel(show?.name) }))
-            },
-            onFailure = { Log.e("Api", "getShowEpisodes failed", it); emit(Response.Error(it.message ?: "error")) },
-        )
+        val episodes = com.music.spotui.providers.PodcastProvider.getShowEpisodes(showId, showName)
+        emit(Response.Success(episodes))
     }
 
     /** Show header (name/publisher/cover) for the detail screen. */
-    suspend fun getShow(showId: String): PodcastModel? {
-        if (!SpotifyTokenProvider.ensureToken(context)) return null
-        return Spotify.show(showId).getOrNull()?.toPodcastModel()
-    }
-
-    private fun com.metrolist.spotify.models.SpotifyShow.toPodcastModel() = PodcastModel(
-        id = id,
-        name = name,
-        publisher = publisher,
-        coverUri = images.firstOrNull()?.url ?: "",
-    )
-
-    private fun com.metrolist.spotify.models.SpotifyEpisode.toEpisodeSongModel(showName: String?): SongsModel {
-        val subtitle = show?.name ?: showName ?: "Podcast"
-        return SongsModel(
-            id = stableId("episode:$id"),
-            title = name,
-            album = subtitle,
-            singer = subtitle,
-            coverUri = images.firstOrNull()?.url ?: (show?.images?.firstOrNull()?.url ?: ""),
-            url = "episode:$id",
-        )
+    suspend fun getShow(showId: String, showName: String = ""): PodcastModel? {
+        return com.music.spotui.providers.PodcastProvider.getShow(showId, showName)
     }
 
     /**

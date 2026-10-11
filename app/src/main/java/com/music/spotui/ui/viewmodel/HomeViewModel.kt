@@ -96,17 +96,20 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository)  
     }
 
     private fun fetchPodcasts() = viewModelScope.launch(Dispatchers.IO) {
-        repository.searchEverything("podcast").collect { podRes ->
-            if (podRes is Response.Success && (podRes.data.shows.isNotEmpty() || podRes.data.episodes.isNotEmpty())) {
-                _podcasts.value = podRes
-            } else if (podRes is Response.Error || (podRes is Response.Success && podRes.data.shows.isEmpty())) {
-                repository.searchEverything("show").collect { fallbackRes ->
-                    _podcasts.value = fallbackRes
+        val allShows = mutableListOf<com.music.spotui.data.entity.PodcastModel>()
+        val allEpisodes = mutableListOf<com.music.spotui.data.entity.SongsModel>()
+        val terms = listOf("The Wild Project", "BLACK MANGO", "Nadie Sabe Nada", "La Ruina", "Entiende Tu Mente")
+        for (term in terms) {
+            repository.searchEverything(term).collect { podRes ->
+                if (podRes is Response.Success) {
+                    allShows.addAll(podRes.data.shows)
+                    allEpisodes.addAll(podRes.data.episodes)
                 }
-            } else {
-                _podcasts.value = podRes
             }
         }
+        val distinctShows = allShows.distinctBy { it.name.trim().lowercase() }
+        val distinctEpisodes = allEpisodes.distinctBy { it.title.trim().lowercase() }
+        _podcasts.value = Response.Success(com.music.spotui.data.entity.SearchResults(shows = distinctShows, episodes = distinctEpisodes))
     }
 
     private fun fetchAudiobooks() = viewModelScope.launch(Dispatchers.IO) {
