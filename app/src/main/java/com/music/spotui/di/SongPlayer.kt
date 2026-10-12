@@ -3213,7 +3213,11 @@ object SongPlayer {
                 val exoDur = withContext(Dispatchers.Main) { p.duration }
                 val dur = when {
                     expectedMs != null && expectedMs > 0L -> {
-                        if (exoDur in 1000L..(expectedMs + 10_000L)) minOf(expectedMs, exoDur) else expectedMs
+                        if (exoDur > 0L && abs(exoDur - expectedMs) <= maxOf(15_000L, expectedMs / 10)) {
+                            exoDur
+                        } else {
+                            expectedMs
+                        }
                     }
                     exoDur > 0L -> exoDur
                     else -> 0L
@@ -3225,18 +3229,40 @@ object SongPlayer {
                 val now = System.currentTimeMillis()
 
                 if (crossfadeMs > 0 && state.repeat.value != RepeatMode.ONE) {
-                    if (pos >= dur - crossfadeMs) {
+                    if (pos >= dur - crossfadeMs && pos >= dur / 2 && pos >= 10_000L && dur >= crossfadeMs + 5_000L) {
                         triggerCrossfade(ctx, crossfadeMs)
                         continue
                     }
                 }
 
-                if (pos >= dur - 500L && state.repeat.value == RepeatMode.ONE) {
+                if (pos >= dur - 400L) {
                     if (now - lastAutoAdvanceMs >= 3000L) {
                         lastAutoAdvanceMs = now
-                        withContext(Dispatchers.Main) {
-                            p.seekTo(0)
-                            p.play()
+                        when (state.repeat.value) {
+                            RepeatMode.ONE -> {
+                                withContext(Dispatchers.Main) {
+                                    p.seekTo(0)
+                                    p.play()
+                                }
+                            }
+                            RepeatMode.ALL -> {
+                                withContext(Dispatchers.Main) {
+                                    next(ctx)
+                                }
+                            }
+                            RepeatMode.OFF -> {
+                                val q = state.queue.value
+                                val curId = state.songId.value
+                                val cur = q.indexOfFirst { it.id == curId }
+                                    .takeIf { it >= 0 }
+                                    ?: q.indexOfFirst { it.url == state.songUrl.value }.takeIf { it >= 0 }
+                                    ?: state.songIndex.value.coerceIn(0, q.size - 1)
+                                if (cur < q.size - 1) {
+                                    withContext(Dispatchers.Main) {
+                                        next(ctx)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -3279,6 +3305,14 @@ object SongPlayer {
                     secondaryPlayerFilter = comp.filter
                     secondaryPlayerEqualizer = comp.equalizer
                     secondaryPlayerNormalizer = comp.normalizer
+                    
+                    comp.player.addListener(object : androidx.media3.common.Player.Listener {
+                        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                            Log.e(TAG, "Secondary player error during crossfade: ${error.message}", error)
+                            cancelCrossfade()
+                        }
+                    })
+
                     val metadataBuilder = androidx.media3.common.MediaMetadata.Builder()
                         .setTitle(nextSong.title)
                         .setArtist(nextSong.singer)
@@ -3301,16 +3335,6 @@ object SongPlayer {
                     comp.player.prepare()
                     comp.player.volume = 0f
                     comp.player.playWhenReady = true
-
-                    metaTitle = nextSong.title
-                    metaArtist = nextSong.singer
-                    metaCover = nextSong.coverUri
-                    currentMediaId = "song/${nextSong.id}"
-                    boundState?.setSongUrl(nextSong.url)
-                    boundState?.updateSongState(
-                        nextSong.coverUri, nextSong.title, nextSong.singer, true,
-                        nextSong.id, cur + 1, nextSong.album,
-                    )
                 }
                 performCrossfade(effectiveMs, djMode, nextSong, cur + 1)
             } catch (e: Exception) {
