@@ -66,14 +66,34 @@ data class PlayerResponse(
         ) {
             val isAudio: Boolean
                 get() = width == null
+
+            val isAutoDubbedTrack: Boolean
+                get() {
+                    if (audioTrack?.isAutoDubbed == true) return true
+                    val id = audioTrack?.id?.lowercase().orEmpty()
+                    val name = audioTrack?.displayName?.lowercase().orEmpty()
+                    if (id.contains("auto_dubbed") || id.contains("dubbed") || id.contains("translated") ||
+                        name.contains("auto-dubbed") || name.contains("doblado") || name.contains("traducido") ||
+                        name.contains("dubbed") || name.contains("translated") || name.contains("auto-translated")
+                    ) {
+                        return true
+                    }
+                    if (id in listOf("ar", "ar-sa", "ar-eg", "fr", "de", "hi", "zh", "ja", "ko", "it", "pt", "ru")) {
+                        return true
+                    }
+                    if (audioTrack?.audioIsDefault == false) return true
+                    return false
+                }
+
             val isOriginal: Boolean
-                get() = audioTrack?.isAutoDubbed == null
+                get() = !isAutoDubbedTrack
 
             @Serializable
             data class AudioTrack(
-                val displayName: String?,
-                val id: String?,
-                val isAutoDubbed: Boolean?,
+                val displayName: String? = null,
+                val id: String? = null,
+                val isAutoDubbed: Boolean? = null,
+                val audioIsDefault: Boolean? = null,
             )
         }
     }

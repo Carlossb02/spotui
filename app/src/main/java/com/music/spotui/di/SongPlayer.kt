@@ -773,18 +773,19 @@ object SongPlayer {
                         return@withContext
                     }
                     ensurePlayer(appContext)
+                    val p = player ?: return@withContext
                     val loudness = loudnessCache[song]
                     currentPlayerNormalizer?.setTrackLoudness(loudness)
-                    player!!.setMediaItem(mediaItem)
-                    player!!.prepare()
+                    p.setMediaItem(mediaItem)
+                    p.prepare()
                     if (song == restoreQuery && restorePositionMs > 0) {
-                        player!!.seekTo(restorePositionMs)
+                        p.seekTo(restorePositionMs)
                     }
                     restoreQuery = null
                     // Lossless providers do their own (unseen) matching: hold playback until the
                     // stream's real duration confirms it is the recording we asked for.
-                    val guarded = armDurationGuard(player!!, song, appContext)
-                    player!!.playWhenReady = playWhenResolved && !guarded
+                    val guarded = armDurationGuard(p, song, appContext)
+                    p.playWhenReady = playWhenResolved && !guarded
                     loadedQuery = song
                     updateResolveStatus(false)
                 }
@@ -872,7 +873,7 @@ object SongPlayer {
     fun prefetch(song: String, context: Context) = prefetchInternal(song, context, listed = false)
 
     private fun prefetchInternal(song: String, context: Context, listed: Boolean) {
-        if (song.isBlank() || streamCache.containsKey(song)) return
+        if (song.isBlank()) return
         val appContext = context.applicationContext
         if (webPlaybackActive()) return
         if (!prefetchInFlight.add(song)) return
@@ -881,7 +882,6 @@ object SongPlayer {
                 prefetchSemaphore.withPermit {
                     // The queue may have moved on while we waited for a slot.
                     if (listed && song !in prefetchTargets) return@withPermit
-                    if (streamCache.containsKey(song)) return@withPermit
                     acquireWakeLock(appContext, "spotui:prefetch", 30_000L)
                     try {
                         val url = withTimeoutOrNull(45_000L) {
@@ -923,7 +923,6 @@ object SongPlayer {
         }
     }
 
-    private const val PRELOAD_BYTES = 15L * 1024 * 1024
 
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     @Volatile private var mediaCache: androidx.media3.datasource.cache.SimpleCache? = null
@@ -1004,7 +1003,7 @@ object SongPlayer {
             val spec = androidx.media3.datasource.DataSpec.Builder()
                 .setUri(android.net.Uri.parse(url))
                 .setKey(stableKey)
-                .setLength(PRELOAD_BYTES)
+                .setLength(androidx.media3.common.C.LENGTH_UNSET.toLong())
                 .build()
             androidx.media3.datasource.cache.CacheWriter(ds, spec, null, null).cache()
         }.onFailure { Log.d(TAG, "intro preload skipped: ${it.message}") }
@@ -2772,6 +2771,28 @@ object SongPlayer {
                 attempts.forEach { it.cancel() }
             }
         }
+        // An explicit YouTube URL (including watch URLs with list/index parameters) is a
+        // user-selected video, not a search query. Resolve that exact video ID first and do
+        // not silently replace it with a different search result if stream resolution fails.
+        // This also prevents the whole URL from being sent to YouTube.search(), which can
+        // return an unrelated video and makes playlist links appear to open the wrong item.
+        val isExplicitYouTubeLink = query.contains("youtube.com", ignoreCase = true) ||
+                query.contains("youtu.be", ignoreCase = true) ||
+                query.contains("youtube-nocookie.com", ignoreCase = true)
+        if (isExplicitYouTubeLink) {
+            val directVideoId = videoIdFromYouTubeLink(query)
+            if (directVideoId.isNullOrBlank()) {
+                lastYtFailureReason = "Invalid YouTube link: couldn't extract video ID"
+                Log.e(TAG, "Invalid explicit YouTube link; refusing search fallback: $query")
+                return null
+            }
+            Log.d(TAG, "Resolving explicit YouTube link directly: videoId=$directVideoId")
+            tryIds(listOf(directVideoId), skipValidation = false)?.let { return it }
+            lastYtFailureReason = lastYtFailureReason ?: "Couldn't resolve the stream for linked video $directVideoId"
+            Log.e(TAG, "Explicit YouTube video failed to resolve; not substituting another video: $directVideoId")
+            return null
+        }
+
         tryIds(resolveVideoCandidates(query, forPlayback = forPlayback).take(3), skipValidation = false)?.let { return it }
         if (!com.music.spotui.data.preferences.isVideoFallbackEnabled(appContext)) {
             Log.w(TAG, "song candidates exhausted and video fallback disabled for: ${searchTextForPlayback(query)}")
@@ -2959,7 +2980,15 @@ object SongPlayer {
         }
     }
 
+    @Volatile private var lastAdvanceTimestamp = 0L
+
     fun next(context: Context) {
+        val now = System.currentTimeMillis()
+        if (now - lastAdvanceTimestamp < 1000L) {
+            android.util.Log.w(TAG, "next: ignored rapid duplicate advance request")
+            return
+        }
+        lastAdvanceTimestamp = now
         acquireWakeLock(context, "spotui:next", 60_000L)
         val state = boundState
         if (state == null) {
@@ -3001,6 +3030,12 @@ object SongPlayer {
     }
 
     fun previous(context: Context) {
+        val now = System.currentTimeMillis()
+        if (now - lastAdvanceTimestamp < 1000L) {
+            android.util.Log.w(TAG, "previous: ignored rapid duplicate advance request")
+            return
+        }
+        lastAdvanceTimestamp = now
         acquireWakeLock(context, "spotui:previous", 60_000L)
         val state = boundState
         if (state == null) {
@@ -3193,17 +3228,12 @@ object SongPlayer {
                     }
                 }
 
-                if (pos >= dur - 500L) {
+                if (pos >= dur - 500L && state.repeat.value == RepeatMode.ONE) {
                     if (now - lastAutoAdvanceMs >= 3000L) {
                         lastAutoAdvanceMs = now
                         withContext(Dispatchers.Main) {
-                            if (state.repeat.value == RepeatMode.ONE) {
-                                p.seekTo(0)
-                                p.play()
-                            } else {
-                                Log.d(TAG, "startPositionWatch: track end reached (pos=$pos, dur=$dur), auto-advancing")
-                                next(ctx)
-                            }
+                            p.seekTo(0)
+                            p.play()
                         }
                     }
                 }

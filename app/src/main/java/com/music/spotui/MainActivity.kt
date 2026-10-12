@@ -1,7 +1,6 @@
 package com.music.spotui
 
 import android.content.ComponentName
-import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -14,11 +13,9 @@ import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
-import com.music.spotui.di.SongPlayer
 import com.music.spotui.ui.notification.PlaybackService
 import com.music.spotui.ui.theme.SpotuiTheme
 import dagger.hilt.android.AndroidEntryPoint
@@ -32,7 +29,7 @@ class MainActivity : ComponentActivity() {
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* no-op */ }
 
-    @OptIn(UnstableApi::class)
+    @kotlin.OptIn(androidx.media3.common.util.UnstableApi::class)
     @RequiresApi(Build.VERSION_CODES.S)
     override fun onCreate(savedInstanceState: Bundle?){
 
@@ -40,7 +37,6 @@ class MainActivity : ComponentActivity() {
         androidx.appcompat.app.AppCompatDelegate.setApplicationLocales(
             androidx.core.os.LocaleListCompat.forLanguageTags(com.music.spotui.data.preferences.getAppLanguage(this))
         )
-        this.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
 
         // Ask for notification permission (Android 13+) so the media notification shows.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -102,7 +98,6 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         controllerFuture?.let { MediaController.releaseFuture(it) }
-        SongPlayer.release()
     }
 }
 
