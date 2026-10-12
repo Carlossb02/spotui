@@ -56,6 +56,14 @@ object PlaybackArtwork {
                 val bytes = load(appContext, coverUri)
                 if (bytes != null) {
                     cache.put(id, bytes)
+                    val cleanId = id.removePrefix("song/").removePrefix("playlist/").removePrefix("album/").removePrefix("artist/").trim()
+                    if (cleanId.isNotBlank()) {
+                        val dir = File(appContext.filesDir, "downloads").apply { mkdirs() }
+                        val coverFile = File(dir, "${cleanId}_cover.jpg")
+                        if (!coverFile.exists() || coverFile.length() == 0L) {
+                            runCatching { coverFile.writeBytes(bytes) }
+                        }
+                    }
                     failedAt.remove(id)
                     main.post(onReady)
                 } else {

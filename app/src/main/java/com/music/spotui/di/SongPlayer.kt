@@ -536,7 +536,7 @@ object SongPlayer {
     // the strict YouTube matcher).
 
     /** Turn off if a provider reports unreliable durations. */
-    @Volatile var durationGuardEnabled = true
+    @Volatile var durationGuardEnabled = false
 
     private const val MATCH_PURGE_KEY = "match_v8_purged"
     private val providerBlocklist = java.util.concurrent.ConcurrentHashMap<String, Set<String>>()
@@ -3159,6 +3159,8 @@ object SongPlayer {
         return exp(ln(start) + (ln(end) - ln(start)) * t).toFloat()
     }
 
+    private val crossfadeTriggered = java.util.concurrent.atomic.AtomicBoolean(false)
+
     private fun cancelCrossfade() {
         if (!isCrossfading && secondaryPlayer == null) return
         crossfadeJob?.cancel()
@@ -3179,6 +3181,7 @@ object SongPlayer {
         secondaryPlayerNormalizer = null
         player?.volume = 1f
         isCrossfading = false
+        crossfadeTriggered.set(false)
         releaseWakeLock("spotui:crossfade")
     }
 
@@ -3242,15 +3245,15 @@ object SongPlayer {
     }
 
     private fun triggerCrossfade(ctx: Context, configuredMs: Int) {
-        if (isCrossfading) return
+        if (isCrossfading || !crossfadeTriggered.compareAndSet(false, true)) return
         val state = boundState ?: return
         val q = state.queue.value
-        if (q.isEmpty()) return
+        if (q.isEmpty()) { crossfadeTriggered.set(false); return }
         val cur = q.indexOfFirst { it.id == state.songId.value }
             .takeIf { it >= 0 }
             ?: q.indexOfFirst { it.url == state.songUrl.value }.takeIf { it >= 0 }
             ?: state.songIndex.value.coerceIn(0, q.size - 1)
-        if (cur < 0 || cur >= q.size - 1) return
+        if (cur < 0 || cur >= q.size - 1) { crossfadeTriggered.set(false); return }
         val nextSong = q[cur + 1]
         isCrossfading = true
         acquireWakeLock(ctx, "spotui:crossfade", 60_000L)
@@ -3258,6 +3261,7 @@ object SongPlayer {
             try {
                 val nextUrl = resolveStreamUrl(nextSong.url, ctx, forPlayback = true) ?: run {
                     isCrossfading = false
+                    crossfadeTriggered.set(false)
                     releaseWakeLock("spotui:crossfade")
                     return@launch
                 }
@@ -3415,8 +3419,14 @@ object SongPlayer {
             incoming.play()
 
             onPlayerSwapped?.invoke(old, incoming)
-            runCatching { old?.pause(); old?.stop(); old?.release() }
+            runCatching {
+                old?.setAudioAttributes(buildAudioAttributes(), /* handleAudioFocus = */ false)
+                old?.pause()
+                old?.stop()
+                old?.release()
+            }
             isCrossfading = false
+            crossfadeTriggered.set(false)
             releaseWakeLock("spotui:crossfade")
         }
         startPositionWatch()

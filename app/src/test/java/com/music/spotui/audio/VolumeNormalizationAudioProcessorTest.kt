@@ -14,14 +14,15 @@ import kotlin.math.abs
 class VolumeNormalizationAudioProcessorTest {
 
     private lateinit var normalizer: VolumeNormalizationAudioProcessor
+    private val lookaheadDelayBytes = 220 * 2 * 2 // 220 frames * 2 channels * 2 bytes/short = 880 bytes
 
     @Before
     fun setUp() {
         normalizer = VolumeNormalizationAudioProcessor()
+        normalizer.enabled = true
         val format = AudioProcessor.AudioFormat(44100, 2, C.ENCODING_PCM_16BIT)
         normalizer.configure(format)
         normalizer.flush()
-        normalizer.enabled = true
     }
 
     @Test
@@ -30,7 +31,7 @@ class VolumeNormalizationAudioProcessorTest {
         // Gain should be 10^(-3.5 / 20) = ~0.6683
         normalizer.setTrackLoudness(3.5)
 
-        val inputSampleCount = 1000
+        val inputSampleCount = 2000 // 1000 frames (sufficient to push through 220-frame lookahead)
         val inputBuffer = ByteBuffer.allocateDirect(inputSampleCount * 2).order(ByteOrder.nativeOrder())
         val testValue: Short = 10000
 
@@ -41,6 +42,7 @@ class VolumeNormalizationAudioProcessorTest {
 
         normalizer.queueInput(inputBuffer)
         val outputBuffer = normalizer.output
+        outputBuffer.position(lookaheadDelayBytes)
 
         val firstSample = outputBuffer.short
         val expectedSample = (testValue * 0.6683439).toInt().toShort()
@@ -54,15 +56,17 @@ class VolumeNormalizationAudioProcessorTest {
         // Gain = 10^(6.0 / 20) = 1.99526
         normalizer.setTrackLoudness(-6.0)
 
-        val inputBuffer = ByteBuffer.allocateDirect(100 * 2).order(ByteOrder.nativeOrder())
+        val inputSampleCount = 2000
+        val inputBuffer = ByteBuffer.allocateDirect(inputSampleCount * 2).order(ByteOrder.nativeOrder())
         val testValue: Short = 10000
-        repeat(50) {
+        repeat(inputSampleCount) {
             inputBuffer.putShort(testValue)
         }
         inputBuffer.flip()
 
         normalizer.queueInput(inputBuffer)
         val outputBuffer = normalizer.output
+        outputBuffer.position(lookaheadDelayBytes)
 
         val outputSample = outputBuffer.short
         val expectedSample = (testValue * 1.9952623).toInt().toShort()
@@ -77,15 +81,17 @@ class VolumeNormalizationAudioProcessorTest {
         // Simulate seek / buffer flush
         normalizer.flush()
 
-        val inputBuffer = ByteBuffer.allocateDirect(100 * 2).order(ByteOrder.nativeOrder())
+        val inputSampleCount = 2000
+        val inputBuffer = ByteBuffer.allocateDirect(inputSampleCount * 2).order(ByteOrder.nativeOrder())
         val testValue: Short = 12000
-        repeat(50) {
+        repeat(inputSampleCount) {
             inputBuffer.putShort(testValue)
         }
         inputBuffer.flip()
 
         normalizer.queueInput(inputBuffer)
         val outputBuffer = normalizer.output
+        outputBuffer.position(lookaheadDelayBytes)
 
         val sampleAfterSeek = outputBuffer.short
         val expectedSample = (testValue * 0.630957).toInt().toShort() // 10^(-4/20) = 0.630957

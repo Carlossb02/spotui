@@ -133,12 +133,14 @@ object ArtworkHelper {
                 }
             }
 
-            // 6. Fallback
+            // 6. Fallback: Always set an ArtworkContentProvider content URI so Android Auto
+            // (including secondary mode) can reliably resolve artwork via ContentResolver.
             if (!rawId.isNullOrBlank()) {
                 val dest = File(dir, "${rawId}_cover.jpg")
                 builder.setArtworkUri(ArtworkContentProvider.getContentUri(dest))
             } else {
-                builder.setArtworkUri(Uri.parse(cleanCover))
+                val coverFileName = "cover_" + Math.abs(cleanCover.hashCode()) + ".jpg"
+                builder.setArtworkUri(ArtworkContentProvider.getContentUri(coverFileName))
             }
             return builder
         }

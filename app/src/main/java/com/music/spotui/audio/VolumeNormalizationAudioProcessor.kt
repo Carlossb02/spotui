@@ -57,7 +57,7 @@ private const val MIN_BLOCKS_FOR_ESTIMATE = 20
 class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
 
     @Volatile
-    var enabled: Boolean = false
+    var enabled: Boolean = true
 
     // --- Control (hilo principal -> hilo de audio) ---
     @Volatile private var controlVersion = 0

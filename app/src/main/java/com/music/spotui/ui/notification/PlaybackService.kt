@@ -91,7 +91,9 @@ class PlaybackService : MediaLibraryService() {
         override fun onPlaybackStateChanged(playbackState: Int) {
             currentSongState.updateBufferingState(playbackState == Player.STATE_BUFFERING)
             if (playbackState == Player.STATE_READY && (SongPlayer.exoPlayer?.playWhenReady == true)) {
-                SongPlayer.releaseWakeLock()
+                SongPlayer.acquireWakeLock(applicationContext, "spotui:playing", 12 * 60 * 60_000L)
+            } else if (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE) {
+                SongPlayer.releaseWakeLock("spotui:playback_end")
             }
             if (playbackState == Player.STATE_ENDED) {
                 if (SongPlayer.isCrossfadeActive()) {
@@ -154,7 +156,9 @@ class PlaybackService : MediaLibraryService() {
             // Ignore transient stops/pauses from the outgoing player during an active crossfade.
             if (SongPlayer.isCrossfadeActive()) return
             if (isPlaying) {
-                SongPlayer.releaseWakeLock()
+                SongPlayer.acquireWakeLock(applicationContext, "spotui:playing", 12 * 60 * 60_000L)
+            } else {
+                SongPlayer.releaseWakeLock("spotui:paused")
             }
             if (!showingWeb) currentSongState.updatePlayingState(isPlaying)
         }
@@ -171,18 +175,26 @@ class PlaybackService : MediaLibraryService() {
             val songUrl = if (cur >= 0) queue[cur].url else currentSongState.songUrl.value
             
             val retries = errorRetryCounts[songUrl] ?: 0
-            if (retries < 2 && (error.errorCodeName.contains("IO") || error.errorCodeName.contains("NETWORK") || error.errorCodeName.contains("TIMEOUT"))) {
+            val isIoOrSourceError = error.errorCodeName.contains("IO") ||
+                    error.errorCodeName.contains("NETWORK") ||
+                    error.errorCodeName.contains("TIMEOUT") ||
+                    error.errorCodeName.contains("SOURCE") ||
+                    error.errorCodeName.contains("UNSPECIFIED") ||
+                    error.errorCodeName.contains("PARSING") ||
+                    error.message?.contains("Source error", ignoreCase = true) == true ||
+                    error.errorCode in 2000..3999
+
+            if (retries < 2 && isIoOrSourceError && songUrl.isNotBlank()) {
                 errorRetryCounts[songUrl] = retries + 1
                 android.util.Log.w("PlaybackService", "Transient loading error for $songUrl (attempt ${retries + 1}), retrying playback instead of skipping...")
-                if (cur >= 0) {
-                    SongPlayer.invalidateResolvedStream(songUrl)
-                    SongPlayer.playSong(songUrl, applicationContext, "song/${queue[cur].id}")
-                }
+                SongPlayer.invalidateResolvedStream(songUrl)
+                val mediaId = if (cur >= 0) "song/${queue[cur].id}" else currentSongState.songId.value.let { if (it != 0) "song/$it" else null }
+                SongPlayer.playSong(songUrl, applicationContext, mediaId)
                 return
             }
             errorRetryCounts.remove(songUrl)
             SongPlayer.acquireWakeLock(applicationContext, "spotui:error_advance", 60_000L)
-            if (cur >= 0) {
+            if (songUrl.isNotBlank()) {
                 SongPlayer.invalidateResolvedStream(songUrl)
             }
             advance(forward = true)
@@ -196,7 +208,7 @@ class PlaybackService : MediaLibraryService() {
         // Order notification buttons: [repeat | prev | play/pause | next | close]
         val notificationProvider = object : DefaultMediaNotificationProvider(this) {
             init {
-                setSmallIcon(R.drawable.logo)
+                setSmallIcon(R.drawable.ic_spotui_notification)
             }
 
             override fun getMediaButtons(
@@ -287,6 +299,15 @@ class PlaybackService : MediaLibraryService() {
             snapshotFlow { currentSongState.songId.value }
                 .distinctUntilChanged()
                 .collect { ensureCurrentArtwork() }
+        }
+
+        // Re-dispatch metadata and timeline when queue changes
+        serviceScope.launch {
+            snapshotFlow { currentSongState.queue.value }
+                .distinctUntilChanged()
+                .collect {
+                    activeForwardingPlayer?.dispatchMetadataRefresh()
+                }
         }
 
         // As the hidden web player streams, keep the notification in sync and swap
@@ -429,58 +450,59 @@ class PlaybackService : MediaLibraryService() {
                 .setMediaMetadata(enrichMetadata(item.mediaMetadata))
                 .build()
         }
-            override fun getAvailableCommands(): Player.Commands =
-                super.getAvailableCommands().buildUpon()
-                    .add(COMMAND_SEEK_TO_NEXT)
-                    .add(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
-                    .add(COMMAND_SEEK_TO_PREVIOUS)
-                    .add(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
-                    .add(COMMAND_PLAY_PAUSE)
-                    .add(COMMAND_SET_REPEAT_MODE)
-                    .build()
 
-            override fun isCommandAvailable(command: Int): Boolean = when (command) {
-                COMMAND_SEEK_TO_NEXT, COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
-                COMMAND_SEEK_TO_PREVIOUS, COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
-                COMMAND_PLAY_PAUSE, COMMAND_SET_REPEAT_MODE -> true
+        override fun getAvailableCommands(): Player.Commands =
+            super.getAvailableCommands().buildUpon()
+                .add(COMMAND_SEEK_TO_NEXT)
+                .add(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                .add(COMMAND_SEEK_TO_PREVIOUS)
+                .add(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                .add(COMMAND_PLAY_PAUSE)
+                .add(COMMAND_SET_REPEAT_MODE)
+                .build()
 
-                else -> super.isCommandAvailable(command)
+        override fun isCommandAvailable(command: Int): Boolean = when (command) {
+            COMMAND_SEEK_TO_NEXT, COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+            COMMAND_SEEK_TO_PREVIOUS, COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+            COMMAND_PLAY_PAUSE, COMMAND_SET_REPEAT_MODE -> true
+
+            else -> super.isCommandAvailable(command)
+        }
+
+        override fun getRepeatMode(): Int = when (currentSongState.repeat.value) {
+            RepeatMode.OFF -> Player.REPEAT_MODE_OFF
+            RepeatMode.ONE -> Player.REPEAT_MODE_ONE
+            RepeatMode.ALL -> Player.REPEAT_MODE_ALL
+        }
+
+        override fun setRepeatMode(repeatMode: Int) {
+            val mode = when (repeatMode) {
+                Player.REPEAT_MODE_ONE -> RepeatMode.ONE
+                Player.REPEAT_MODE_ALL -> RepeatMode.ALL
+                else -> RepeatMode.OFF
             }
+            currentSongState.updateRepeatState(mode)
+            // Always ensure the underlying ExoPlayer repeatMode stays REPEAT_MODE_OFF.
+            // Spotui manages single-track / all-track looping at the queue & PlaybackService level.
+            // If ExoPlayer itself is set to REPEAT_MODE_ONE or REPEAT_MODE_ALL on a single-item
+            // timeline, ExoPlayer silently loops the single item internally and NEVER emits STATE_ENDED.
+            base.repeatMode = Player.REPEAT_MODE_OFF
+        }
 
-            override fun getRepeatMode(): Int = when (currentSongState.repeat.value) {
-                RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-                RepeatMode.ONE -> Player.REPEAT_MODE_ONE
-                RepeatMode.ALL -> Player.REPEAT_MODE_ALL
-            }
+        override fun play() {
+            SongPlayer.play()
+        }
 
-            override fun setRepeatMode(repeatMode: Int) {
-                val mode = when (repeatMode) {
-                    Player.REPEAT_MODE_ONE -> RepeatMode.ONE
-                    Player.REPEAT_MODE_ALL -> RepeatMode.ALL
-                    else -> RepeatMode.OFF
-                }
-                currentSongState.updateRepeatState(mode)
-                // Always ensure the underlying ExoPlayer repeatMode stays REPEAT_MODE_OFF.
-                // Spotui manages single-track / all-track looping at the queue & PlaybackService level.
-                // If ExoPlayer itself is set to REPEAT_MODE_ONE or REPEAT_MODE_ALL on a single-item
-                // timeline, ExoPlayer silently loops the single item internally and NEVER emits STATE_ENDED.
-                base.repeatMode = Player.REPEAT_MODE_OFF
-            }
+        override fun pause() {
+            SongPlayer.pause()
+        }
 
-            override fun play() {
-                SongPlayer.play()
-            }
-
-            override fun pause() {
-                SongPlayer.pause()
-            }
-
-            override fun hasNextMediaItem() = true
-            override fun hasPreviousMediaItem() = true
-            override fun seekToNext() = advance(forward = true)
-            override fun seekToNextMediaItem() = advance(forward = true)
-            override fun seekToPrevious() = advance(forward = false)
-            override fun seekToPreviousMediaItem() = advance(forward = false)
+        override fun hasNextMediaItem() = true
+        override fun hasPreviousMediaItem() = true
+        override fun seekToNext() = advance(forward = true)
+        override fun seekToNextMediaItem() = advance(forward = true)
+        override fun seekToPrevious() = advance(forward = false)
+        override fun seekToPreviousMediaItem() = advance(forward = false)
     }
 
     // ── Carátula del "reproduciendo ahora" (Android Auto) ─────────────────
@@ -501,6 +523,9 @@ class PlaybackService : MediaLibraryService() {
         if (base.title.isNullOrBlank()) builder.setTitle(song.title)
         if (base.artist.isNullOrBlank()) builder.setArtist(song.singer)
         if (base.albumTitle.isNullOrBlank()) builder.setAlbumTitle(song.album)
+        com.music.spotui.util.ArtworkHelper.attachArtwork(
+            builder, applicationContext, song.coverUri, song.id.toString(), song.url
+        )
         PlaybackArtwork.get(song.id.toString())?.let {
             builder.setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
         }
@@ -756,8 +781,10 @@ class PlaybackService : MediaLibraryService() {
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
             val requested = mediaItems.getOrNull(startIndex) ?: mediaItems.firstOrNull()
             val song = requested?.let { trackById[it.mediaId] }
+            val resolvedQueue: List<MediaItem>
+            val resolvedIndex: Int
             if (song != null) {
-                val queue = queueByTrackId[requested.mediaId] ?: listOf(song)
+                val queue = queueByTrackId[requested?.mediaId] ?: listOf(song)
                 currentSongState.updateQueue(queue)
                 val idx = queue.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
                 currentSongState.updateSongState(
@@ -766,10 +793,41 @@ class PlaybackService : MediaLibraryService() {
                 )
                 ensureCurrentArtwork()
                 SongPlayer.playSong(song.url, applicationContext, "song/${song.id}")
+                resolvedQueue = queue.map { playable(it) }
+                resolvedIndex = idx
+            } else {
+                resolvedQueue = mediaItems
+                resolvedIndex = startIndex.coerceAtLeast(0)
             }
             return Futures.immediateFuture(
-                MediaSession.MediaItemsWithStartPosition(emptyList(), C.INDEX_UNSET, C.TIME_UNSET),
+                MediaSession.MediaItemsWithStartPosition(resolvedQueue, resolvedIndex, startPositionMs),
             )
+        }
+
+        override fun onPlaybackResumption(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            isForPlayback: Boolean,
+        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+            val currentQueue = currentSongState.queue.value
+            if (currentQueue.isNotEmpty()) {
+                val curId = currentSongState.songId.value
+                val idx = currentQueue.indexOfFirst { it.id == curId }.coerceAtLeast(0)
+                val items = currentQueue.map { playable(it) }
+                val song = currentQueue[idx]
+                if (isForPlayback) {
+                    ensureCurrentArtwork()
+                    SongPlayer.playSong(song.url, applicationContext, "song/${song.id}")
+                }
+                return Futures.immediateFuture(
+                    MediaSession.MediaItemsWithStartPosition(
+                        items,
+                        idx,
+                        SongPlayer.getCurrentPosition().coerceAtLeast(0L)
+                    )
+                )
+            }
+            return super.onPlaybackResumption(mediaSession, controller, isForPlayback)
         }
 
         override fun onSearch(
@@ -1028,6 +1086,9 @@ class PlaybackService : MediaLibraryService() {
         com.music.spotui.util.ArtworkHelper.attachArtwork(
             builder, this, song.coverUri, song.id.toString(), song.url
         )
+        PlaybackArtwork.get(song.id.toString())?.let {
+            builder.setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+        }
         return MediaItem.Builder()
             .setMediaId("song/${song.id}")
             .setMediaMetadata(builder.build())
