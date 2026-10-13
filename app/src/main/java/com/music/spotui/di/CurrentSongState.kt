@@ -58,9 +58,9 @@ class CurrentSongState @Inject constructor() {
     private val _queue: MutableState<List<SongsModel>> = mutableStateOf(emptyList())
     val queue: State<List<SongsModel>> get() = _queue
 
-    fun updateQueue(songs: List<SongsModel>) {
+    fun updateQueue(songs: List<SongsModel>, isManualEdit: Boolean = false) {
         var finalSongs = songs
-        if (shuffle.value) {
+        if (shuffle.value && !isManualEdit) {
             val curId = _songId.value
             val curSong = songs.firstOrNull { it.id == curId } ?: songs.firstOrNull()
             if (curSong != null) {
@@ -68,6 +68,8 @@ class CurrentSongState @Inject constructor() {
             } else {
                 finalSongs = songs.shuffled()
             }
+            unshuffledQueue = songs
+        } else if (isManualEdit && shuffle.value) {
             unshuffledQueue = songs
         }
         _queue.value = finalSongs
@@ -142,14 +144,15 @@ class CurrentSongState @Inject constructor() {
 
     /**
      * Starts shuffled playback of a full list (the shuffle button on
-     * playlist/album/liked screens): the queue becomes a shuffled copy, shuffle
-     * turns on, and the caller plays the returned first track.
+     * playlist/album/liked screens): the queue becomes a freshly shuffled copy
+     * starting with a new random track, shuffle turns on, and the caller plays it.
      */
     fun startShuffled(songs: List<SongsModel>): SongsModel? {
         if (songs.isEmpty()) return null
-        updateQueue(songs.shuffled())
+        val shuffled = songs.shuffled()
         unshuffledQueue = songs
         shuffle.value = true
+        updateQueue(shuffled, isManualEdit = true)
         return _queue.value.firstOrNull()
     }
     fun updateRepeatState(newRepeatState : RepeatMode){

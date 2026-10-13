@@ -108,6 +108,18 @@ object BackupHelper {
                     })
                 }
                 put("alternativeStreams", altObj)
+
+                // 5. Subscribed Podcasts
+                val podcastsArray = JSONArray()
+                com.music.spotui.data.preferences.SubscribedPodcastPref.getSubscribedPodcasts(context).forEach { pod ->
+                    podcastsArray.put(JSONObject().apply {
+                        put("id", pod.id)
+                        put("name", pod.name)
+                        put("publisher", pod.publisher)
+                        put("coverUri", pod.coverUri)
+                    })
+                }
+                put("subscribedPodcasts", podcastsArray)
             }
             put("data", data)
         }
@@ -290,8 +302,30 @@ object BackupHelper {
                 }
             }
 
+            // 5. Restore Subscribed Podcasts
+            var restoredPodcasts = 0
+            if (data.has("subscribedPodcasts")) {
+                val podArr = data.getJSONArray("subscribedPodcasts")
+                val restoredList = mutableListOf<com.music.spotui.data.entity.PodcastModel>()
+                for (i in 0 until podArr.length()) {
+                    val pObj = podArr.getJSONObject(i)
+                    restoredList.add(
+                        com.music.spotui.data.entity.PodcastModel(
+                            id = pObj.optString("id", ""),
+                            name = pObj.optString("name", ""),
+                            publisher = pObj.optString("publisher", ""),
+                            coverUri = pObj.optString("coverUri", "")
+                        )
+                    )
+                    restoredPodcasts++
+                }
+                if (restoredList.isNotEmpty()) {
+                    com.music.spotui.data.preferences.SubscribedPodcastPref.saveSubscribedPodcasts(context, restoredList)
+                }
+            }
+
             Api.HomeCache.clear()
-            Pair(true, "Restored $restoredPlaylists playlist(s), $restoredLiked liked song(s), and $restoredAltStreams alternative stream(s)!")
+            Pair(true, "Restored $restoredPlaylists playlist(s), $restoredLiked liked song(s), $restoredPodcasts podcast(s), and $restoredAltStreams alternative stream(s)!")
 
         }.getOrElse { e ->
             Log.e(TAG, "Error restoring backup", e)

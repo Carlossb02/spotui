@@ -21,24 +21,24 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
-import com.music.spotui.ui.components.AppSearchBar
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -49,12 +49,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -72,6 +72,7 @@ import com.music.spotui.data.preferences.getShowSortOption
 import com.music.spotui.data.preferences.isShowSortDescending
 import com.music.spotui.data.preferences.setShowSortOption
 import com.music.spotui.di.SongPlayer
+import com.music.spotui.ui.components.AppSearchBar
 import com.music.spotui.ui.components.Loader
 import com.music.spotui.ui.components.SongOptionsSheet
 import com.music.spotui.ui.components.SwipeToPlayNextWrapper
@@ -80,16 +81,19 @@ import com.music.spotui.ui.theme.AppPalette
 import com.music.spotui.ui.viewmodel.PlayerViewModel
 import com.music.spotui.ui.viewmodel.ShowViewModel
 
-@OptIn(ExperimentalGlideComposeApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalGlideComposeApi::class, ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ShowScreen(navController: NavController, showId: String, showName: String = "") {
     val vm: ShowViewModel = hiltViewModel()
     val playerViewModel: PlayerViewModel = hiltViewModel()
     val context = LocalContext.current
-    LaunchedEffect(showId) { vm.loadShow(showId, showName) }
+
+    LaunchedEffect(showId) { vm.loadShow(context, showId, showName) }
 
     val episodesState by vm.episodes.collectAsState()
     val show by vm.show.collectAsState()
+    val isSubscribed by vm.isSubscribed.collectAsState()
+    val visibleCount by vm.visibleCount.collectAsState()
     val episodes = (episodesState as? Response.Success)?.data.orEmpty()
 
     var searchQuery by remember(showId) { mutableStateOf("") }
@@ -97,6 +101,8 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
     var isDescending by remember(showId) { mutableStateOf(isShowSortDescending(context, showId)) }
     var showSortSheet by remember { mutableStateOf(false) }
     var menuSong by remember { mutableStateOf<SongsModel?>(null) }
+    var isNotificationOn by remember { mutableStateOf(false) }
+
     menuSong?.let { sel ->
         SongOptionsSheet(
             song = sel,
@@ -112,7 +118,8 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
         } else {
             episodes.filter {
                 it.title.contains(searchQuery, ignoreCase = true) ||
-                        it.singer.contains(searchQuery, ignoreCase = true)
+                        it.singer.contains(searchQuery, ignoreCase = true) ||
+                        it.description.contains(searchQuery, ignoreCase = true)
             }
         }
         when (currentSort) {
@@ -122,20 +129,33 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
         }
     }
 
+    val displayedEpisodes = remember(filteredEpisodes, visibleCount) {
+        filteredEpisodes.take(visibleCount)
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(AppBackground.toArgb()))
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0xFF1E2A38),
+                            Color(AppBackground.toArgb()),
+                            Color(AppBackground.toArgb())
+                        )
+                    )
+                )
                 .statusBarsPadding(),
         ) {
+            // Back Button
             item {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     tint = Color.White,
-                    contentDescription = "Back",
+                    contentDescription = "Volver",
                     modifier = Modifier
-                        .padding(16.dp)
+                        .padding(16.dp, 12.dp)
                         .size(26.dp)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
@@ -143,50 +163,169 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         ) { navController.navigateUp() },
                 )
             }
+
+            // Spotify Header Section
             item {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 8.dp),
                 ) {
+                    // Show Cover Image
+                    val resolvedCover = show?.coverUri?.takeIf { it.isNotBlank() }
+                        ?: episodes.firstOrNull { it.coverUri.isNotBlank() }?.coverUri
+                    val resolvedTitle = show?.name?.takeIf { it.isNotBlank() && it != "Podcast" }
+                        ?: showName.takeIf { it.isNotBlank() && it != "Podcast" }
+                        ?: episodes.firstOrNull()?.album?.takeIf { it.isNotBlank() && it != "Podcast" }
+                        ?: "Podcast"
+                    val resolvedPublisher = show?.publisher?.takeIf { it.isNotBlank() }
+                        ?: episodes.firstOrNull()?.singer?.takeIf { it.isNotBlank() }
+                        ?: ""
+
                     GlideImage(
-                        model = show?.coverUri?.takeIf { it.isNotBlank() } ?: episodes.firstOrNull()?.coverUri,
+                        model = resolvedCover,
                         contentScale = ContentScale.Crop,
                         failure = placeholder(R.drawable.placeholder),
-                        modifier = Modifier.size(180.dp).clip(RoundedCornerShape(8.dp)),
+                        modifier = Modifier
+                            .size(180.dp)
+                            .clip(RoundedCornerShape(12.dp)),
                         contentDescription = null,
                     )
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(16.dp))
+
+                    // Show Title
                     Text(
-                        text = show?.name ?: showName,
+                        text = resolvedTitle,
                         color = Color.White,
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    show?.publisher?.takeIf { it.isNotBlank() }?.let {
-                        Text(it, color = Color(0xFFB3B3B3), fontSize = 13.sp)
-                    }
-                    if (episodes.isNotEmpty()) {
-                        Spacer(Modifier.height(12.dp))
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_queue_add),
-                            tint = Color.White,
-                            modifier = Modifier
-                                .size(24.dp)
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                ) {
-                                    playerViewModel.addAllToQueue(episodes)
-                                    android.widget.Toast.makeText(
-                                        context,
-                                        "${episodes.size} episode(s) added to queue",
-                                        android.widget.Toast.LENGTH_SHORT,
-                                    ).show()
-                                },
-                            contentDescription = "Add all to queue",
+                    if (resolvedPublisher.isNotBlank()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "De $resolvedPublisher",
+                            color = Color(0xFFB3B3B3),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
                         )
+                    }
+
+                    Spacer(Modifier.height(18.dp))
+
+                    // Action Control Row (Follow button + Notifications + Queue/Play)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            // Seguir / Siguiendo Capsule Button
+                            Surface(
+                                color = if (isSubscribed) Color(0xFF1ED760) else Color.Transparent,
+                                shape = RoundedCornerShape(20.dp),
+                                border = if (isSubscribed) null else androidx.compose.foundation.BorderStroke(1.dp, Color.White),
+                                modifier = Modifier.clickable {
+                                    vm.toggleSubscription(context)
+                                    val msg = if (vm.isSubscribed.value) "Añadido a tus podcasts seguidos" else "Eliminado de tus podcasts"
+                                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (isSubscribed) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = Color.Black,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                    }
+                                    Text(
+                                        text = if (isSubscribed) "Siguiendo" else "Seguir",
+                                        color = if (isSubscribed) Color.Black else Color.White,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            // Bell Icon Button
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF2A2A30))
+                                    .clickable {
+                                        isNotificationOn = !isNotificationOn
+                                        val msg = if (isNotificationOn) "Notificaciones activadas" else "Notificaciones desactivadas"
+                                        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Notifications,
+                                    contentDescription = "Notificaciones",
+                                    tint = if (isNotificationOn) Color(0xFF1ED760) else Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+
+                        // Right action buttons: Add to queue & Big Green Play Button
+                        if (episodes.isNotEmpty()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_queue_add),
+                                    tint = Color.White,
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null,
+                                        ) {
+                                            playerViewModel.addAllToQueue(episodes)
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                "${episodes.size} episodio(s) añadidos a la cola",
+                                                android.widget.Toast.LENGTH_SHORT,
+                                            ).show()
+                                        },
+                                    contentDescription = "Añadir episodios a la cola",
+                                )
+
+                                Spacer(modifier = Modifier.width(16.dp))
+
+                                // Spotify Big Play Button
+                                Box(
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF1ED760))
+                                        .clickable {
+                                            val firstEp = filteredEpisodes.firstOrNull() ?: return@clickable
+                                            vm.updateQueue(filteredEpisodes)
+                                            vm.updateSongState(firstEp.coverUri, firstEp.title, firstEp.singer, true, firstEp.id, 0, firstEp.album)
+                                            SongPlayer.playSong(firstEp.url, context, "song/${firstEp.id}")
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = "Reproducir",
+                                        tint = Color.Black,
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -196,45 +335,53 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
             }
 
             if (episodes.isNotEmpty()) {
-                // Search Bar
+                // Search Bar inside Episodes
                 item {
                     AppSearchBar(
                         query = searchQuery,
                         onQueryChange = { searchQuery = it },
                         modifier = Modifier.padding(20.dp, 8.dp),
-                        placeholder = "Search in episodes",
+                        placeholder = "Buscar en episodios",
                     )
                 }
 
-                // Sort action button
+                // Sort Action Bar
                 item {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(20.dp, 0.dp, 20.dp, 8.dp),
-                        horizontalArrangement = Arrangement.Start
+                            .padding(20.dp, 4.dp, 20.dp, 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Text(
+                            text = "${filteredEpisodes.size} episodios",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(50))
                                 .background(Color(0xFF2A2A30))
                                 .clickable { showSortSheet = true }
-                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                                .padding(horizontal = 14.dp, vertical = 6.dp)
                         ) {
                             Text(
                                 text = currentSort.getDescriptiveLabel(isDescending),
                                 color = Color.White,
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Icon(
                                 imageVector = Icons.Default.KeyboardArrowDown,
-                                contentDescription = "Sort Options",
+                                contentDescription = "Opciones de orden",
                                 tint = Color.White,
                                 modifier = Modifier
                                     .size(16.dp)
-                                    .padding(start = 4.dp)
+                                    .padding(start = 2.dp)
                             )
                         }
                     }
@@ -250,7 +397,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "No matches found for \"$searchQuery\"",
+                            text = "No se encontraron coincidencias para \"$searchQuery\"",
                             color = Color.White,
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Medium
@@ -258,8 +405,9 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                     }
                 }
             } else {
-                items(filteredEpisodes.size) { i ->
-                    val ep = filteredEpisodes[i]
+                // Render batch of displayed episodes
+                items(displayedEpisodes.size) { i ->
+                    val ep = displayedEpisodes[i]
                     var expanded by remember(ep.id) { mutableStateOf(false) }
                     val chapters = remember(ep.description) { parsePodcastChapters(ep.description) }
 
@@ -268,7 +416,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                             playerViewModel.playNext(ep)
                             android.widget.Toast.makeText(
                                 context,
-                                "${ep.title} will play next",
+                                "${ep.title} se reproducirá a continuación",
                                 android.widget.Toast.LENGTH_SHORT
                             ).show()
                         }
@@ -290,64 +438,114 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                 .padding(16.dp, 12.dp),
                         ) {
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
+                                verticalAlignment = Alignment.Top,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
+                                // Episode Thumbnail
                                 GlideImage(
-                                    model = ep.coverUri,
+                                    model = ep.coverUri.ifBlank { show?.coverUri },
                                     contentScale = ContentScale.Crop,
                                     failure = placeholder(R.drawable.placeholder),
-                                    modifier = Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)),
+                                    modifier = Modifier
+                                        .size(56.dp)
+                                        .clip(RoundedCornerShape(8.dp)),
                                     contentDescription = null,
                                 )
-                                Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(start = 12.dp)
+                                ) {
+                                    // Title
                                     Text(
-                                        ep.title,
+                                        text = ep.title,
                                         color = if (ep.id == vm.currentSongId.value) Color(0xFF1ED760) else Color.White,
                                         fontSize = 15.sp,
-                                        fontWeight = FontWeight.SemiBold,
+                                        fontWeight = FontWeight.Bold,
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                     )
+
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        if (ep.durationMs > 0) {
-                                            Text(
-                                                formatDuration(ep.durationMs),
-                                                color = Color(0xFFB3B3B3),
-                                                fontSize = 12.sp
-                                            )
-                                            Text(" • ", color = Color(0xFFB3B3B3), fontSize = 12.sp)
-                                        }
+
+                                    // Description Excerpt
+                                    if (ep.description.isNotBlank()) {
                                         Text(
-                                            ep.singer,
+                                            text = ep.description,
                                             color = Color(0xFFB3B3B3),
-                                            fontSize = 12.sp,
-                                            maxLines = 1,
+                                            fontSize = 13.sp,
+                                            maxLines = if (expanded) Int.MAX_VALUE else 2,
                                             overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.clickable { expanded = !expanded }
                                         )
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                    }
+
+                                    // Meta Row: Duration Badge & Quick Play
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (ep.releaseDate.isNotBlank()) {
+                                                Text(
+                                                    text = ep.releaseDate,
+                                                    color = Color(0xFFB3B3B3),
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                                Text(" • ", color = Color(0xFFB3B3B3), fontSize = 12.sp)
+                                            }
+                                            if (ep.durationMs > 0) {
+                                                Surface(
+                                                    color = Color(0xFF2A2A30),
+                                                    shape = RoundedCornerShape(12.dp)
+                                                ) {
+                                                    Text(
+                                                        text = formatDuration(ep.durationMs),
+                                                        color = Color.White,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                            }
+                                        }
+
+                                        // Play Episode Circle Button
+                                        Box(
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFF2A2A30))
+                                                .clickable {
+                                                    vm.updateQueue(filteredEpisodes)
+                                                    vm.updateSongState(ep.coverUri, ep.title, ep.singer, true, ep.id, i, ep.album)
+                                                    SongPlayer.playSong(ep.url, context, "song/${ep.id}")
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.PlayArrow,
+                                                contentDescription = "Reproducir episodio",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
 
-                            if (ep.description.isNotBlank()) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = ep.description,
-                                    color = Color(0xFFD0D0D0),
-                                    fontSize = 13.sp,
-                                    maxLines = if (expanded) Int.MAX_VALUE else 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.clickable { expanded = !expanded }
-                                )
-                            }
-
+                            // Chapters list
                             if (chapters.isNotEmpty()) {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
                                     text = "Capítulos (${chapters.size})",
                                     color = Color(0xFF1ED760),
-                                    fontSize = 13.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
@@ -396,15 +594,44 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
                             HorizontalDivider(color = Color(0xFF222222))
                         }
                     }
                 }
+
+                // Spotify Green "Cargar más" Button
+                if (filteredEpisodes.size > visibleCount) {
+                    item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Surface(
+                                color = Color(0xFF1ED760),
+                                shape = RoundedCornerShape(24.dp),
+                                modifier = Modifier
+                                    .clickable { vm.loadMoreEpisodes() }
+                            ) {
+                                Text(
+                                    text = "Cargar más",
+                                    color = Color.Black,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp)
+                                )
+                            }
+                        }
+                    }
+                }
             }
+
             item { Spacer(Modifier.height(130.dp)) }
         }
 
+        // Sort Options Modal Bottom Sheet
         if (showSortSheet) {
             ModalBottomSheet(
                 onDismissRequest = { showSortSheet = false },
@@ -416,7 +643,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         .navigationBarsPadding()
                 ) {
                     Text(
-                        text = "Sort by",
+                        text = "Ordenar por",
                         color = Color.White,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,

@@ -1137,8 +1137,12 @@ object SongPlayer {
         }
         val networkAvailable = isNetworkAvailable(appContext)
         streamCache[song]?.let { url ->
+            val cacheKey = com.music.spotui.audio.LosslessCacheKeyFactory.buildCacheKey(flacSpotifyId, url)
+            val hasDiskCache = runCatching {
+                mediaCache(appContext).getCachedBytes(cacheKey, 0, 100_000L) > 0
+            }.getOrDefault(false)
             if (qualityTierCache[song] == expectedTier || qualityTierCache[song] == null) {
-                if (!networkAvailable || streamStillValid(song, url)) {
+                if (!networkAvailable || hasDiskCache || streamStillValid(song, url)) {
                     if (forPlayback) {
                         currentSource = sourceCache[song] ?: "YouTube"
                         currentQuality = qualityCache[song] ?: ""
@@ -1167,7 +1171,11 @@ object SongPlayer {
             updateResolveStatus(true, "Checking saved cache...")
         }
         com.music.spotui.data.preferences.getCachedStream(appContext, song, expectedTier = expectedTier)?.let { (url, source, cachedQuality) ->
-            if (!networkAvailable || streamStillValid(song, url)) {
+            val cacheKey = com.music.spotui.audio.LosslessCacheKeyFactory.buildCacheKey(flacSpotifyId, url)
+            val hasDiskCache = runCatching {
+                mediaCache(appContext).getCachedBytes(cacheKey, 0, 100_000L) > 0
+            }.getOrDefault(false)
+            if (!networkAvailable || hasDiskCache || streamStillValid(song, url)) {
                 streamCache[song] = url
                 sourceCache[song] = source
                 qualityCache[song] = cachedQuality
@@ -3187,6 +3195,7 @@ object SongPlayer {
 
     private var posSaveTick = 0
     @Volatile private var lastAutoAdvanceMs = 0L
+    @Volatile private var lastCrossfadeCompletedMs = 0L
 
     private fun startPositionWatch() {
         positionWatchJob?.cancel()
@@ -3211,6 +3220,7 @@ object SongPlayer {
                 val currentSongUrl = state.songUrl.value
                 val expectedMs = expectedDurationMs(currentSongUrl)
                 val exoDur = withContext(Dispatchers.Main) { p.duration }
+                if (exoDur == androidx.media3.common.C.TIME_UNSET) continue
                 val dur = when {
                     expectedMs != null && expectedMs > 0L -> {
                         if (exoDur > 0L && abs(exoDur - expectedMs) <= maxOf(15_000L, expectedMs / 10)) {
@@ -3227,6 +3237,8 @@ object SongPlayer {
 
                 val crossfadeMs = com.music.spotui.data.preferences.getCrossfadeMs(ctx)
                 val now = System.currentTimeMillis()
+
+                if (now - lastCrossfadeCompletedMs < 15_000L) continue
 
                 if (crossfadeMs > 0 && state.repeat.value != RepeatMode.ONE) {
                     if (pos >= dur - crossfadeMs && pos >= dur / 2 && pos >= 10_000L && dur >= crossfadeMs + 5_000L) {
@@ -3445,10 +3457,12 @@ object SongPlayer {
             onPlayerSwapped?.invoke(old, incoming)
             runCatching {
                 old?.setAudioAttributes(buildAudioAttributes(), /* handleAudioFocus = */ false)
+                old?.setHandleAudioBecomingNoisy(false)
                 old?.pause()
                 old?.stop()
                 old?.release()
             }
+            lastCrossfadeCompletedMs = System.currentTimeMillis()
             isCrossfading = false
             crossfadeTriggered.set(false)
             releaseWakeLock("spotui:crossfade")

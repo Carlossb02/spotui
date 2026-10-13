@@ -209,7 +209,7 @@ fun QueueContent(
                             modifier = Modifier.padding(16.dp, 18.dp, 16.dp, 6.dp)
                         )
                     }
-                    itemsIndexed(upcoming, key = { _, s -> s.id }) { upIdx, song ->
+                    itemsIndexed(upcoming, key = { _, s -> s.id }) { _, song ->
                         val isDragging = draggingId == song.id
                         val dismissState = rememberSwipeToDismissBoxState(
                             confirmValueChange = { value ->
@@ -260,11 +260,15 @@ fun QueueContent(
                                         change.consume()
                                         dragOffset += dragAmount.y
                                         // Crossed a full row height → swap with the neighbour.
-                                        val abs = queue.indexOfFirst { it.id == song.id }
-                                        if (dragOffset > rowHeightPx / 2 && upIdx < upcoming.size - 1) {
+                                        val currentQueue = playerViewModel.queue.value
+                                        val currentCurIdx = currentQueue.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
+                                        val abs = currentQueue.indexOfFirst { it.id == song.id }
+                                        val currentUpIdx = currentQueue.drop(currentCurIdx + 1).indexOfFirst { it.id == song.id }
+                                        val upcomingCount = (currentQueue.size - (currentCurIdx + 1)).coerceAtLeast(0)
+                                        if (dragOffset > rowHeightPx / 2 && abs >= 0 && currentUpIdx >= 0 && currentUpIdx < upcomingCount - 1) {
                                             playerViewModel.moveQueueItem(abs, abs + 1)
                                             dragOffset -= rowHeightPx
-                                        } else if (dragOffset < -rowHeightPx / 2 && upIdx > 0) {
+                                        } else if (dragOffset < -rowHeightPx / 2 && abs >= 0 && currentUpIdx > 0) {
                                             playerViewModel.moveQueueItem(abs, abs - 1)
                                             dragOffset += rowHeightPx
                                         }

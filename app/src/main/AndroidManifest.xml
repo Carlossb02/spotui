@@ -89,13 +89,13 @@
             android:resource="@xml/automotive_app_desc" />
         <meta-data
             android:name="com.google.android.gms.car.notification.SmallIcon"
-            android:resource="@drawable/ic_spotui_notification" />
+            android:resource="@mipmap/ic_launcher" />
 
         <service
             android:name=".ui.notification.PlaybackService"
             android:exported="true"
-            android:icon="@drawable/ic_spotui_notification"
-            android:logo="@drawable/logo"
+            android:icon="@mipmap/ic_launcher"
+            android:logo="@mipmap/ic_launcher"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />

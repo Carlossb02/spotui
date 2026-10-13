@@ -21,7 +21,9 @@ data class SongsModel(
     // navigates to the correct artist page.
     val artistIds : String = "",
     // Podcast episode description (if applicable)
-    val description : String = ""
+    val description : String = "",
+    // Podcast episode release/upload date string (e.g. "12 oct 2025" or "Hace 2 días")
+    val releaseDate : String = "",
 ){
-    constructor() : this(-1 ,"" ,"" ,"" ,"" ,"", "", description = "")
+    constructor() : this(-1 ,"" ,"" ,"" ,"" ,"", "", description = "", releaseDate = "")
 }

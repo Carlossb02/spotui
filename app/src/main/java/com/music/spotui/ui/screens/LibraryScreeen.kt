@@ -99,6 +99,7 @@ import com.music.spotui.ui.navigation.Routes
 import com.music.spotui.ui.navigation.albumRoute
 import com.music.spotui.ui.navigation.artistRoute
 import com.music.spotui.ui.navigation.playlistRoute
+import com.music.spotui.ui.navigation.showRoute
 import com.music.spotui.ui.theme.AppBackground
 import com.music.spotui.ui.viewmodel.LibraryFilterType
 import com.music.spotui.ui.viewmodel.LibraryViewModel
@@ -176,6 +177,14 @@ fun LibraryFilterChips(
                 label = stringResource(R.string.artists),
                 isSelected = selectedFilter == LibraryFilterType.ARTISTS,
                 onClick = { onFilterSelected(LibraryFilterType.ARTISTS) }
+            )
+        }
+
+        item {
+            LibraryChipItem(
+                label = "Podcasts",
+                isSelected = selectedFilter == LibraryFilterType.PODCASTS,
+                onClick = { onFilterSelected(LibraryFilterType.PODCASTS) }
             )
         }
 
@@ -511,8 +520,9 @@ fun LibraryScreen(navController: NavController) {
                         val matchesCategory = when (selectedFilter) {
                             LibraryFilterType.ALL -> true
                             LibraryFilterType.PLAYLISTS -> entry.isPlaylist
-                            LibraryFilterType.ALBUMS -> !entry.isPlaylist && entry.spotifyId != Api.HomeCache.LIKED_SONGS_ID && entry.spotifyId != Api.HomeCache.DOWNLOADS_ID
+                            LibraryFilterType.ALBUMS -> !entry.isPlaylist && !entry.isPodcast && entry.spotifyId != Api.HomeCache.LIKED_SONGS_ID && entry.spotifyId != Api.HomeCache.DOWNLOADS_ID
                             LibraryFilterType.ARTISTS -> false
+                            LibraryFilterType.PODCASTS -> entry.isPodcast
                         }
                         val matchesDownload = if (isDownloadedOnly) isLibraryEntryDownloaded(context, entry) else true
                         val matchesSearch = if (searchQuery.isBlank()) true else (entry.name.contains(searchQuery, ignoreCase = true) || entry.artists.contains(searchQuery, ignoreCase = true) || entry.subtitle.contains(searchQuery, ignoreCase = true))
@@ -525,7 +535,7 @@ fun LibraryScreen(navController: NavController) {
                     }
                 }
                 val filteredArtists = remember(followedArtists, selectedFilter, isDownloadedOnly, searchQuery, currentSort, isDescending) {
-                    if (selectedFilter == LibraryFilterType.PLAYLISTS || selectedFilter == LibraryFilterType.ALBUMS) {
+                    if (selectedFilter == LibraryFilterType.PLAYLISTS || selectedFilter == LibraryFilterType.ALBUMS || selectedFilter == LibraryFilterType.PODCASTS) {
                         emptyList()
                     } else {
                         val searchFiltered = if (searchQuery.isBlank()) followedArtists else followedArtists.filter { it.name.contains(searchQuery, ignoreCase = true) }
@@ -894,7 +904,8 @@ fun SumUpLibraryScreen(
 }
 
 private fun openLibraryEntry(entry: LibraryEntry, navController: NavController) {
-    if (entry.spotifyId == Api.HomeCache.LIKED_SONGS_ID) navController.navigate(Routes.Liked.route)
+    if (entry.isPodcast) navController.navigate(showRoute(entry.spotifyId, entry.name))
+    else if (entry.spotifyId == Api.HomeCache.LIKED_SONGS_ID) navController.navigate(Routes.Liked.route)
     else if (entry.spotifyId == Api.HomeCache.DOWNLOADS_ID) navController.navigate(Routes.Downloads.route)
     else if (entry.isPlaylist) navController.navigate(playlistRoute(entry.spotifyId, entry.name))
     else navController.navigate(albumRoute(entry.name, entry.artists))

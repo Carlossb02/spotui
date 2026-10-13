@@ -204,9 +204,94 @@ object PodcastProvider {
         return seconds * 1000
     }
 
+    private val timePattern = Regex("""^(\d{1,2}:)?\d{1,2}:\d{2}$""")
+
+    private fun parseDurationFromText(text: String): Int {
+        val trimmed = text.trim().lowercase()
+        if (timePattern.matches(trimmed)) {
+            return parseDurationMs(trimmed)
+        }
+        var totalSeconds = 0
+        val hourMatch = Regex("""(\d+)\s*h""").find(trimmed)
+        if (hourMatch != null) {
+            totalSeconds += (hourMatch.groupValues[1].toIntOrNull() ?: 0) * 3600
+        }
+        val minMatch = Regex("""(\d+)\s*min""").find(trimmed)
+        if (minMatch != null) {
+            totalSeconds += (minMatch.groupValues[1].toIntOrNull() ?: 0) * 60
+        }
+        val secMatch = Regex("""(\d+)\s*seg""").find(trimmed)
+        if (secMatch != null) {
+            totalSeconds += (secMatch.groupValues[1].toIntOrNull() ?: 0)
+        }
+        return totalSeconds * 1000
+    }
+
+    private fun isDateText(text: String): Boolean {
+        val lower = text.trim().lowercase()
+        return lower.contains("hace") || lower.contains("ayer") || lower.contains("hoy") ||
+                lower.contains("ago") || lower.contains("yesterday") ||
+                Regex("""\b(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic|jan|apr|aug)\b""").containsMatchIn(lower) ||
+                Regex("""\b20\d{2}\b""").containsMatchIn(lower)
+    }
+
+    private fun parseShowFromBrowse(root: JSONObject, showId: String, fallbackName: String = ""): PodcastModel? {
+        var title: String? = null
+        var publisher: String? = null
+        var coverUri: String? = null
+
+        walk(root) { key, obj ->
+            if (
+                key == "musicDetailHeaderRenderer" ||
+                key == "musicResponsiveHeaderRenderer" ||
+                key == "musicHeaderRenderer" ||
+                key == "musicEditablePlaylistDetailHeaderRenderer"
+            ) {
+                if (title == null) {
+                    val titleObj = obj.optJSONObject("title")
+                    title = titleObj?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                        ?.takeIf { it.isNotBlank() && it != "Podcast" && it != "Programa" }
+                }
+                if (publisher == null) {
+                    val subtitleObj = obj.optJSONObject("subtitle")
+                        ?: obj.optJSONObject("straplineTextOne")
+                        ?: obj.optJSONObject("author")
+                        ?: obj.optJSONObject("owner")
+                    val runs = subtitleObj?.optJSONArray("runs")
+                    if (runs != null) {
+                        val texts = mutableListOf<String>()
+                        for (i in 0 until runs.length()) {
+                            val txt = runs.optJSONObject(i)?.optString("text").orEmpty().trim()
+                            if (txt.isNotBlank() && txt != "•" && txt != "Podcast" && txt != "Programa" && !isDateText(txt)) {
+                                texts.add(txt)
+                            }
+                        }
+                        if (texts.isNotEmpty()) publisher = texts.first()
+                    }
+                }
+                if (coverUri == null) {
+                    val thumbs = findFirst(obj, "thumbnails") as? JSONArray
+                    coverUri = thumbs?.optJSONObject(thumbs.length() - 1)?.optString("url")?.takeIf { it.isNotBlank() }
+                }
+            }
+        }
+
+        val finalTitle = title?.takeIf { it.isNotBlank() && it != "Podcast" }
+            ?: fallbackName.takeIf { it.isNotBlank() && it != "Podcast" }
+            ?: return null
+
+        return PodcastModel(
+            id = if (showId.startsWith(YOUTUBE_PODCAST_PREFIX)) showId else "$YOUTUBE_PODCAST_PREFIX$showId",
+            name = finalTitle,
+            publisher = publisher.orEmpty(),
+            coverUri = coverUri.orEmpty()
+        )
+    }
+
     private fun parseEpisodesFromBrowse(
         root: JSONObject,
-        showName: String
+        showName: String,
+        defaultCover: String = ""
     ): List<SongsModel> {
         val rendererNames = mutableSetOf<String>()
         val episodes = mutableListOf<SongsModel>()
@@ -235,31 +320,58 @@ object PodcastProvider {
                 }
                 ?: return@walk
 
-            // Miniatura (la última suele ser la mayor)
+            // Miniatura
             val thumbs = findFirst(obj, "thumbnails") as? JSONArray
             val cover = thumbs
                 ?.optJSONObject(thumbs.length() - 1)
                 ?.optString("url")
                 .orEmpty()
+                .ifBlank { defaultCover }
 
-            // Duración: primer texto con forma H:MM:SS o M:SS
-            val texts = mutableListOf<String>()
-            collectTexts(obj, texts)
-            val durationMs = texts
-                .firstOrNull { durationRegex.matches(it.trim()) }
-                ?.let { parseDurationMs(it.trim()) }
-                ?: 0
+            // Descripción y textos secundarios
+            val allTexts = mutableListOf<String>()
+            collectTexts(obj, allTexts)
+
+            var durationMs = 0
+            var releaseDate = ""
+            var description = ""
+
+            val descObj = obj.optJSONObject("description") ?: obj.optJSONObject("subtitle")
+            val descRuns = descObj?.optJSONArray("runs")
+            if (descRuns != null) {
+                val sb = StringBuilder()
+                for (rIdx in 0 until descRuns.length()) {
+                    sb.append(descRuns.optJSONObject(rIdx)?.optString("text").orEmpty())
+                }
+                description = sb.toString().trim()
+            }
+
+            for (txt in allTexts) {
+                val clean = txt.trim()
+                if (clean.isBlank()) continue
+                if (durationMs == 0) {
+                    val dur = parseDurationFromText(clean)
+                    if (dur > 0) {
+                        durationMs = dur
+                        continue
+                    }
+                }
+                if (releaseDate.isBlank() && isDateText(clean)) {
+                    releaseDate = clean
+                }
+            }
 
             episodes.add(
                 SongsModel(
                     id = stableId("$YOUTUBE_EPISODE_PREFIX$videoId"),
                     title = title,
                     album = showName.ifBlank { "Podcast" },
-                    singer = "",
+                    singer = showName,
                     coverUri = cover,
                     url = "https://www.youtube.com/watch?v=$videoId",
-                    description = title,
-                    durationMs = durationMs
+                    description = description.ifBlank { title },
+                    durationMs = durationMs,
+                    releaseDate = releaseDate
                 )
             )
         }
@@ -348,33 +460,42 @@ object PodcastProvider {
         if (browseId.isBlank()) return@withContext null
 
         try {
-            val page = YouTube.podcast(browseId)
-                .onFailure {
-                    Log.e(TAG, "podcast() FAILED: browseId=$browseId", it)
-                }
-                .getOrNull()
-                ?: return@withContext null
-
-            val show = page.podcast
-
-            PodcastModel(
-                id = "$YOUTUBE_PODCAST_PREFIX${show.id}",
-                name = show.title.ifBlank { showName },
-                publisher = show.author?.name.orEmpty(),
-                coverUri = show.thumbnail.orEmpty()
-            )
+            val root = browseRaw(browseId)
+            if (root != null) {
+                val parsedShow = parseShowFromBrowse(root, showId, showName)
+                if (parsedShow != null) return@withContext parsedShow
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load podcast: $showId", e)
-            null
+            Log.e(TAG, "getShow direct browse failed for $showId", e)
         }
+
+        try {
+            val page = YouTube.podcast(browseId).getOrNull()
+            if (page != null && page.podcast.title.isNotBlank() && page.podcast.title != "Podcast") {
+                return@withContext PodcastModel(
+                    id = "$YOUTUBE_PODCAST_PREFIX${page.podcast.id}",
+                    name = page.podcast.title,
+                    publisher = page.podcast.author?.name.orEmpty(),
+                    coverUri = page.podcast.thumbnail.orEmpty()
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load podcast via innertube: $showId", e)
+        }
+
+        if (showName.isNotBlank() && showName != "Podcast") {
+            PodcastModel(id = showId, name = showName, publisher = "", coverUri = "")
+        } else null
     }
 
     /**
      * Episodios de un programa.
-     * 1) YouTube.podcast() de innertube.
-     * 2) Si viene vacío, petición directa a YouTube Music.
+     * 1) Petición directa a YouTube Music.
+     * 2) Fallback innertube.
      */
     suspend fun getShowEpisodes(
         showId: String,
@@ -390,23 +511,29 @@ object PodcastProvider {
 
         var resolvedName = showName
 
-        // 1) innertube
         try {
-            val page = YouTube.podcast(browseId)
-                .onFailure {
-                    Log.e(TAG, "podcast() FAILED: browseId=$browseId", it)
+            val root = browseRaw(browseId)
+            if (root != null) {
+                val headerShow = parseShowFromBrowse(root, showId, showName)
+                if (headerShow != null && headerShow.name.isNotBlank()) {
+                    resolvedName = headerShow.name
                 }
-                .getOrNull()
-
-            if (page != null) {
-                resolvedName = showName.ifBlank { page.podcast.title }
-                Log.d(TAG, "innertube $browseId: ${page.episodes.size} episodes")
-
-                if (page.episodes.isNotEmpty()) {
-                    return@withContext page.episodes
-                        .distinctBy { it.id }
-                        .map { episodeToSong(it, resolvedName) }
+                val list = parseEpisodesFromBrowse(root, resolvedName, headerShow?.coverUri.orEmpty())
+                if (list.isNotEmpty()) {
+                    return@withContext list
                 }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "direct browse episodes failed: $showId", e)
+        }
+
+        try {
+            val page = YouTube.podcast(browseId).getOrNull()
+            if (page != null && page.episodes.isNotEmpty()) {
+                resolvedName = page.podcast.title.ifBlank { showName }
+                return@withContext page.episodes.map { episodeToSong(it, resolvedName) }
             }
         } catch (e: CancellationException) {
             throw e
@@ -414,17 +541,6 @@ object PodcastProvider {
             Log.e(TAG, "innertube podcast page failed: $showId", e)
         }
 
-        // 2) Petición directa
-        try {
-            val root = browseRaw(browseId) ?: return@withContext emptyList()
-            val list = parseEpisodesFromBrowse(root, resolvedName)
-            Log.d(TAG, "direct browse $browseId: ${list.size} episodes")
-            list
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG, "direct browse failed: $showId", e)
-            emptyList()
-        }
+        emptyList()
     }
 }

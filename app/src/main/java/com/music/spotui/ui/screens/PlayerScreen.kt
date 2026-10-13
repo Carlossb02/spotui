@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -243,16 +244,30 @@ fun PlayerScreen(navController: NavController) {
             val attrs = android.view.WindowManager.LayoutParams()
             attrs.copyFrom(activityWindow.attributes)
             attrs.type = dialogWindow.attributes.type
+            attrs.width = android.view.WindowManager.LayoutParams.MATCH_PARENT
+            attrs.height = android.view.WindowManager.LayoutParams.MATCH_PARENT
             dialogWindow.attributes = attrs
+            dialogWindow.setLayout(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            )
             // Resize the dialog's parent view to fill the screen.
             val parentView = view.parent as? android.view.View
             parentView?.layoutParams = android.widget.FrameLayout.LayoutParams(
-                activityWindow.decorView.width,
-                activityWindow.decorView.height
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT
             )
             // Make bars transparent.
             dialogWindow.statusBarColor = android.graphics.Color.TRANSPARENT
             dialogWindow.navigationBarColor = android.graphics.Color.TRANSPARENT
+        }
+    }
+
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    LaunchedEffect(configuration.orientation) {
+        if (hasAppeared) {
+            offsetY = 0f
+            animatable.snapTo(0f)
         }
     }
 
@@ -616,210 +631,362 @@ fun PlayerScreen(navController: NavController) {
                     )
             )
         }
+        val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+        val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
         androidx.compose.foundation.lazy.LazyColumn(
-            modifier = Modifier
-                .fillMaxSize(),
+            modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             item {
-                Column(
-                    verticalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier
-                        .fillParentMaxHeight()
-                        .fillMaxWidth()
-                        .navigationBarsPadding(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Spacer(modifier = Modifier.statusBarsPadding())
-                    PlayerTopBar(
-                        navController = navController,
-                        onMenuClick = { showMenu = true },
-                        contextName = playerViewModel.currentSongAlbum.value,
-                        onBackClick = { dismissPlayer() }
-                    )
-                    //Spacer(modifier = Modifier.padding(16.dp))
-                    // Swipe the artwork left/right to skip to the next/previous track. Using a
-                    // HorizontalPager makes the artwork follow the finger and snap, syncing the
-                    // change with the track (Spotify's now-playing gesture) instead of an abrupt
-                    // swipe-then-switch. When the queue is empty fall back to a static image.
-                    // When a Canvas is playing it fills the screen behind this column, so the
-                    // artwork is hidden (alpha 0) rather than removed — the pager stays in
-                    // the layout so the swipe-to-skip gesture keeps working over the video.
-                    // The artwork is the FLEXIBLE part of the screen (weight), capped at its
-                    // old 385dp size. On short/scaled displays the fixed-size version pushed
-                    // the slider and playback buttons off the bottom of the screen; now the
-                    // artwork shrinks instead and the controls always fit.
-                    Box(
-                        contentAlignment = Alignment.Center,
+                if (isLandscape) {
+                    Row(
                         modifier = Modifier
-                            .weight(1f)
+                            .fillParentMaxHeight()
                             .fillMaxWidth()
+                            .statusBarsPadding()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (queueSongs.isEmpty()) {
-                            GlideImage(
-                                modifier = Modifier
-                                    .sizeIn(maxWidth = 385.dp, maxHeight = 385.dp)
-                                    .aspectRatio(1f)
-                                    .padding(20.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .alpha(if (canvasUrl != null) 0f else 1f),
-                                model = songCoverUri,
-                                contentScale = ContentScale.Crop,
-                                contentDescription = ""
-                            )
-                        } else {
-                            HorizontalPager(
-                                state = artworkPagerState,
-                                modifier = Modifier
-                                    .sizeIn(maxWidth = 385.dp, maxHeight = 385.dp)
-                                    .aspectRatio(1f),
-                            ) { page ->
+                        // Left side: Artwork / Pager
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .weight(0.42f)
+                                .fillMaxHeight()
+                                .padding(12.dp)
+                        ) {
+                            if (queueSongs.isEmpty()) {
                                 GlideImage(
                                     modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(20.dp)
+                                        .aspectRatio(1f)
                                         .clip(RoundedCornerShape(10.dp))
                                         .alpha(if (canvasUrl != null) 0f else 1f),
-                                    model = queueSongs.getOrNull(page)?.coverUri ?: songCoverUri,
+                                    model = songCoverUri,
                                     contentScale = ContentScale.Crop,
                                     contentDescription = ""
                                 )
+                            } else {
+                                HorizontalPager(
+                                    state = artworkPagerState,
+                                    modifier = Modifier.aspectRatio(1f),
+                                ) { page ->
+                                    GlideImage(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .alpha(if (canvasUrl != null) 0f else 1f),
+                                        model = queueSongs.getOrNull(page)?.coverUri ?: songCoverUri,
+                                        contentScale = ContentScale.Crop,
+                                        contentDescription = ""
+                                    )
+                                }
                             }
                         }
-                    }
-                    //Spacer(modifier = Modifier.padding(30.dp))
 
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp)
-                    ) {
-                        // Reads each 300ms tick (songProgress recomposition) so it reflects
-                        // the current engine — Spotify vs Lossless (SpotiFLAC) vs YouTube.
-                        PlayerInfo(
-                            songTitle, songSinger, songId, context, isLiked,
-                            source = SongPlayer.currentSource,
-                            quality = SongPlayer.currentQuality,
-                            isResolving = playerViewModel.isResolving.value,
-                            resolveStatus = playerViewModel.resolveStatus.value,
-                            resolveError = playerViewModel.resolveError.value,
-                            resolveDetailNote = playerViewModel.resolveDetailNote.value,
-                            onArtistClick = {
-                                val artists = songSinger.split(",").map { it.trim() }
-                                    .filter { it.isNotBlank() }
-                                val ids = playerViewModel.currentArtistIds.value.split(",")
-                                    .map { it.trim() }
-                                if (artists.size == 1) {
-                                    val aId = ids.getOrElse(0) { "" }
-                                    navController.navigate(
-                                        com.music.spotui.ui.navigation.artistRoute(
-                                            artists[0],
-                                            aId
-                                        )
-                                    )
-                                } else {
-                                    showArtistSheet = true
-                                }
-                            },
-                            spotifyTrackId = queueSongs.firstOrNull { it.id == songId }?.spotifyTrackId.orEmpty(),
-                            onShowSavedIn = { showSavedIn = true },
-                            isExplicit = queueSongs.firstOrNull { it.id == songId }?.explicit == true,
-                        )
-
-                        // Smooth scrubbing: while dragging, the thumb follows the finger
-                        // locally (no seek per delta — that fired a web seek on every pixel
-                        // and fought the polled position, making it jerky). We seek ONCE on
-                        // release.
-                        var isDragging by remember { mutableStateOf(false) }
-                        var dragValue by remember { mutableStateOf(0f) }
-                        val liveFraction = SongPlayer.getDuration().toFloat().let { dur ->
-                            if (dur > 0f) (SongPlayer.getCurrentPosition()
-                                .toFloat() / dur).coerceIn(0f, 1f) else 0f
-                        }
-                        CustomSlider(
-                            value = if (isDragging) dragValue else liveFraction,
-                            onValueChange = { newValue ->
-                                isDragging = true
-                                dragValue = newValue
-                            },
-                            onValueChangeFinished = {
-                                val dur = SongPlayer.getDuration()
-                                if (dur > 0) SongPlayer.seekTo((dragValue * dur).toLong())
-                                isDragging = false
-                                if (!songPlayingState) {
-                                    SongPlayer.play()
-                                    playerViewModel.updateSongState(
-                                        playerViewModel.currentSongCoverUri.value,
-                                        playerViewModel.currentSongTitle.value,
-                                        playerViewModel.currentSongSinger.value,
-                                        true,
-                                        playerViewModel.currentSongId.value,
-                                        playerViewModel.currentSongIndex.value,
-                                        playerViewModel.currentSongAlbum.value
-                                    )
-                                }
-                            },
-                            valueRange = 0f..1f,
-                            steps = 0,
+                        // Right side: TopBar + Controls + Connect Row
+                        Column(
+                            verticalArrangement = Arrangement.SpaceEvenly,
+                            horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp, 12.dp, 16.dp, 0.dp),
-                            colors = null
-                        )
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(25.dp, 0.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                                .weight(0.58f)
+                                .fillMaxHeight()
+                                .padding(start = 12.dp, end = 12.dp, bottom = 8.dp)
                         ) {
-                            Text(
-                                // While scrubbing, show the dragged time so the label tracks the finger.
-                                text = if (isDragging) {
-                                    val dur = SongPlayer.getDuration()
-                                    if (dur > 0) playerViewModel.formatDuration((dragValue * dur).toLong()) else "0:00"
-                                } else songProgressText,
-                                color = Color.Gray,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
+                            PlayerTopBar(
+                                navController = navController,
+                                onMenuClick = { showMenu = true },
+                                contextName = playerViewModel.currentSongAlbum.value,
+                                onBackClick = { dismissPlayer() }
                             )
-                            Text(
-                                text = songDurationText,
-                                color = Color.Gray,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
+
+                            PlayerInfo(
+                                songTitle, songSinger, songId, context, isLiked,
+                                source = SongPlayer.currentSource,
+                                quality = SongPlayer.currentQuality,
+                                isResolving = playerViewModel.isResolving.value,
+                                resolveStatus = playerViewModel.resolveStatus.value,
+                                resolveError = playerViewModel.resolveError.value,
+                                resolveDetailNote = playerViewModel.resolveDetailNote.value,
+                                onArtistClick = {
+                                    val artists = songSinger.split(",").map { it.trim() }
+                                        .filter { it.isNotBlank() }
+                                    val ids = playerViewModel.currentArtistIds.value.split(",")
+                                        .map { it.trim() }
+                                    if (artists.size == 1) {
+                                        val aId = ids.getOrElse(0) { "" }
+                                        navController.navigate(
+                                            com.music.spotui.ui.navigation.artistRoute(
+                                                artists[0],
+                                                aId
+                                            )
+                                        )
+                                    } else {
+                                        showArtistSheet = true
+                                    }
+                                },
+                                spotifyTrackId = queueSongs.firstOrNull { it.id == songId }?.spotifyTrackId.orEmpty(),
+                                onShowSavedIn = { showSavedIn = true },
+                                isExplicit = queueSongs.firstOrNull { it.id == songId }?.explicit == true,
+                            )
+
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                var isDragging by remember { mutableStateOf(false) }
+                                var dragValue by remember { mutableStateOf(0f) }
+                                val liveFraction = SongPlayer.getDuration().toFloat().let { dur ->
+                                    if (dur > 0f) (SongPlayer.getCurrentPosition()
+                                        .toFloat() / dur).coerceIn(0f, 1f) else 0f
+                                }
+                                CustomSlider(
+                                    value = if (isDragging) dragValue else liveFraction,
+                                    onValueChange = { newValue ->
+                                        isDragging = true
+                                        dragValue = newValue
+                                    },
+                                    onValueChangeFinished = {
+                                        val dur = SongPlayer.getDuration()
+                                        if (dur > 0) SongPlayer.seekTo((dragValue * dur).toLong())
+                                        isDragging = false
+                                        if (!songPlayingState) {
+                                            SongPlayer.play()
+                                            playerViewModel.updateSongState(
+                                                playerViewModel.currentSongCoverUri.value,
+                                                playerViewModel.currentSongTitle.value,
+                                                playerViewModel.currentSongSinger.value,
+                                                true,
+                                                playerViewModel.currentSongId.value,
+                                                playerViewModel.currentSongIndex.value,
+                                                playerViewModel.currentSongAlbum.value
+                                            )
+                                        }
+                                    },
+                                    valueRange = 0f..1f,
+                                    steps = 0,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 8.dp),
+                                    colors = null
+                                )
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = if (isDragging) {
+                                            val dur = SongPlayer.getDuration()
+                                            if (dur > 0) playerViewModel.formatDuration((dragValue * dur).toLong()) else "0:00"
+                                        } else songProgressText,
+                                        color = Color.Gray,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = songDurationText,
+                                        color = Color.Gray,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+
+                            PlayerFull(
+                                songPlayingState,
+                                playerViewModel,
+                                context,
+                                isLiked,
+                                shuffle,
+                                repeat,
+                                queueSongs
+                            )
+
+                            PlayerConnectRow(
+                                navController = navController,
+                                context = context,
+                                currentTrack = queueSongs.firstOrNull { it.id == playerViewModel.currentSongId.value },
+                                onOpenDevices = { showDevicesSheet = true },
+                                onOpenQueue = { showQueueSheet = true }
                             )
                         }
+                    }
+                } else {
+                    Column(
+                        verticalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillParentMaxHeight()
+                            .fillMaxWidth()
+                            .navigationBarsPadding(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Spacer(modifier = Modifier.statusBarsPadding())
+                        PlayerTopBar(
+                            navController = navController,
+                            onMenuClick = { showMenu = true },
+                            contextName = playerViewModel.currentSongAlbum.value,
+                            onBackClick = { dismissPlayer() }
+                        )
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                        ) {
+                            if (queueSongs.isEmpty()) {
+                                GlideImage(
+                                    modifier = Modifier
+                                        .sizeIn(maxWidth = 385.dp, maxHeight = 385.dp)
+                                        .aspectRatio(1f)
+                                        .padding(20.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .alpha(if (canvasUrl != null) 0f else 1f),
+                                    model = songCoverUri,
+                                    contentScale = ContentScale.Crop,
+                                    contentDescription = ""
+                                )
+                            } else {
+                                HorizontalPager(
+                                    state = artworkPagerState,
+                                    modifier = Modifier
+                                        .sizeIn(maxWidth = 385.dp, maxHeight = 385.dp)
+                                        .aspectRatio(1f),
+                                ) { page ->
+                                    GlideImage(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(20.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .alpha(if (canvasUrl != null) 0f else 1f),
+                                        model = queueSongs.getOrNull(page)?.coverUri ?: songCoverUri,
+                                        contentScale = ContentScale.Crop,
+                                        contentDescription = ""
+                                    )
+                                }
+                            }
+                        }
 
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                        ) {
+                            PlayerInfo(
+                                songTitle, songSinger, songId, context, isLiked,
+                                source = SongPlayer.currentSource,
+                                quality = SongPlayer.currentQuality,
+                                isResolving = playerViewModel.isResolving.value,
+                                resolveStatus = playerViewModel.resolveStatus.value,
+                                resolveError = playerViewModel.resolveError.value,
+                                resolveDetailNote = playerViewModel.resolveDetailNote.value,
+                                onArtistClick = {
+                                    val artists = songSinger.split(",").map { it.trim() }
+                                        .filter { it.isNotBlank() }
+                                    val ids = playerViewModel.currentArtistIds.value.split(",")
+                                        .map { it.trim() }
+                                    if (artists.size == 1) {
+                                        val aId = ids.getOrElse(0) { "" }
+                                        navController.navigate(
+                                            com.music.spotui.ui.navigation.artistRoute(
+                                                artists[0],
+                                                aId
+                                            )
+                                        )
+                                    } else {
+                                        showArtistSheet = true
+                                    }
+                                },
+                                spotifyTrackId = queueSongs.firstOrNull { it.id == songId }?.spotifyTrackId.orEmpty(),
+                                onShowSavedIn = { showSavedIn = true },
+                                isExplicit = queueSongs.firstOrNull { it.id == songId }?.explicit == true,
+                            )
+
+                            var isDragging by remember { mutableStateOf(false) }
+                            var dragValue by remember { mutableStateOf(0f) }
+                            val liveFraction = SongPlayer.getDuration().toFloat().let { dur ->
+                                if (dur > 0f) (SongPlayer.getCurrentPosition()
+                                    .toFloat() / dur).coerceIn(0f, 1f) else 0f
+                            }
+                            CustomSlider(
+                                value = if (isDragging) dragValue else liveFraction,
+                                onValueChange = { newValue ->
+                                    isDragging = true
+                                    dragValue = newValue
+                                },
+                                onValueChangeFinished = {
+                                    val dur = SongPlayer.getDuration()
+                                    if (dur > 0) SongPlayer.seekTo((dragValue * dur).toLong())
+                                    isDragging = false
+                                    if (!songPlayingState) {
+                                        SongPlayer.play()
+                                        playerViewModel.updateSongState(
+                                            playerViewModel.currentSongCoverUri.value,
+                                            playerViewModel.currentSongTitle.value,
+                                            playerViewModel.currentSongSinger.value,
+                                            true,
+                                            playerViewModel.currentSongId.value,
+                                            playerViewModel.currentSongIndex.value,
+                                            playerViewModel.currentSongAlbum.value
+                                        )
+                                    }
+                                },
+                                valueRange = 0f..1f,
+                                steps = 0,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp, 12.dp, 16.dp, 0.dp),
+                                colors = null
+                            )
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(25.dp, 0.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = if (isDragging) {
+                                        val dur = SongPlayer.getDuration()
+                                        if (dur > 0) playerViewModel.formatDuration((dragValue * dur).toLong()) else "0:00"
+                                    } else songProgressText,
+                                    color = Color.Gray,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = songDurationText,
+                                    color = Color.Gray,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+                            PlayerFull(
+                                songPlayingState,
+                                playerViewModel,
+                                context,
+                                isLiked,
+                                shuffle,
+                                repeat,
+                                queueSongs
+                            )
+                        }
 
                         Spacer(modifier = Modifier.height(12.dp))
-                        PlayerFull(
-                            songPlayingState,
-                            playerViewModel,
-                            context,
-                            isLiked,
-                            shuffle,
-                            repeat,
-                            queueSongs
+
+                        PlayerConnectRow(
+                            navController = navController,
+                            context = context,
+                            currentTrack = queueSongs.firstOrNull { it.id == playerViewModel.currentSongId.value },
+                            onOpenDevices = { showDevicesSheet = true },
+                            onOpenQueue = { showQueueSheet = true }
                         )
+
+                        Spacer(modifier = Modifier.height(8.dp))
                     }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Spotify-style bottom row: current audio device (Connect) on the left,
-                    // share + queue on the right.
-                    PlayerConnectRow(
-                        navController = navController,
-                        context = context,
-                        currentTrack = queueSongs.firstOrNull { it.id == playerViewModel.currentSongId.value },
-                        onOpenDevices = { showDevicesSheet = true },
-                        onOpenQueue = { showQueueSheet = true }
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    //PlayerEndInfo(onOpenDevices = { showDevicesSheet = true })
                 }
             }
             item {

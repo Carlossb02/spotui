@@ -16,7 +16,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.Job
 
 enum class LibraryFilterType {
-    ALL, PLAYLISTS, ALBUMS, ARTISTS
+    ALL, PLAYLISTS, ALBUMS, ARTISTS, PODCASTS
 }
 
 @HiltViewModel

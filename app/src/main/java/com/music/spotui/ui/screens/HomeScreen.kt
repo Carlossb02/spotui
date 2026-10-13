@@ -1089,6 +1089,11 @@ private fun HomePodcastsFeedContent(
     val shows = searchResults?.shows.orEmpty()
     val episodes = searchResults?.episodes.orEmpty()
 
+    val subscribedPodcasts = remember(isFollowingOnly) {
+        if (isFollowingOnly) com.music.spotui.data.preferences.SubscribedPodcastPref.getSubscribedPodcasts(context) else emptyList()
+    }
+    val displayShows = if (isFollowingOnly) subscribedPodcasts else shows
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -1107,7 +1112,7 @@ private fun HomePodcastsFeedContent(
 
         item {
             Text(
-                text = stringResource(R.string.podcasts_and_shows),
+                text = if (isFollowingOnly) "Podcasts que sigues" else stringResource(R.string.podcasts_and_shows),
                 color = Color.White,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
@@ -1115,16 +1120,41 @@ private fun HomePodcastsFeedContent(
             )
         }
 
-        if (podcastsResult is Response.Loading && shows.isEmpty()) {
+        if (podcastsResult is Response.Loading && shows.isEmpty() && !isFollowingOnly) {
             item {
                 Loader()
             }
         }
 
-        if (shows.isNotEmpty()) {
+        if (isFollowingOnly && subscribedPodcasts.isEmpty()) {
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 32.dp, vertical = 40.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "No sigues ningún podcast aún",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Busca tus programas favoritos y entra a su pantalla para pulsar 'Seguir'.",
+                        color = Color.Gray,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+
+        if (displayShows.isNotEmpty()) {
             item {
                 Text(
-                    text = stringResource(R.string.top_shows),
+                    text = if (isFollowingOnly) "Siguiendo" else stringResource(R.string.top_shows),
                     color = Color.White,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
@@ -1134,8 +1164,8 @@ private fun HomePodcastsFeedContent(
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(shows.size) { i ->
-                        val show = shows[i]
+                    items(displayShows.size) { i ->
+                        val show = displayShows[i]
                         Column(
                             modifier = Modifier
                                 .width(140.dp)
@@ -1161,12 +1191,14 @@ private fun HomePodcastsFeedContent(
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1
                             )
-                            Text(
-                                text = show.publisher,
-                                color = Color(0xFFB3B3B3),
-                                fontSize = 11.sp,
-                                maxLines = 1
-                            )
+                            if (show.publisher.isNotBlank()) {
+                                Text(
+                                    text = show.publisher,
+                                    color = Color(0xFFB3B3B3),
+                                    fontSize = 11.sp,
+                                    maxLines = 1
+                                )
+                            }
                         }
                     }
                 }

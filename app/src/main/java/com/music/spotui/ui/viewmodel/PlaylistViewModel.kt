@@ -38,7 +38,7 @@ class PlaylistViewModel @Inject constructor(
         val current = currentSongState.queue.value
         val newSongs = songs.filter { s -> current.none { it.id == s.id } }
         if (newSongs.isNotEmpty()) {
-            currentSongState.updateQueue(current + newSongs)
+            currentSongState.updateQueue(current + newSongs, isManualEdit = true)
         }
     }
 

@@ -44,7 +44,7 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
 
     val queue : State<List<SongsModel>> get() = currentSongState.queue
 
-    fun updateQueue(songs: List<SongsModel>) = currentSongState.updateQueue(songs)
+    fun updateQueue(songs: List<SongsModel>, isManualEdit: Boolean = false) = currentSongState.updateQueue(songs, isManualEdit)
 
     /** Insert a track right after the one currently playing ("Play next"). */
     fun playNext(song: SongsModel) {
@@ -53,14 +53,14 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
         val cur = q.indexOfFirst { it.id == currentSongId.value }
         val insertAt = (if (cur >= 0) cur + 1 else 0).coerceAtMost(q.size)
         q.add(insertAt, song)
-        currentSongState.updateQueue(q)
+        currentSongState.updateQueue(q, isManualEdit = true)
     }
 
     /** Append a track to the end of the queue ("Add to queue"). */
     fun addToQueue(song: SongsModel) {
         val q = currentSongState.queue.value
         if (q.any { it.id == song.id }) return
-        currentSongState.updateQueue(q + song)
+        currentSongState.updateQueue(q + song, isManualEdit = true)
     }
 
     /** Append multiple tracks to the end of the queue. */
@@ -68,7 +68,7 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
         val current = currentSongState.queue.value
         val newSongs = songs.filter { s -> current.none { it.id == s.id } }
         if (newSongs.isNotEmpty()) {
-            currentSongState.updateQueue(current + newSongs)
+            currentSongState.updateQueue(current + newSongs, isManualEdit = true)
         }
     }
 
@@ -77,14 +77,14 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
         val q = currentSongState.queue.value.toMutableList()
         if (from !in q.indices || to !in q.indices || from == to) return
         q.add(to, q.removeAt(from))
-        currentSongState.updateQueue(q)
+        currentSongState.updateQueue(q, isManualEdit = true)
     }
 
     /** Remove a track from the queue entirely. */
     fun removeFromQueue(song: SongsModel) {
         val q = currentSongState.queue.value.toMutableList()
         q.removeAll { it.id == song.id }
-        currentSongState.updateQueue(q)
+        currentSongState.updateQueue(q, isManualEdit = true)
     }
 
 

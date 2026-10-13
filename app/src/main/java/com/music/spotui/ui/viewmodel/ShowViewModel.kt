@@ -1,11 +1,14 @@
 package com.music.spotui.ui.viewmodel
 
+import android.content.Context
 import androidx.compose.runtime.State
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.music.spotui.data.api.Api
 import com.music.spotui.data.api.Response
 import com.music.spotui.data.entity.PodcastModel
 import com.music.spotui.data.entity.SongsModel
+import com.music.spotui.data.preferences.SubscribedPodcastPref
 import com.music.spotui.di.CurrentSongState
 import com.music.spotui.ui.repository.AppRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -30,6 +33,12 @@ class ShowViewModel @Inject constructor(
     private val _show: MutableStateFlow<PodcastModel?> = MutableStateFlow(null)
     val show: StateFlow<PodcastModel?> = _show
 
+    private val _isSubscribed = MutableStateFlow(false)
+    val isSubscribed: StateFlow<Boolean> = _isSubscribed
+
+    private val _visibleCount = MutableStateFlow(15)
+    val visibleCount: StateFlow<Int> = _visibleCount
+
     val queue: State<List<SongsModel>> get() = currentSongState.queue
 
     fun updateQueue(songs: List<SongsModel>) = currentSongState.updateQueue(songs)
@@ -40,9 +49,11 @@ class ShowViewModel @Inject constructor(
 
     private var showKey: String? = null
 
-    fun loadShow(showId: String, showName: String = "") {
+    fun loadShow(context: Context, showId: String, showName: String = "") {
+        _isSubscribed.value = SubscribedPodcastPref.isPodcastSubscribed(context, showId)
         if (showKey == showId) return
         showKey = showId
+        _visibleCount.value = 15
         if (showName.isNotBlank() && _show.value == null) {
             _show.value = PodcastModel(id = showId, name = showName, publisher = "", coverUri = "")
         }
@@ -50,10 +61,22 @@ class ShowViewModel @Inject constructor(
             val loaded = repository.provideShow(showId)
             if (loaded != null) {
                 _show.value = loaded
+                _isSubscribed.value = SubscribedPodcastPref.isPodcastSubscribed(context, loaded.id)
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
-            repository.provideShowEpisodes(showId).collect { _episodes.value = it }
+            repository.provideShowEpisodes(showId, showName).collect { _episodes.value = it }
         }
+    }
+
+    fun toggleSubscription(context: Context) {
+        val currentShow = _show.value ?: return
+        val newState = SubscribedPodcastPref.toggleSubscribedPodcast(context, currentShow)
+        _isSubscribed.value = newState
+        Api.HomeCache.library = null
+    }
+
+    fun loadMoreEpisodes() {
+        _visibleCount.value += 15
     }
 }
