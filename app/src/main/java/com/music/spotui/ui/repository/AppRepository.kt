@@ -31,6 +31,12 @@ class AppRepository @Inject constructor(private val api : Api) {
 
     suspend fun provideShow(showId: String, showName: String = "") = api.getShow(showId, showName)
 
+    suspend fun providePodcastFeed(categoryParams: String? = null, categoryBrowseId: String? = null) =
+        com.music.spotui.providers.PodcastProvider.getYouTubePodcastsFeed()
+
+    fun providePodcastFeedFlow() =
+        com.music.spotui.providers.PodcastProvider.getYouTubePodcastsFeedFlow()
+
     suspend fun provideLibrary() = api.getLibrary()
 
     suspend fun provideFollowedArtists() = api.getFollowedArtists()

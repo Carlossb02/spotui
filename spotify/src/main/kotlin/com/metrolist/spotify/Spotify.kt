@@ -1202,7 +1202,7 @@ object Spotify {
         offset: Int = 0,
     ): Result<SpotifyPaging<SpotifyTrack>> =
         runCatching {
-            authenticatedGet("me/top/tracks", failFastOn429 = true) {
+            authenticatedGet("me/top/tracks") {
                 parameter("time_range", timeRange)
                 parameter("limit", limit)
                 parameter("offset", offset)
@@ -1217,7 +1217,7 @@ object Spotify {
         offset: Int = 0,
     ): Result<SpotifyPaging<SpotifyArtist>> =
         runCatching {
-            authenticatedGet("me/top/artists", failFastOn429 = true) {
+            authenticatedGet("me/top/artists") {
                 parameter("time_range", timeRange)
                 parameter("limit", limit)
                 parameter("offset", offset)

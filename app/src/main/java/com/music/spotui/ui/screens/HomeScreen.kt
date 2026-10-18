@@ -3,7 +3,9 @@ package com.music.spotui.ui.screens
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -112,7 +114,7 @@ fun HomeScreen(navController: NavController){
     val albums by homeViewModel.albums.collectAsState()
     val artists by homeViewModel.artists.collectAsState()
     val songs by homeViewModel.songs.collectAsState()
-    val podcasts by homeViewModel.podcasts.collectAsState()
+    val podcastFeed by homeViewModel.podcastFeed.collectAsState()
     val audiobooks by homeViewModel.audiobooks.collectAsState()
     val followedArtists by homeViewModel.followedArtists.collectAsState()
     val selectedFilter by homeViewModel.selectedFilter.collectAsState()
@@ -126,6 +128,14 @@ fun HomeScreen(navController: NavController){
             context = context,
             onDismiss = { menuSong = null },
         )
+    }
+
+    LaunchedEffect(selectedFilter) {
+        if (selectedFilter == "Podcasts") {
+            homeViewModel.ensurePodcastsLoaded()
+        } else if (selectedFilter == "Audiobooks") {
+            homeViewModel.ensureAudiobooksLoaded()
+        }
     }
 
     Surface(
@@ -158,7 +168,7 @@ fun HomeScreen(navController: NavController){
                 HomePodcastsFeedContent(
                     navController = navController,
                     homeViewModel = homeViewModel,
-                    podcastsResult = podcasts,
+                    podcastFeedResult = podcastFeed,
                     selectedFilter = selectedFilter,
                     isFollowingOnly = isFollowingOnly,
                     onTrackOptions = { menuSong = it },
@@ -312,6 +322,8 @@ private fun HomeHeaderRow(
     onResetFilters: () -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val homeViewModel: HomeViewModel = hiltViewModel()
+    val isPodcastsLoading by homeViewModel.isPodcastsLoading.collectAsState()
     androidx.compose.runtime.LaunchedEffect(Unit) {
         com.music.spotui.data.api.ProfileCache.ensure(context)
     }
@@ -349,6 +361,20 @@ private fun HomeHeaderRow(
                     color = Color.Black,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+        if (isPodcastsLoading) {
+            Box(
+                modifier = Modifier
+                    .padding(start = 8.dp)
+                    .size(22.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    color = Color(0xFF1DB954),
+                    strokeWidth = 2.dp
                 )
             }
         }
@@ -1077,22 +1103,19 @@ private fun HomeSongRow(
 private fun HomePodcastsFeedContent(
     navController: NavController,
     homeViewModel: HomeViewModel,
-    podcastsResult: Response<com.music.spotui.data.entity.SearchResults>,
+    podcastFeedResult: Response<com.music.spotui.data.entity.PodcastFeedModel>,
     selectedFilter: String,
     isFollowingOnly: Boolean,
     onTrackOptions: (SongsModel) -> Unit = {},
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val playerViewModel: PlayerViewModel = hiltViewModel()
 
-    val searchResults = (podcastsResult as? Response.Success)?.data
-    val shows = searchResults?.shows.orEmpty()
-    val episodes = searchResults?.episodes.orEmpty()
+    val feed = (podcastFeedResult as? Response.Success)?.data
+    val sections = feed?.sections.orEmpty()
 
     val subscribedPodcasts = remember(isFollowingOnly) {
         if (isFollowingOnly) com.music.spotui.data.preferences.SubscribedPodcastPref.getSubscribedPodcasts(context) else emptyList()
     }
-    val displayShows = if (isFollowingOnly) subscribedPodcasts else shows
 
     LazyColumn(
         modifier = Modifier
@@ -1112,126 +1135,186 @@ private fun HomePodcastsFeedContent(
 
         item {
             Text(
-                text = if (isFollowingOnly) "Podcasts que sigues" else stringResource(R.string.podcasts_and_shows),
+                text = if (isFollowingOnly) "Podcasts que sigues" else "Podcasts y categorías",
                 color = Color.White,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(16.dp, 16.dp, 16.dp, 8.dp)
+                modifier = Modifier.padding(16.dp, 16.dp, 16.dp, 12.dp)
             )
         }
 
-        if (podcastsResult is Response.Loading && shows.isEmpty() && !isFollowingOnly) {
-            item {
-                Loader()
-            }
-        }
-
-        if (isFollowingOnly && subscribedPodcasts.isEmpty()) {
-            item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 32.dp, vertical = 40.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "No sigues ningún podcast aún",
-                        color = Color.White,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Busca tus programas favoritos y entra a su pantalla para pulsar 'Seguir'.",
-                        color = Color.Gray,
-                        fontSize = 13.sp,
-                        textAlign = TextAlign.Center
-                    )
+        if (isFollowingOnly) {
+            if (subscribedPodcasts.isEmpty()) {
+                item {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 32.dp, vertical = 40.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "No sigues ningún podcast aún",
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Busca tus programas favoritos y entra a su pantalla para pulsar 'Seguir'.",
+                            color = Color.Gray,
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
-            }
-        }
-
-        if (displayShows.isNotEmpty()) {
-            item {
-                Text(
-                    text = if (isFollowingOnly) "Siguiendo" else stringResource(R.string.top_shows),
-                    color = Color.White,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(16.dp, 12.dp, 16.dp, 8.dp)
-                )
-                LazyRow(
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(displayShows.size) { i ->
-                        val show = displayShows[i]
-                        Column(
-                            modifier = Modifier
-                                .width(140.dp)
-                                .clickable {
-                                    navController.navigate(showRoute(show.id, show.name))
-                                }
-                        ) {
-                            GlideImage(
-                                model = show.coverUri,
-                                contentDescription = show.name,
-                                contentScale = ContentScale.Crop,
-                                loading = placeholder(R.drawable.placeholder),
-                                failure = placeholder(R.drawable.placeholder),
+            } else {
+                item {
+                    Text(
+                        text = "Siguiendo",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(16.dp, 12.dp, 16.dp, 8.dp)
+                    )
+                    LazyRow(
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(subscribedPodcasts.size) { i ->
+                            val show = subscribedPodcasts[i]
+                            Column(
                                 modifier = Modifier
-                                    .size(140.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = show.name,
-                                color = Color.White,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1
-                            )
-                            if (show.publisher.isNotBlank()) {
+                                    .width(140.dp)
+                                    .clickable {
+                                        navController.navigate(showRoute(show.id, show.name))
+                                    }
+                            ) {
+                                GlideImage(
+                                    model = show.coverUri,
+                                    contentDescription = show.name,
+                                    contentScale = ContentScale.Crop,
+                                    loading = placeholder(R.drawable.placeholder),
+                                    failure = placeholder(R.drawable.placeholder),
+                                    modifier = Modifier
+                                        .size(140.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = show.publisher,
-                                    color = Color(0xFFB3B3B3),
-                                    fontSize = 11.sp,
+                                    text = show.name,
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
                                     maxLines = 1
                                 )
+                                if (show.publisher.isNotBlank()) {
+                                    Text(
+                                        text = show.publisher,
+                                        color = Color(0xFFB3B3B3),
+                                        fontSize = 11.sp,
+                                        maxLines = 1
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-
-        if (episodes.isNotEmpty()) {
-            item {
-                Text(
-                    text = stringResource(R.string.recent_episodes),
-                    color = Color.White,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(16.dp, 16.dp, 16.dp, 8.dp)
-                )
+        } else {
+            val displaySections = if (sections.isNotEmpty()) {
+                sections
+            } else {
+                listOf(
+                    "Podcasts populares en España",
+                    "Comedia y Humor",
+                    "Crímenes Reales y Misterio",
+                    "Noticias y Política",
+                    "Ciencia, Historia y Tecnología",
+                    "Deportes",
+                    "Negocios y Emprendimiento"
+                ).map { com.music.spotui.data.entity.PodcastSectionModel(title = it, shows = emptyList()) }
             }
 
-            items(episodes.size) { i ->
-                val ep = episodes[i]
-                HomeSongRow(
-                    song = ep,
-                    onPlay = {
-                        playerViewModel.updateQueue(episodes)
-                        playerViewModel.playSongAt(episodes, i, context)
-                    },
-                    onLongClick = {
-                        onTrackOptions(ep)
-                    },
-                )
-            }
-        } else if (shows.isEmpty() && podcastsResult is Response.Loading) {
-            item {
-                Loader()
+            items(displaySections.size) { idx ->
+                val sec = displaySections[idx]
+                Column(modifier = Modifier.padding(bottom = 20.dp)) {
+                    Text(
+                        text = sec.title,
+                        color = Color.White,
+                        fontSize = 19.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(16.dp, 8.dp, 16.dp, 10.dp)
+                    )
+
+                    if (sec.shows.isNotEmpty()) {
+                        LazyRow(
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            items(sec.shows.size) { i ->
+                                val show = sec.shows[i]
+                                Column(
+                                    modifier = Modifier
+                                        .width(140.dp)
+                                        .clickable {
+                                            navController.navigate(showRoute(show.id, show.name))
+                                        }
+                                ) {
+                                    GlideImage(
+                                        model = show.coverUri,
+                                        contentDescription = show.name,
+                                        contentScale = ContentScale.Crop,
+                                        loading = placeholder(R.drawable.placeholder),
+                                        failure = placeholder(R.drawable.placeholder),
+                                        modifier = Modifier
+                                            .size(140.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = show.name,
+                                        color = Color.White,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1
+                                    )
+                                    if (show.publisher.isNotBlank()) {
+                                        Text(
+                                            text = show.publisher,
+                                            color = Color(0xFFB3B3B3),
+                                            fontSize = 11.sp,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        LazyRow(
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            items(4) {
+                                Column(modifier = Modifier.width(140.dp)) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(140.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(Color(0xFF282828))
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(0.8f)
+                                            .height(14.dp)
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(Color(0xFF282828))
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 

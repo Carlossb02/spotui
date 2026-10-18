@@ -15,6 +15,12 @@
     <string name="audio_normalization">Normalización de audio</string>
     <string name="normalize_volume">Normalizar volumen</string>
     <string name="normalize_desc">Igualar el volumen de todas las canciones a un nivel constante (-14 LUFS)</string>
+    <string name="normalization_off">Desactivado</string>
+    <string name="normalization_off_desc">Sin ajuste de volumen (0 dB)</string>
+    <string name="normalization_suave">Suave (Protegido)</string>
+    <string name="normalization_suave_desc">Reduce canciones altas; evita amplificar si no hay datos de pico</string>
+    <string name="normalization_balanced_beta">Equilibrado (Beta)</string>
+    <string name="normalization_balanced_beta_desc">Todas las canciones al mismo volumen (-14 LUFS) con ganancia fija por pista. No altera el sonido ni cambia el volumen al sonar</string>
     <string name="equalizer">Ecualizador</string>
     <string name="equalizer_desc">Aplicar ecualización de frecuencias al audio</string>
     <string name="matching">Coincidencia</string>
@@ -38,6 +44,7 @@
     <string name="library">Biblioteca</string>
     <string name="search">Buscar</string>
     <string name="queue">Cola de reproducción</string>
+    <string name="added_to_queue">Añadido a la cola</string>
     <string name="now_playing">Reproduciendo ahora</string>
     <string name="listening_history">Historial de escucha</string>
     <string name="clear_all">Borrar todo</string>

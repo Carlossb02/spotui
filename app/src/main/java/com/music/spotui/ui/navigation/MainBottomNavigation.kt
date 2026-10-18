@@ -130,20 +130,22 @@ fun MainBottomNavigation(navController: NavHostController, bottomBarState: Mutab
                                     )
                                 },
                                 onClick = {
-                                    if (currentTab != item.route) {
-                                        navController.navigate(item.route) {
-                                            navController.graph.startDestinationRoute?.let { startRoute ->
-                                                popUpTo(startRoute) {
-                                                    saveState = true
-                                                }
-                                            }
-                                            launchSingleTop = true
-                                            restoreState = true
+                                    if (currentRoute == item.route) {
+                                        if (item.route == Routes.Search.route) {
+                                            onSearchReselected()
                                         }
-                                    } else if (currentRoute != item.route) {
-                                        navController.popBackStack(item.route, inclusive = false)
-                                    } else if (item.route == Routes.Search.route) {
-                                        onSearchReselected()
+                                    } else {
+                                        val popped = navController.popBackStack(item.route, inclusive = false)
+                                        if (!popped) {
+                                            navController.navigate(item.route) {
+                                                navController.graph.startDestinationRoute?.let { startRoute ->
+                                                    popUpTo(startRoute) {
+                                                        saveState = false
+                                                    }
+                                                }
+                                                launchSingleTop = true
+                                            }
+                                        }
                                     }
                                 },
                                 alwaysShowLabel = true,

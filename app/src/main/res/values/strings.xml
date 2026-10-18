@@ -15,6 +15,12 @@
     <string name="audio_normalization">Audio Normalization</string>
     <string name="normalize_volume">Normalize Volume</string>
     <string name="normalize_desc">Make all songs sound at a consistent volume level (-14 LUFS)</string>
+    <string name="normalization_off">Disabled</string>
+    <string name="normalization_off_desc">No volume adjustment (0 dB)</string>
+    <string name="normalization_suave">Soft (Protected)</string>
+    <string name="normalization_suave_desc">Reduces loud songs; avoids boosting if peak headroom is unknown</string>
+    <string name="normalization_balanced_beta">Balanced (Beta)</string>
+    <string name="normalization_balanced_beta_desc">Equal volume for all songs (-14 LUFS) with fixed track gain. Does not alter sound or change volume while playing</string>
     <string name="equalizer">Equalizer</string>
     <string name="equalizer_desc">Apply frequency equalization to audio</string>
     <string name="matching">Matching</string>
@@ -38,6 +44,7 @@
     <string name="library">Library</string>
     <string name="search">Search</string>
     <string name="queue">Queue</string>
+    <string name="added_to_queue">Added to queue</string>
     <string name="now_playing">Now playing</string>
     <string name="listening_history">Listening history</string>
     <string name="clear_all">Clear all</string>

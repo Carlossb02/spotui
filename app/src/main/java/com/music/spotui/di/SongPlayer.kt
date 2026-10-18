@@ -153,7 +153,10 @@ object SongPlayer {
                     withContext(Dispatchers.Main) {
                         val activePlayer = player ?: return@withContext
                         val loudness = loudnessCache[currentSong]
-                        currentPlayerNormalizer?.setTrackLoudness(loudness)
+                        currentPlayerNormalizer?.apply {
+                            setTrackLoudness(loudness)
+                            beginTrack()
+                        }
                         activePlayer.setMediaItem(
                             buildMediaItem(newStreamUrl, streamMimeType(newStreamUrl)),
                             positionMs,
@@ -398,10 +401,12 @@ object SongPlayer {
             val cleanArtist = matchSong.singer.replace(",", " ").replace("  ", " ").trim()
             return "$cleanArtist ${cleanSpotifySearchTitle(matchSong.title)}"
         }
-        return if (song.startsWith(SPOTIFY_TRACK_PREFIX) && song.contains('|')) {
-            song.substringAfter('|').ifBlank { song }
-        } else {
-            song
+        return when {
+            song.startsWith(SPOTIFY_TRACK_PREFIX) && song.contains('|') ->
+                song.substringAfter('|').ifBlank { song }
+            song.startsWith("yt_ep:") && song.contains('|') ->
+                song.substringAfter('|').ifBlank { song }
+            else -> song
         }
     }
 
@@ -674,7 +679,10 @@ object SongPlayer {
                 currentSource = "Downloaded"
                 currentQuality = immediateDownloadedPath.substringAfterLast('.', "").uppercase()
                 val localUri = android.net.Uri.fromFile(java.io.File(immediateDownloadedPath))
-                currentPlayerNormalizer?.setTrackLoudness(null)
+                currentPlayerNormalizer?.apply {
+                    setTrackLoudness(null)
+                    beginTrack()
+                }
                 player?.setMediaItem(MediaItem.fromUri(localUri))
                 player?.prepare()
                 player?.play()
@@ -775,7 +783,10 @@ object SongPlayer {
                     ensurePlayer(appContext)
                     val p = player ?: return@withContext
                     val loudness = loudnessCache[song]
-                    currentPlayerNormalizer?.setTrackLoudness(loudness)
+                    currentPlayerNormalizer?.apply {
+                        setTrackLoudness(loudness)
+                        beginTrack()
+                    }
                     p.setMediaItem(mediaItem)
                     p.prepare()
                     if (song == restoreQuery && restorePositionMs > 0) {
@@ -1142,7 +1153,7 @@ object SongPlayer {
                 mediaCache(appContext).getCachedBytes(cacheKey, 0, 100_000L) > 0
             }.getOrDefault(false)
             if (qualityTierCache[song] == expectedTier || qualityTierCache[song] == null) {
-                if (!networkAvailable || hasDiskCache || streamStillValid(song, url)) {
+                if (forPlayback || !networkAvailable || hasDiskCache || streamStillValid(song, url)) {
                     if (forPlayback) {
                         currentSource = sourceCache[song] ?: "YouTube"
                         currentQuality = qualityCache[song] ?: ""
@@ -1175,7 +1186,7 @@ object SongPlayer {
             val hasDiskCache = runCatching {
                 mediaCache(appContext).getCachedBytes(cacheKey, 0, 100_000L) > 0
             }.getOrDefault(false)
-            if (!networkAvailable || hasDiskCache || streamStillValid(song, url)) {
+            if (forPlayback || !networkAvailable || hasDiskCache || streamStillValid(song, url)) {
                 streamCache[song] = url
                 sourceCache[song] = source
                 qualityCache[song] = cachedQuality
@@ -2779,14 +2790,25 @@ object SongPlayer {
                 attempts.forEach { it.cancel() }
             }
         }
+        val isPodcast = query.startsWith("yt_ep:")
+        val epVideoId = if (isPodcast && query.contains('|')) {
+            query.removePrefix("yt_ep:").substringBefore('|').takeIf { it.isNotBlank() }
+        } else null
+
+        if (epVideoId != null) {
+            Log.d(TAG, "Resolving podcast episode direct videoId first (instant play): $epVideoId")
+            tryIds(listOf(epVideoId), skipValidation = true)?.let { return it }
+            Log.w(TAG, "Podcast episode direct videoId $epVideoId failed, falling back to search query...")
+        }
+
         // An explicit YouTube URL (including watch URLs with list/index parameters) is a
         // user-selected video, not a search query. Resolve that exact video ID first and do
         // not silently replace it with a different search result if stream resolution fails.
         // This also prevents the whole URL from being sent to YouTube.search(), which can
         // return an unrelated video and makes playlist links appear to open the wrong item.
-        val isExplicitYouTubeLink = query.contains("youtube.com", ignoreCase = true) ||
+        val isExplicitYouTubeLink = (query.contains("youtube.com", ignoreCase = true) ||
                 query.contains("youtu.be", ignoreCase = true) ||
-                query.contains("youtube-nocookie.com", ignoreCase = true)
+                query.contains("youtube-nocookie.com", ignoreCase = true)) && !isPodcast
         if (isExplicitYouTubeLink) {
             val directVideoId = videoIdFromYouTubeLink(query)
             if (directVideoId.isNullOrBlank()) {
@@ -2801,13 +2823,13 @@ object SongPlayer {
             return null
         }
 
-        tryIds(resolveVideoCandidates(query, forPlayback = forPlayback).take(3), skipValidation = false)?.let { return it }
+        tryIds(resolveVideoCandidates(query, forPlayback = forPlayback).take(3), skipValidation = isPodcast)?.let { return it }
         if (!com.music.spotui.data.preferences.isVideoFallbackEnabled(appContext)) {
             Log.w(TAG, "song candidates exhausted and video fallback disabled for: ${searchTextForPlayback(query)}")
             return null
         }
         Log.w(TAG, "song candidates exhausted, trying video search for: ${searchTextForPlayback(query)}")
-        tryIds(resolveVideoCandidates(query, YouTube.SearchFilter.FILTER_VIDEO, forPlayback = forPlayback).take(3), skipValidation = false)?.let { return it }
+        tryIds(resolveVideoCandidates(query, YouTube.SearchFilter.FILTER_VIDEO, forPlayback = forPlayback).take(3), skipValidation = isPodcast)?.let { return it }
         Log.e(TAG, "All YouTube candidates failed for: ${searchTextForPlayback(query)}")
         return null
     }
@@ -2837,7 +2859,9 @@ object SongPlayer {
             setBandGains(com.music.spotui.data.preferences.getEqualizerBandGains(context))
         }
         val normalizer = com.music.spotui.audio.VolumeNormalizationAudioProcessor().apply {
-            enabled = com.music.spotui.data.preferences.isAudioNormalizationEnabled(context)
+            val normMode = com.music.spotui.data.preferences.getAudioNormalizationMode(context)
+            enabled = normMode != com.music.spotui.data.preferences.NormalizationMode.OFF
+            mode = normMode
         }
         val renderers = object : androidx.media3.exoplayer.DefaultRenderersFactory(context) {
             override fun buildAudioSink(
@@ -3140,9 +3164,16 @@ object SongPlayer {
     fun bindState(state: CurrentSongState) { boundState = state }
 
     fun onNormalizationSettingChanged(context: Context) {
-        val enabled = com.music.spotui.data.preferences.isAudioNormalizationEnabled(context)
-        currentPlayerNormalizer?.enabled = enabled
-        secondaryPlayerNormalizer?.enabled = enabled
+        val normMode = com.music.spotui.data.preferences.getAudioNormalizationMode(context)
+        val enabled = normMode != com.music.spotui.data.preferences.NormalizationMode.OFF
+        currentPlayerNormalizer?.apply {
+            this.enabled = enabled
+            this.mode = normMode
+        }
+        secondaryPlayerNormalizer?.apply {
+            this.enabled = enabled
+            this.mode = normMode
+        }
     }
 
     fun onEqualizerSettingChanged(context: Context) {
@@ -3180,7 +3211,16 @@ object SongPlayer {
             setBandGains(com.music.spotui.data.preferences.getEqualizerBandGains(appCtx ?: return))
         }
         secondaryPlayerEqualizer?.enabled = false
-        currentPlayerNormalizer?.enabled = com.music.spotui.data.preferences.isAudioNormalizationEnabled(appCtx ?: return)
+        val normCtx = appCtx
+        if (normCtx != null) {
+            val normMode = com.music.spotui.data.preferences.getAudioNormalizationMode(normCtx)
+            currentPlayerNormalizer?.apply {
+                enabled = normMode != com.music.spotui.data.preferences.NormalizationMode.OFF
+                mode = normMode
+            }
+        } else {
+            currentPlayerNormalizer?.enabled = com.music.spotui.data.preferences.isAudioNormalizationEnabled(appCtx ?: return)
+        }
         secondaryPlayerNormalizer?.enabled = false
         runCatching { secondaryPlayer?.release() }
         secondaryPlayer = null
@@ -3196,6 +3236,7 @@ object SongPlayer {
     private var posSaveTick = 0
     @Volatile private var lastAutoAdvanceMs = 0L
     @Volatile private var lastCrossfadeCompletedMs = 0L
+    @Volatile private var lastCrossfadedSongId = -1
 
     private fun startPositionWatch() {
         positionWatchJob?.cancel()
@@ -3238,15 +3279,36 @@ object SongPlayer {
                 val crossfadeMs = com.music.spotui.data.preferences.getCrossfadeMs(ctx)
                 val now = System.currentTimeMillis()
 
-                if (now - lastCrossfadeCompletedMs < 15_000L) continue
+                val q = state.queue.value
+                val curSongId = state.songId.value
+                val cur = q.indexOfFirst { it.id == curSongId }
+                    .takeIf { it >= 0 }
+                    ?: q.indexOfFirst { it.url == state.songUrl.value }.takeIf { it >= 0 }
+                    ?: state.songIndex.value.coerceIn(0, q.size - 1)
 
-                if (crossfadeMs > 0 && state.repeat.value != RepeatMode.ONE) {
-                    if (pos >= dur - crossfadeMs && pos >= dur / 2 && pos >= 10_000L && dur >= crossfadeMs + 5_000L) {
-                        triggerCrossfade(ctx, crossfadeMs)
-                        continue
+                // 1. Early Stream Pre-Resolution for upcoming track
+                if (cur >= 0 && cur < q.size - 1) {
+                    val nextSong = q[cur + 1]
+                    val prefetchTriggerMs = maxOf(10_000L, crossfadeMs.toLong() + 15_000L)
+                    if (pos >= dur - prefetchTriggerMs) {
+                        scope.launch(Dispatchers.IO) {
+                            runCatching { resolveStreamUrl(nextSong.url, ctx, forPlayback = true) }
+                        }
                     }
                 }
 
+                // 2. Crossfade Trigger
+                if (crossfadeMs > 0 && state.repeat.value != RepeatMode.ONE) {
+                    if (lastCrossfadedSongId != curSongId && cur >= 0 && cur < q.size - 1) {
+                        if (pos >= dur - crossfadeMs && pos >= dur / 2 && pos >= 5_000L && dur >= crossfadeMs + 3_000L) {
+                            lastCrossfadedSongId = curSongId
+                            triggerCrossfade(ctx, crossfadeMs)
+                            continue
+                        }
+                    }
+                }
+
+                // 3. Fallback Auto-Advance when crossfade is disabled or end is reached
                 if (pos >= dur - 400L) {
                     if (now - lastAutoAdvanceMs >= 3000L) {
                         lastAutoAdvanceMs = now
@@ -3263,12 +3325,6 @@ object SongPlayer {
                                 }
                             }
                             RepeatMode.OFF -> {
-                                val q = state.queue.value
-                                val curId = state.songId.value
-                                val cur = q.indexOfFirst { it.id == curId }
-                                    .takeIf { it >= 0 }
-                                    ?: q.indexOfFirst { it.url == state.songUrl.value }.takeIf { it >= 0 }
-                                    ?: state.songIndex.value.coerceIn(0, q.size - 1)
                                 if (cur < q.size - 1) {
                                     withContext(Dispatchers.Main) {
                                         next(ctx)
@@ -3301,6 +3357,13 @@ object SongPlayer {
                     isCrossfading = false
                     crossfadeTriggered.set(false)
                     releaseWakeLock("spotui:crossfade")
+                    withContext(Dispatchers.Main) {
+                        val currentP = player
+                        val dur = currentP?.duration ?: 0L
+                        if (currentP != null && dur > 0 && currentP.currentPosition >= dur - 1000L) {
+                            next(ctx)
+                        }
+                    }
                     return@launch
                 }
                 val remaining = withContext(Dispatchers.Main) {
@@ -3322,6 +3385,7 @@ object SongPlayer {
                         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                             Log.e(TAG, "Secondary player error during crossfade: ${error.message}", error)
                             cancelCrossfade()
+                            next(ctx)
                         }
                     })
 
@@ -3342,7 +3406,10 @@ object SongPlayer {
                         .setMediaMetadata(metadataBuilder.build())
                         .build()
                     val nextLoudness = loudnessCache[nextSong.url]
-                    comp.normalizer.setTrackLoudness(nextLoudness)
+                    comp.normalizer.apply {
+                        setTrackLoudness(nextLoudness)
+                        beginTrack()
+                    }
                     comp.player.setMediaItem(item)
                     comp.player.prepare()
                     comp.player.volume = 0f
@@ -3352,6 +3419,9 @@ object SongPlayer {
             } catch (e: Exception) {
                 Log.e(TAG, "crossfade failed", e)
                 cancelCrossfade()
+                withContext(Dispatchers.Main) {
+                    next(ctx)
+                }
             }
         }
     }
@@ -3413,6 +3483,12 @@ object SongPlayer {
             }
             val old = player
 
+            // Disassociate audio focus handling from old player first so it doesn't abandon focus on release
+            runCatching {
+                old?.setAudioAttributes(buildAudioAttributes(), /* handleAudioFocus = */ false)
+                old?.setHandleAudioBecomingNoisy(false)
+            }
+
             // Ensure incoming player takes over audio attributes and focus BEFORE stopping old player
             incoming.setAudioAttributes(buildAudioAttributes(), /* handleAudioFocus = */ true)
             incoming.setHandleAudioBecomingNoisy(true)
@@ -3429,7 +3505,11 @@ object SongPlayer {
                     enabled = com.music.spotui.data.preferences.isEqualizerEnabled(ctx)
                     setBandGains(com.music.spotui.data.preferences.getEqualizerBandGains(ctx))
                 }
-                secondaryPlayerNormalizer?.enabled = com.music.spotui.data.preferences.isAudioNormalizationEnabled(ctx)
+                val normMode = com.music.spotui.data.preferences.getAudioNormalizationMode(ctx)
+                secondaryPlayerNormalizer?.apply {
+                    enabled = normMode != com.music.spotui.data.preferences.NormalizationMode.OFF
+                    mode = normMode
+                }
             }
 
             player = incoming
@@ -3451,13 +3531,13 @@ object SongPlayer {
                 nextSong.id, nextIdx, nextSong.album,
             )
 
+            // Re-trigger play state so ExoPlayer's internal AudioFocusManager requests focus from Android OS
+            incoming.pause()
             incoming.playWhenReady = true
             incoming.play()
 
             onPlayerSwapped?.invoke(old, incoming)
             runCatching {
-                old?.setAudioAttributes(buildAudioAttributes(), /* handleAudioFocus = */ false)
-                old?.setHandleAudioBecomingNoisy(false)
                 old?.pause()
                 old?.stop()
                 old?.release()

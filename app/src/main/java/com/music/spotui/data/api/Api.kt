@@ -21,8 +21,10 @@ import com.music.spotui.data.preferences.PlaylistSortOption
 import com.music.spotui.data.preferences.getPlaylistSortOption
 import com.music.spotui.data.preferences.isPlaylistSortDescending
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -54,6 +56,7 @@ class Api @Inject constructor(
 
         @Volatile var albums: List<AlbumsModel>? = null
         @Volatile var artists: List<ArtistsModel>? = null
+        @Volatile var songs: List<SongsModel>? = null
         @Volatile var home: HomeFeedModel? = null
         @Volatile var library: List<com.music.spotui.data.entity.LibraryEntry>? = null
 
@@ -83,32 +86,52 @@ class Api @Inject constructor(
 
         /** Drop all cached feeds (e.g. on logout / account switch). */
         fun clear() {
-            albums = null; artists = null; home = null; library = null
+            albums = null; artists = null; songs = null; home = null; library = null
             playlistSongsCache.clear()
             playlistDetailCache.clear()
         }
     }
 
-    private fun SpotifyTrack.toSongModel(): SongsModel {
-        val singer = artists.joinToString(", ") { it.name }
+    private fun SpotifyTrack.toSongModel(): SongsModel = try {
+        val trackId = id.takeIf { it.isNotBlank() } ?: (uri?.takeIf { it.isNotBlank() } ?: "local_${name.hashCode()}")
+        val trackName = name.takeIf { it.isNotBlank() } ?: "Unknown Track"
+        val singer = artists.joinToString(", ") { it.name }.takeIf { it.isNotBlank() } ?: "Unknown Artist"
         val cover = album?.images?.firstOrNull()?.url ?: ""
-        isrc?.takeIf { it.isNotBlank() }?.let {
-            com.music.spotui.di.SongPlayer.registerIsrc(id, it)
+        
+        if (trackId.isNotBlank() && !trackId.startsWith("local_")) {
+            isrc?.takeIf { it.isNotBlank() }?.let {
+                com.music.spotui.di.SongPlayer.registerIsrc(trackId, it)
+            }
         }
-        return SongsModel(
-            id = stableId("track:$id"),
-            title = name.take(128),
+        
+        SongsModel(
+            id = stableId("track:$trackId"),
+            title = trackName.take(128),
             album = album?.name ?: "",
             singer = singer,
             coverUri = cover,
             // Playback resolves the search text in this key against YouTube, but
             // keeps the Spotify id in the cache key so same-named tracks do not
             // reuse each other's stream.
-            url = com.music.spotui.di.SongPlayer.buildSpotifyPlayQuery(id, name, singer),
-            spotifyTrackId = id,
+            url = com.music.spotui.di.SongPlayer.buildSpotifyPlayQuery(trackId, trackName, singer),
+            spotifyTrackId = trackId,
             explicit = explicit,
             durationMs = durationMs,
             artistIds = artists.joinToString(",") { it.id.orEmpty() },
+        )
+    } catch (e: Exception) {
+        Log.e("Api", "toSongModel failed for track: $name", e)
+        SongsModel(
+            id = stableId("track:local_${name.hashCode()}"),
+            title = name.takeIf { it.isNotBlank() } ?: "Local Track",
+            album = album?.name ?: "",
+            singer = "Local File",
+            coverUri = "",
+            url = com.music.spotui.di.SongPlayer.buildSpotifyPlayQuery("local_${name.hashCode()}", name.takeIf { it.isNotBlank() } ?: "Local Track", "Local File"),
+            spotifyTrackId = "local_${name.hashCode()}",
+            explicit = false,
+            durationMs = durationMs,
+            artistIds = "",
         )
     }
 
@@ -174,13 +197,21 @@ class Api @Inject constructor(
     }
 
     suspend fun getSongs(): Flow<Response<List<SongsModel>>> = flow {
-        emit(Response.Loading())
+        HomeCache.songs?.let { emit(Response.Success(it)) } ?: emit(Response.Loading())
         if (!SpotifyTokenProvider.ensureToken(context)) {
-            emit(Response.Error("Spotify not authenticated — set sp_dc cookie")); return@flow
+            if (HomeCache.songs == null) emit(Response.Error("Spotify not authenticated — set sp_dc cookie"))
+            return@flow
         }
         Spotify.topTracks(limit = 50).fold(
-            onSuccess = { paging -> emit(Response.Success(paging.items.map { it.toSongModel() })) },
-            onFailure = { Log.e("Api", "getSongs failed", it); emit(Response.Error(it.message ?: "error")) },
+            onSuccess = { paging ->
+                val list = paging.items.map { it.toSongModel() }
+                HomeCache.songs = list
+                emit(Response.Success(list))
+            },
+            onFailure = {
+                Log.e("Api", "getSongs failed", it)
+                if (HomeCache.songs == null) emit(Response.Error(it.message ?: "error"))
+            },
         )
     }
 
@@ -268,36 +299,66 @@ class Api @Inject constructor(
      * (searchDesktop, not rate-limited). Powers the Search screen so users can
      * find albums and artists, not just songs.
      */
-    suspend fun searchEverything(query: String): Flow<Response<SearchResults>> = flow {
-        emit(Response.Loading())
+    suspend fun searchEverything(query: String): Flow<Response<SearchResults>> = kotlinx.coroutines.flow.channelFlow {
+        var currentResults = SearchResults()
+        send(Response.Loading(currentResults))
+
         if (query.isBlank()) {
-            emit(Response.Success(SearchResults())); return@flow
+            send(Response.Success(SearchResults()))
+            return@channelFlow
         }
         if (!SpotifyTokenProvider.ensureToken(context)) {
-            emit(Response.Error("Spotify not authenticated — set sp_dc cookie")); return@flow
+            send(Response.Error("Spotify not authenticated — set sp_dc cookie"))
+            return@channelFlow
         }
-        Spotify.search(query, types = listOf("track", "album", "artist"), limit = 20).fold(
-            onSuccess = { res ->
-                val (ytShows, ytEpisodes) = com.music.spotui.providers.PodcastProvider.searchPodcasts(query)
 
-                Log.d("Api", "searchEverything '$query': songs=${res.tracks?.items?.size} shows=${ytShows.size} episodes=${ytEpisodes.size}")
-                emit(Response.Success(SearchResults(
-                    songs = res.tracks?.items.orEmpty().map { it.toSongModel() },
-                    albums = res.albums?.items.orEmpty().map { it.toAlbumModel() },
-                    artists = res.artists?.items.orEmpty().map { it.toArtistModel() },
-                    shows = ytShows,
-                    episodes = ytEpisodes,
-                )))
-            },
-            onFailure = { Log.e("Api", "searchEverything failed", it); emit(Response.Error(it.message ?: "error")) },
-        )
+        coroutineScope {
+            val spotifyJob = launch {
+                val spotifyRes = runCatching {
+                    Spotify.search(query, types = listOf("track", "album", "artist"), limit = 20).getOrNull()
+                }.getOrNull()
+                if (spotifyRes != null) {
+                    synchronized(this@channelFlow) {
+                        currentResults = currentResults.copy(
+                            songs = spotifyRes.tracks?.items.orEmpty().map { it.toSongModel() },
+                            albums = spotifyRes.albums?.items.orEmpty().map { it.toAlbumModel() },
+                            artists = spotifyRes.artists?.items.orEmpty().map { it.toArtistModel() },
+                        )
+                    }
+                    send(Response.Loading(currentResults))
+                }
+            }
+
+            val podcastJob = launch {
+                try {
+                    val (ytShows, ytEpisodes) = com.music.spotui.providers.PodcastProvider.searchPodcasts(query)
+                    synchronized(this@channelFlow) {
+                        currentResults = currentResults.copy(
+                            shows = (currentResults.shows + ytShows).distinctBy { it.id },
+                            episodes = (currentResults.episodes + ytEpisodes).distinctBy { it.id },
+                        )
+                    }
+                    send(Response.Loading(currentResults))
+                } catch (e: Exception) {
+                    Log.e("Api", "searchPodcasts failed for query: $query", e)
+                }
+            }
+
+            spotifyJob.join()
+            podcastJob.join()
+        }
+
+        send(Response.Success(currentResults))
     }
 
-    /** A podcast show's episodes, as playable [SongsModel] (url = "https://www.youtube.com/watch?v=..."). */
+    /** A podcast show's episodes, as playable [SongsModel]. Emits progressively as continuation pages load. */
     suspend fun getShowEpisodes(showId: String, showName: String = ""): Flow<Response<List<SongsModel>>> = flow {
         emit(Response.Loading())
-        val episodes = com.music.spotui.providers.PodcastProvider.getShowEpisodes(showId, showName)
-        emit(Response.Success(episodes))
+        com.music.spotui.providers.PodcastProvider.getShowEpisodesFlow(showId, showName).collect { episodes ->
+            if (episodes.isNotEmpty()) {
+                emit(Response.Success(episodes))
+            }
+        }
     }
 
     /** Show header (name/publisher/cover) for the detail screen. */

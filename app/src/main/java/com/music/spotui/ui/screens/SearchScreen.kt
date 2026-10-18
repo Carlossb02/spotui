@@ -65,6 +65,9 @@ import com.bumptech.glide.integration.compose.GlideImage
 import com.bumptech.glide.integration.compose.placeholder
 import com.music.spotui.R
 import com.music.spotui.data.api.Response
+import com.music.spotui.data.api.dataOrNull
+import com.music.spotui.data.api.isLoading
+import androidx.compose.material3.CircularProgressIndicator
 import com.music.spotui.data.entity.SearchResults
 import com.music.spotui.data.entity.SongsModel
 import com.music.spotui.data.preferences.addLikedSongId
@@ -89,10 +92,11 @@ import com.music.spotui.ui.viewmodel.SearchViewModel
 @Composable
 fun SearchScreen(navController: NavController, searchFocusTrigger: Int = 0) {
     val searchViewModel: SearchViewModel = hiltViewModel()
-    val results by searchViewModel.results.collectAsState()
+    val resultsState by searchViewModel.results.collectAsState()
 
-    // Results are live search hits (or empty); never gate the search UI on them.
-    val searchResults = (results as? Response.Success)?.data ?: SearchResults()
+    // Results are live search hits; render progressively as partial items arrive.
+    val searchResults = resultsState.dataOrNull ?: SearchResults()
+    val isLoading = resultsState.isLoading
 
     Surface(
         modifier = Modifier
@@ -101,8 +105,9 @@ fun SearchScreen(navController: NavController, searchFocusTrigger: Int = 0) {
     ) {
         SumUpSearchScreen(
             navController = navController,
-            searchResults,
-            searchViewModel,
+            results = searchResults,
+            isLoading = isLoading,
+            searchViewModel = searchViewModel,
             searchFocusTrigger = searchFocusTrigger
         )
     }
@@ -115,6 +120,7 @@ fun SearchScreen(navController: NavController, searchFocusTrigger: Int = 0) {
 fun SumUpSearchScreen(
     navController: NavController,
     results: SearchResults,
+    isLoading: Boolean = false,
     searchViewModel: SearchViewModel,
     searchFocusTrigger: Int = 0,
 ) {
@@ -202,7 +208,8 @@ fun SumUpSearchScreen(
             }
             stickyHeader {
                 SearchStickyBar(
-                    text,
+                    text = text,
+                    isLoading = isLoading && text.isNotBlank(),
                     onFocusChange = { isTextFieldFocused = it },
                     searchFocusTrigger = searchFocusTrigger,
                 ) {
@@ -951,6 +958,7 @@ fun SearchTopBar() {
 @Composable
 fun SearchStickyBar(
     text: String,
+    isLoading: Boolean = false,
     onFocusChange: (Boolean) -> Unit = {},
     searchFocusTrigger: Int = 0,
     onTextChange: (String) -> Unit,
@@ -976,5 +984,6 @@ fun SearchStickyBar(
         placeholder = stringResource(R.string.search_placeholder),
         focusRequester = focusRequester,
         onFocusChange = onFocusChange,
+        isLoading = isLoading,
     )
 }

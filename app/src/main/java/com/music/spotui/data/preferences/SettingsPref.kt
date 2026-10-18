@@ -33,6 +33,7 @@ private const val KEY_AUTO_PLAY = "auto_play_startup"
 private const val KEY_IGNORE_BATTERY_OPT = "ignore_battery_optimization"
 private const val KEY_UPDATE_REPO_URL = "update_repo_url"
 private const val KEY_AUDIO_NORMALIZATION = "audio_normalization_enabled"
+private const val KEY_AUDIO_NORMALIZATION_MODE = "audio_normalization_mode"
 private const val KEY_EQUALIZER_ENABLED = "equalizer_enabled"
 private const val KEY_EQUALIZER_PRESET = "equalizer_preset"
 private const val KEY_EQUALIZER_BANDS = "equalizer_bands"
@@ -221,10 +222,35 @@ fun getEnabledAudioProviderOrder(c: Context): List<AudioProviderOrderItem> {
     return getAudioProviderOrder(c).filter { isAudioProviderEnabled(c, it.id) }
 }
 
-fun isAudioNormalizationEnabled(c: Context): Boolean = prefs(c).getBoolean(KEY_AUDIO_NORMALIZATION, false)
-fun setAudioNormalizationEnabled(c: Context, v: Boolean) {
-    prefs(c).edit().putBoolean(KEY_AUDIO_NORMALIZATION, v).apply()
+enum class NormalizationMode(val id: String) {
+    OFF("off"),
+    SUAVE("suave"),
+    BALANCED_BETA("balanced_beta"),
+}
+
+fun getAudioNormalizationMode(c: Context): NormalizationMode {
+    val raw = prefs(c).getString(KEY_AUDIO_NORMALIZATION_MODE, null)
+    if (raw != null) {
+        return NormalizationMode.values().firstOrNull { it.id == raw } ?: NormalizationMode.OFF
+    }
+    val legacyEnabled = prefs(c).getBoolean(KEY_AUDIO_NORMALIZATION, false)
+    return if (legacyEnabled) NormalizationMode.SUAVE else NormalizationMode.OFF
+}
+
+fun setAudioNormalizationMode(c: Context, mode: NormalizationMode) {
+    prefs(c).edit()
+        .putString(KEY_AUDIO_NORMALIZATION_MODE, mode.id)
+        .putBoolean(KEY_AUDIO_NORMALIZATION, mode != NormalizationMode.OFF)
+        .apply()
     com.music.spotui.di.SongPlayer.onNormalizationSettingChanged(c)
+}
+
+fun isAudioNormalizationEnabled(c: Context): Boolean =
+    getAudioNormalizationMode(c) != NormalizationMode.OFF
+
+fun setAudioNormalizationEnabled(c: Context, v: Boolean) {
+    val newMode = if (v) NormalizationMode.SUAVE else NormalizationMode.OFF
+    setAudioNormalizationMode(c, newMode)
 }
 
 fun isEqualizerEnabled(c: Context): Boolean = prefs(c).getBoolean(KEY_EQUALIZER_ENABLED, false)

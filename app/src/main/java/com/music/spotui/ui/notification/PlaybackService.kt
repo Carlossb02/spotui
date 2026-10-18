@@ -92,7 +92,7 @@ class PlaybackService : MediaLibraryService() {
             currentSongState.updateBufferingState(playbackState == Player.STATE_BUFFERING)
             if (playbackState == Player.STATE_READY && (SongPlayer.exoPlayer?.playWhenReady == true)) {
                 SongPlayer.acquireWakeLock(applicationContext, "spotui:playing", 12 * 60 * 60_000L)
-            } else if (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE) {
+            } else if ((playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE) && !SongPlayer.isCrossfadeActive()) {
                 SongPlayer.releaseWakeLock("spotui:playback_end")
             }
             if (playbackState == Player.STATE_ENDED) {
@@ -279,8 +279,15 @@ class PlaybackService : MediaLibraryService() {
         }
         SongPlayer.onPlayerSwapped = { oldPlayer, newPlayer ->
             oldPlayer?.removeListener(playerListener)
-            if (!showingWeb) mediaSession?.player = wrap(newPlayer)
+            if (!showingWeb) {
+                val wrapped = wrap(newPlayer)
+                mediaSession?.player = wrapped
+                activeForwardingPlayer?.dispatchMetadataRefresh()
+            }
             newPlayer.addListener(playerListener)
+            playerListener.onPlaybackStateChanged(newPlayer.playbackState)
+            playerListener.onIsPlayingChanged(newPlayer.isPlaying)
+            currentSongState.updatePlayingState(newPlayer.isPlaying || newPlayer.playWhenReady)
         }
 
         // Keep the notification's repeat icon in sync whenever the repeat mode
@@ -417,15 +424,68 @@ class PlaybackService : MediaLibraryService() {
         // Listeners registrados por la sesión: los guardamos para poder emitir
         // "metadatos cambiados" a mano cuando termina de cargarse la carátula.
         private val sessionListeners = java.util.concurrent.CopyOnWriteArraySet<Player.Listener>()
+        private val listenerWrappers = java.util.concurrent.ConcurrentHashMap<Player.Listener, Player.Listener>()
+
+        override fun getPlaybackState(): Int {
+            if (SongPlayer.isCrossfadeActive()) return Player.STATE_READY
+            return super.getPlaybackState()
+        }
+
+        override fun getPlayWhenReady(): Boolean {
+            if (SongPlayer.isCrossfadeActive()) return true
+            return super.getPlayWhenReady()
+        }
+
+        override fun isPlaying(): Boolean {
+            if (SongPlayer.isCrossfadeActive()) return true
+            return super.isPlaying()
+        }
 
         override fun addListener(listener: Player.Listener) {
             sessionListeners.add(listener)
-            super.addListener(listener)
+            val wrapper = object : Player.Listener {
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if ((SongPlayer.isCrossfadeActive() || base != SongPlayer.exoPlayer) && (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE)) {
+                        return
+                    }
+                    listener.onPlaybackStateChanged(playbackState)
+                }
+
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    if ((SongPlayer.isCrossfadeActive() || base != SongPlayer.exoPlayer) && !isPlaying) {
+                        return
+                    }
+                    listener.onIsPlayingChanged(isPlaying)
+                }
+
+                override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                    listener.onMediaItemTransition(mediaItem, reason)
+                }
+
+                override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+                    listener.onMediaMetadataChanged(mediaMetadata)
+                }
+
+                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                    listener.onPlayerError(error)
+                }
+
+                override fun onEvents(player: Player, events: Player.Events) {
+                    listener.onEvents(player, events)
+                }
+            }
+            listenerWrappers[listener] = wrapper
+            super.addListener(wrapper)
         }
 
         override fun removeListener(listener: Player.Listener) {
             sessionListeners.remove(listener)
-            super.removeListener(listener)
+            val wrapper = listenerWrappers.remove(listener)
+            if (wrapper != null) {
+                super.removeListener(wrapper)
+            } else {
+                super.removeListener(listener)
+            }
         }
 
         /** Fuerza a la sesión (y por tanto a Android Auto) a releer los metadatos. */

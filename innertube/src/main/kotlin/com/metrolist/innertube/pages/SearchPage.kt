@@ -29,7 +29,7 @@ object SearchPage {
                 ?.text
                 ?.runs
                 ?.splitBySeparator()
-                ?: return null
+                .orEmpty()
         return when {
             // CRITICAL: Check isEpisode BEFORE isSong — both can match isSong (watchEndpoint or
             // null navigationEndpoint), so episodes must be identified first.
@@ -333,7 +333,8 @@ object SearchPage {
                             ?.runs
                             ?.lastOrNull()
                             ?.text,
-                    thumbnail = renderer.thumbnail?.musicThumbnailRenderer?.getThumbnailUrl() ?: return null,
+                    thumbnail = renderer.thumbnail?.musicThumbnailRenderer?.getThumbnailUrl()
+                        ?: renderer.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails?.lastOrNull()?.url,
                     playEndpoint =
                         renderer.overlay
                             ?.musicItemThumbnailOverlayRenderer

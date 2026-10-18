@@ -51,6 +51,17 @@ object AudioDeviceHelper {
     }
 
     /**
+     * Strips system/vendor internal flags (such as 'dontapplycevolume') from Bluetooth
+     * or audio device names.
+     */
+    fun cleanDeviceName(rawName: CharSequence?): String {
+        if (rawName.isNullOrBlank()) return ""
+        val str = rawName.toString().trim()
+        val cleaned = str.replace("(?i)^[\\s_]*dontapplycevolume[\\s_]*".toRegex(), "").trim()
+        return if (cleaned.isNotBlank()) cleaned else str
+    }
+
+    /**
      * Retrieves the current active audio route name.
      */
     fun getCurrentAudioRouteName(context: Context): String {
@@ -66,14 +77,14 @@ object AudioDeviceHelper {
                         (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && it.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
             }
             if (bt != null) {
-                return bt.productName?.toString()?.takeIf { it.isNotBlank() } ?: "Bluetooth"
+                return cleanDeviceName(bt.productName).ifBlank { "Bluetooth" }
             }
             val wired = outputs.firstOrNull {
                 it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
                         it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
                         it.type == AudioDeviceInfo.TYPE_USB_HEADSET
             }
-            if (wired != null) "Headphones" else "This Phone (Speaker)"
+            if (wired != null) cleanDeviceName(wired.productName).ifBlank { "Headphones" } else "This Phone (Speaker)"
         } catch (e: Exception) {
             "This Phone (Speaker)"
         }
@@ -82,6 +93,7 @@ object AudioDeviceHelper {
     /**
      * Returns a deduplicated list of available audio output routes and paired Bluetooth devices.
      */
+    @Suppress("MissingPermission")
     fun getAvailableAudioDevices(context: Context): List<AudioDeviceItem> {
         val deviceList = mutableListOf<AudioDeviceItem>()
         val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -100,15 +112,15 @@ object AudioDeviceHelper {
             // Group by product name to eliminate duplicates (A2DP vs SCO for same earbud)
             val uniqueBtOutputs = mutableListOf<AudioDeviceInfo>()
             for (bt in btOutputs) {
-                val btName = bt.productName?.toString()?.trim().orEmpty()
+                val btName = cleanDeviceName(bt.productName)
                 val alreadyAdded = uniqueBtOutputs.any {
-                    val name = it.productName?.toString()?.trim().orEmpty()
+                    val name = cleanDeviceName(it.productName)
                     name.equals(btName, ignoreCase = true)
                 }
                 if (!alreadyAdded) {
                     // Prefer A2DP or BLE_HEADSET over SCO
                     val preferred = btOutputs.firstOrNull {
-                        val n = it.productName?.toString()?.trim().orEmpty()
+                        val n = cleanDeviceName(it.productName)
                         n.equals(btName, ignoreCase = true) && (it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && it.type == AudioDeviceInfo.TYPE_BLE_HEADSET))
                     } ?: bt
                     uniqueBtOutputs.add(preferred)
@@ -117,7 +129,7 @@ object AudioDeviceHelper {
 
             var hasActiveBtSet = false
             for (bt in uniqueBtOutputs) {
-                val name = bt.productName?.toString()?.takeIf { it.isNotBlank() } ?: "Bluetooth Device"
+                val name = cleanDeviceName(bt.productName).ifBlank { "Bluetooth Device" }
                 val isActive = !forcedSpeakerMode && (name.equals(activeRouteName, ignoreCase = true) || (!hasActiveBtSet && uniqueBtOutputs.size == 1 && activeRouteName != "This Phone (Speaker)" && activeRouteName != "Headphones"))
                 if (isActive) hasActiveBtSet = true
 
@@ -140,7 +152,7 @@ object AudioDeviceHelper {
                         it.type == AudioDeviceInfo.TYPE_USB_HEADSET
             }
             if (wiredOutput != null) {
-                val name = wiredOutput.productName?.toString()?.takeIf { it.isNotBlank() } ?: "Wired Headphones"
+                val name = cleanDeviceName(wiredOutput.productName).ifBlank { "Wired Headphones" }
                 val isActive = !forcedSpeakerMode && !hasActiveBtSet && (name.equals(activeRouteName, ignoreCase = true) || activeRouteName == "Headphones")
                 deviceList.add(
                     AudioDeviceItem(
@@ -174,12 +186,12 @@ object AudioDeviceHelper {
             if (hasBluetoothPermission(context)) {
                 val btAdapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager)?.adapter
                     ?: android.bluetooth.BluetoothAdapter.getDefaultAdapter()
-                val bonded = btAdapter?.bondedDevices
+                val bonded = runCatching { btAdapter?.bondedDevices }.getOrNull()
                 if (bonded != null) {
                     for (dev in bonded) {
                         try {
-                            val devName = dev.name
-                            if (!devName.isNullOrBlank()) {
+                            val devName = cleanDeviceName(dev.name)
+                            if (devName.isNotBlank()) {
                                 val isAlreadyConnectedOrAdded = deviceList.any {
                                     it.name.equals(devName, ignoreCase = true) ||
                                             (it.bluetoothAddress != null && it.bluetoothAddress.equals(dev.address, ignoreCase = true))

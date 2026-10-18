@@ -69,15 +69,17 @@ object YouTube {
 
     suspend fun search(query: String, filter: SearchFilter): Result<SearchResult> = runCatching {
         val response = innerTube.search(WEB_REMIX, query, filter.value).body<SearchResponse>()
-        val shelves = response.contents?.tabbedSearchResultsRenderer?.tabs?.firstOrNull()
-            ?.tabRenderer?.content?.sectionListRenderer?.contents
-            ?.mapNotNull { it.musicShelfRenderer }
-            .orEmpty()
+        val contents = response.contents?.tabbedSearchResultsRenderer?.tabs?.firstOrNull()
+            ?.tabRenderer?.content?.sectionListRenderer?.contents.orEmpty()
+
+        val items = mutableListOf<com.metrolist.innertube.models.YTItem>()
+        for (sec in contents) {
+            sec.musicShelfRenderer?.contents?.getItems()?.mapNotNull { SearchPage.toYTItem(it) }?.let { items.addAll(it) }
+        }
+
         SearchResult(
-            items = shelves.flatMap { shelf ->
-                shelf.contents?.getItems()?.mapNotNull { SearchPage.toYTItem(it) } ?: emptyList()
-            }.distinctBy { it.id },
-            continuation = shelves.firstOrNull { it.continuations != null }
+            items = items.distinctBy { it.id },
+            continuation = contents.mapNotNull { it.musicShelfRenderer }.firstOrNull { it.continuations != null }
                 ?.continuations?.getContinuation()
         )
     }
@@ -144,6 +146,17 @@ data class PodcastPage(
         tempRes: PlayerResponse,
     ): PlayerResponse? {
         if (tempRes.playabilityStatus.status != "OK") {
+            return null
+        }
+
+        // Do not use single-itag NewPipe URL replacement for multi-language videos,
+        // as all audio tracks share the same itags (e.g. 251) and replacing by itag alone
+        // overwrites Spanish/original audio tracks with default/Arabic URLs.
+        val trackedAudioCount = tempRes.streamingData?.adaptiveFormats.orEmpty()
+            .filter { it.isAudio && it.audioTrack != null }
+            .mapNotNull { it.audioTrack?.id }
+            .distinct().size
+        if (trackedAudioCount > 1) {
             return null
         }
 

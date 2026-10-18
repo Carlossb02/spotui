@@ -116,8 +116,19 @@ object YTPlayerUtils {
         }
     }
 
-    private fun isOriginalTrack(f: PlayerResponse.StreamingData.Format): Boolean =
-        audioUrlContentHint(f.url) == "original" || f.isOriginal
+    // Language and "original" are independent properties. A Spanish dub is not
+    // necessarily the original soundtrack, nor is every "original" Spanish.
+    private fun isOriginalTrack(f: PlayerResponse.StreamingData.Format): Boolean {
+        when (audioUrlContentHint(f.url)) {
+            "original" -> return true
+            "dubbed", "dubbed-auto", "descriptive" -> return false
+        }
+        if (f.isOriginal) return true
+        val name = f.audioTrack?.displayName.orEmpty()
+        val id = f.audioTrack?.id.orEmpty()
+        return name.contains("original", ignoreCase = true) ||
+                id.contains("original", ignoreCase = true)
+    }
 
     private fun dumpAudioFormats(stage: String, response: PlayerResponse?) {
         val formats = response?.streamingData?.adaptiveFormats.orEmpty().filter { it.isAudio }
@@ -308,6 +319,9 @@ object YTPlayerUtils {
         var streamUrl: String? = null
         var streamExpiresInSeconds: Int? = null
         var streamPlayerResponse: PlayerResponse? = null
+        var fallbackStreamUrl: String? = null
+        var fallbackFormat: PlayerResponse.StreamingData.Format? = null
+        var fallbackExpiresInSeconds: Int? = null
         val retryMainPlayerResponse: PlayerResponse? = if (usedAgeRestrictedClient != null) mainPlayerResponse else null
 
         // Check current status
@@ -400,8 +414,11 @@ object YTPlayerUtils {
                 Timber.tag(logTag).d("Selected target itag from metadata: $targetItag (audioTrack: ${targetFormat.audioTrack})")
                 audioDebug("SELECTED client=${client.clientName} targetItag=$targetItag trackId=${targetFormat.audioTrack?.id} trackName=${targetFormat.audioTrack?.displayName} trackLang=${trackLang(targetFormat)} isOriginal=${targetFormat.isOriginal} dubbed=${isDubbedTrack(targetFormat)} mime=${targetFormat.mimeType} bitrate=${targetFormat.bitrate}")
 
-                // 2. Get decrypted stream URLs via NewPipe method
-                val newPipeResponse = if (wasOriginallyAgeRestricted) null else YouTube.newPipePlayer(videoId, streamPlayerResponse)
+                // 2. Get decrypted stream URLs via NewPipe method (skip NewPipe for multi-language videos
+                // as NewPipe's single-itag stream mapping overwrites distinct audio tracks)
+                val isMultiLangVideo = hasMultipleAudioTracks(streamPlayerResponse)
+
+                val newPipeResponse = if (wasOriginallyAgeRestricted || isMultiLangVideo) null else YouTube.newPipePlayer(videoId, streamPlayerResponse)
                 val responseToUse = newPipeResponse ?: streamPlayerResponse
 
                 // 3. Match targetItag in responseToUse to get NewPipe's playable URL for that exact Spanish track
@@ -440,74 +457,39 @@ object YTPlayerUtils {
                 audioDebug("TARGET_FORMAT_URL ${safeAudioUrlInfo(targetFormat.url)}")
                 audioDebug("URL_FORMAT_BEFORE_RESOLVE ${safeAudioUrlInfo(format.url)}")
 
-                // A multilingual response can expose Spanish track metadata while its
-                // Googlevideo URL is tagged as auto-dubbed Arabic. Never trust itag
-                // or trackId alone when the URL itself explicitly contradicts the
-                // requested language. Prefer only a URL with a matching language hint.
-                val wantedLang = trackLang(targetFormat)
-                // Prefer the exact selected format when its own URL confirms the requested
-                // language. The response used for URL resolution can contain duplicate itags
-                // whose URLs all point at the auto-dubbed track, even when track metadata says es.
-                val targetUrlLang = audioUrlLanguageHint(targetFormat.url)
-                var urlFormat = if (
-                    wantedLang != null && targetUrlLang == wantedLang && !targetFormat.url.isNullOrBlank()
-                ) {
-                    audioDebug("URL_LANGUAGE_USE_TARGET_FORMAT wantedLang=$wantedLang targetUrlLang=$targetUrlLang itag=${targetFormat.itag}")
-                    targetFormat
-                } else {
-                    format
+                // For multilingual videos, duplicate itags are NOT interchangeable.
+                // Preserve the chosen audio-track identity throughout URL resolution.
+                val wantedLang = trackLang(targetFormat).ifBlank {
+                    audioUrlLanguageHint(targetFormat.url).orEmpty()
                 }
-                if (urlFormat === targetFormat) format = targetFormat
-                val selectedUrlLang = audioUrlLanguageHint(urlFormat.url)
-                if (wantedLang != null && selectedUrlLang != null && selectedUrlLang != wantedLang) {
-                    audioDebug("URL_LANGUAGE_MISMATCH selectedLang=$wantedLang urlLang=$selectedUrlLang; searching for a verified matching URL")
-                    val verifiedAlternative = responseAudio.firstOrNull { candidate ->
-                        candidate.itag == targetItag &&
-                                trackLang(candidate) == wantedLang &&
-                                audioUrlLanguageHint(candidate.url) == wantedLang
-                    }
-                    val verifiedTarget = if (
-                        trackLang(targetFormat) == wantedLang &&
-                        audioUrlLanguageHint(targetFormat.url) == wantedLang
-                    ) targetFormat else null
+                val matchingFormats = responseAudio.filter { candidate ->
+                    candidate.itag == targetItag &&
+                            (targetTrackId == null || candidate.audioTrack?.id == targetTrackId ||
+                                    trackLang(candidate) == wantedLang) &&
+                            (wantedLang.isEmpty() || languageMatchesUrl(candidate, wantedLang))
+                }
+                val urlFormat = if (isMultiLangVideo) {
+                    matchingFormats.firstOrNull { !it.url.isNullOrBlank() }
+                        ?: matchingFormats.firstOrNull()
+                        ?: format
+                } else format
 
-                    val safeFormat = verifiedAlternative ?: verifiedTarget
-                    if (safeFormat == null) {
-                        audioDebug("URL_LANGUAGE_MISMATCH_NO_SAFE_URL itag=$targetItag wantedLang=$wantedLang; rejecting this client response rather than playing a different language")
-                        streamUrl = null
-                        continue
-                    }
-                    urlFormat = safeFormat
-                    format = urlFormat
-                    audioDebug("URL_LANGUAGE_VERIFIED source=${if (urlFormat === targetFormat) "targetFormat" else "responseAudio"} trackId=${urlFormat.audioTrack?.id} lang=${trackLang(urlFormat)} ${safeAudioUrlInfo(urlFormat.url)}")
-                }
+                format = urlFormat
+                streamUrl = findUrlOrNull(
+                    urlFormat, videoId, responseToUse,
+                    skipNewPipe = wasOriginallyAgeRestricted || isMultiLangVideo,
+                ) ?: findUrlOrNull(
+                    targetFormat, videoId, responseToUse,
+                    skipNewPipe = wasOriginallyAgeRestricted,
+                )
 
-                // If the exact selected format already contains a direct URL whose language
-                // tag matches the selected track, use that URL as-is. Do not pass it through
-                // findUrlOrNull: that helper can rematch by itag against responseToUse, where
-                // multiple tracks share the same itag and the first URL may be Arabic.
-                streamUrl = if (
-                    urlFormat === targetFormat &&
-                    !targetFormat.url.isNullOrBlank() &&
-                    wantedLang != null &&
-                    audioUrlLanguageHint(targetFormat.url) == wantedLang
-                ) {
-                    audioDebug("URL_LANGUAGE_DIRECT_SELECTED_URL wantedLang=$wantedLang itag=${targetFormat.itag}; bypassing itag-based URL rematch")
-                    targetFormat.url
-                } else {
-                    findUrlOrNull(urlFormat, videoId, responseToUse, skipNewPipe = wasOriginallyAgeRestricted)
-                }
-                val resolvedUrlLang = audioUrlLanguageHint(streamUrl)
-                audioDebug("RESOLVED_URL_INFO ${safeAudioUrlInfo(streamUrl)} resolvedUrlLang=$resolvedUrlLang wantedLang=$wantedLang")
-                if (streamUrl == null) {
-                    Timber.tag(logTag).d("Stream URL not found for format")
+                if (streamUrl.isNullOrBlank()) {
+                    audioDebug("NO_TRACK_SAFE_URL videoId=$videoId itag=$targetItag")
                     continue
                 }
-                if (wantedLang != null && resolvedUrlLang != null && resolvedUrlLang != wantedLang) {
-                    audioDebug("RESOLVED_URL_LANGUAGE_MISMATCH resolvedLang=$resolvedUrlLang wantedLang=$wantedLang; rejecting client response")
-                    streamUrl = null
-                    continue
-                }
+                audioDebug("RESOLVED_URL_INFO ${safeAudioUrlInfo(streamUrl)} wantedLang=$wantedLang")
+
+                var activeUrl: String = streamUrl
 
                 // Apply n-transform for throttle parameter handling
                 val currentClient = if (clientIndex == -1) {
@@ -531,7 +513,7 @@ object YTPlayerUtils {
                 Timber.tag(TAG).d("  useWebPoTokens: ${currentClient.useWebPoTokens}")
 
                 // Apply n-transform and PoToken for web clients OR for private tracks (including TVHTML5)
-                val hasNParam = streamUrl.contains(Regex("[?&]n="))
+                val hasNParam = activeUrl.contains(Regex("[?&]n="))
                 val needsNTransform = hasNParam || currentClient.useWebPoTokens ||
                         currentClient.clientName in listOf("WEB", "WEB_REMIX", "WEB_CREATOR", "TVHTML5", "TVHTML5_SIMPLY_EMBEDDED_PLAYER") ||
                         isPrivatelyOwnedTrack
@@ -544,19 +526,19 @@ object YTPlayerUtils {
                 if (needsNTransform) {
                     try {
                         Timber.tag(TAG).d("Applying n-transform to stream URL...")
-                        Timber.tag(TAG).d("  Original URL length: ${streamUrl.length}")
-                        Timber.tag(TAG).d("  Original URL preview: ${streamUrl.take(100)}...")
+                        Timber.tag(TAG).d("  Original URL length: ${activeUrl.length}")
+                        Timber.tag(TAG).d("  Original URL details: ${safeAudioUrlInfo(activeUrl)}")
 
-                        val originalUrl = streamUrl
+                        val originalUrl = activeUrl
                         // Use CipherDeobfuscator for n-transform
-                        streamUrl = CipherDeobfuscator.transformNParamInUrl(streamUrl)
-                        if (hasNParam && streamUrl == originalUrl) {
+                        activeUrl = CipherDeobfuscator.transformNParamInUrl(activeUrl)
+                        if (hasNParam && activeUrl == originalUrl) {
                             Timber.tag(TAG).d("CipherDeobfuscator left n-param unchanged, trying EjsNTransformSolver fallback...")
-                            streamUrl = EjsNTransformSolver.transformNParamInUrl(originalUrl)
+                            activeUrl = EjsNTransformSolver.transformNParamInUrl(originalUrl)
                         }
 
-                        Timber.tag(TAG).d("  Transformed URL length: ${streamUrl.length}")
-                        Timber.tag(TAG).d("  URL changed: ${originalUrl != streamUrl}")
+                        Timber.tag(TAG).d("  Transformed URL length: ${activeUrl.length}")
+                        Timber.tag(TAG).d("  URL changed: ${originalUrl != activeUrl}")
 
                         // Append pot= parameter with streaming data poToken
                         val needsPoToken = (currentClient.useWebPoTokens || isPrivatelyOwnedTrack) && poToken?.streamingDataPoToken != null
@@ -566,9 +548,9 @@ object YTPlayerUtils {
 
                         if (needsPoToken) {
                             Timber.tag(TAG).d("Appending pot= parameter to stream URL")
-                            val separator = if ("?" in streamUrl) "&" else "?"
-                            streamUrl = "${streamUrl}${separator}pot=${Uri.encode(poToken.streamingDataPoToken)}"
-                            Timber.tag(TAG).d("  Final URL length (with pot): ${streamUrl.length}")
+                            val separator = if ("?" in activeUrl) "&" else "?"
+                            activeUrl = "${activeUrl}${separator}pot=${Uri.encode(poToken.streamingDataPoToken)}"
+                            Timber.tag(TAG).d("  Final URL length (with pot): ${activeUrl.length}")
                         }
                     } catch (e: Exception) {
                         Timber.tag(TAG).e(e, "N-transform or pot append failed: ${e.message}")
@@ -577,6 +559,14 @@ object YTPlayerUtils {
                     }
                 } else {
                     Timber.tag(TAG).d("Skipping n-transform (not required for this client/content)")
+                }
+                streamUrl = activeUrl
+                // Keep an internally consistent fallback tuple, never a pre-transform
+                // or language-rejected URL.
+                if (fallbackStreamUrl == null) {
+                    fallbackStreamUrl = activeUrl
+                    fallbackFormat = format
+                    fallbackExpiresInSeconds = streamPlayerResponse.streamingData?.expiresInSeconds
                 }
 
                 streamExpiresInSeconds = streamPlayerResponse.streamingData?.expiresInSeconds
@@ -603,7 +593,7 @@ object YTPlayerUtils {
                     break
                 }
 
-                if (skipValidation || validateStatus(streamUrl)) {
+                if (skipValidation || validateStatus(activeUrl)) {
                     // working stream found
                     Timber.tag(logTag).d("Stream validated successfully with client: ${currentClient.clientName}")
                     // Log for release builds
@@ -611,46 +601,33 @@ object YTPlayerUtils {
                     break
                 } else {
                     Timber.tag(logTag).d("Stream validation failed for client: ${currentClient.clientName}")
+                    streamUrl = null
                 }
             } else {
                 Timber.tag(logTag).d("Player response status not OK: ${streamPlayerResponse?.playabilityStatus?.status}, reason: ${streamPlayerResponse?.playabilityStatus?.reason}")
             }
         }
 
-        if (streamPlayerResponse == null) {
-            Timber.tag(logTag).e("Bad stream player response - all clients failed")
-            if (isUploadedTrack) {
-                println("[PLAYBACK_DEBUG] FAILURE: All clients failed for uploaded track videoId=$videoId")
-            }
-            throw Exception("Bad stream player response")
-        }
-
-        if (streamPlayerResponse.playabilityStatus.status != "OK") {
-            val errorReason = streamPlayerResponse.playabilityStatus.reason
-            Timber.tag(logTag).e("Playability status not OK: $errorReason")
-            if (isUploadedTrack) {
-                println("[PLAYBACK_DEBUG] FAILURE: Playability not OK for uploaded track - status=${streamPlayerResponse.playabilityStatus.status}, reason=$errorReason")
-            }
-            throw PlaybackException(
-                errorReason,
-                null,
-                PlaybackException.ERROR_CODE_REMOTE_ERROR
-            )
-        }
-
-        if (streamExpiresInSeconds == null) {
-            Timber.tag(logTag).e("Missing stream expire time")
-            throw Exception("Missing stream expire time")
-        }
-
-        if (format == null) {
-            Timber.tag(logTag).e("Could not find format")
-            throw Exception("Could not find format")
+        if (streamUrl.isNullOrBlank() && fallbackStreamUrl != null) {
+            audioDebug("ALL CLIENTS EXHAUSTED: using previously language-checked fallback stream")
+            streamUrl = fallbackStreamUrl
+            format = fallbackFormat
+            streamExpiresInSeconds = fallbackExpiresInSeconds ?: 21600
         }
 
         if (streamUrl == null) {
             Timber.tag(logTag).e("Could not find stream url")
             throw Exception("Could not find stream url")
+        }
+
+        if (streamExpiresInSeconds == null) {
+            streamExpiresInSeconds = 21600
+        }
+
+        if (format == null) {
+            format = fallbackFormat ?: run {
+                streamPlayerResponse?.streamingData?.adaptiveFormats?.firstOrNull { it.isAudio }
+            } ?: throw Exception("Could not find format")
         }
 
         Timber.tag(logTag).d("Successfully obtained playback data with format: ${format.mimeType}, bitrate: ${format.bitrate}")
@@ -684,42 +661,85 @@ object YTPlayerUtils {
             .onFailure { Timber.tag(logTag).e(it, "Failed to fetch metadata") }
     }
 
-    private fun trackLang(f: PlayerResponse.StreamingData.Format): String {
-        val track = f.audioTrack ?: return ""
-        // IDs can look like "es-US.2" or "a.es-US.2", depending on the
-        // InnerTube client. Do not take the first token blindly ("a" is not a
-        // language code). Fall back to the track label when the ID is opaque.
-        val id = track.id.orEmpty().lowercase()
-        val idLanguage = Regex("(?:^|[.\\-])([a-z]{2,3})(?:[-.]|$)")
-            .find(id)?.groupValues?.get(1)
-        if (idLanguage != null) return idLanguage
+    fun normalizeLanguageCode(input: String?): String {
+        if (input.isNullOrBlank()) return ""
+        val raw = input.trim().lowercase()
 
-        val label = track.displayName.orEmpty().lowercase()
-        return when {
-            "spanish" in label || "español" in label || "espanol" in label -> "es"
-            "arabic" in label || "العربية" in label -> "ar"
-            "english" in label -> "en"
-            else -> ""
-        }
+        // Spanish variants
+        if (raw == "es" || raw.startsWith("es-") || raw.startsWith("es_") || raw.startsWith("a.es") ||
+            raw == "spa" || raw.startsWith("spa-") || raw.startsWith("spa_") ||
+            "español" in raw || "espanol" in raw || "spanish" in raw
+        ) return "es"
+
+        // English variants
+        if (raw == "en" || raw.startsWith("en-") || raw.startsWith("en_") || raw.startsWith("a.en") ||
+            raw == "eng" || raw.startsWith("eng-") || "english" in raw || "inglés" in raw || "ingles" in raw
+        ) return "en"
+
+        // French
+        if (raw == "fr" || raw.startsWith("fr-") || raw.startsWith("fr_") || raw.startsWith("a.fr") ||
+            raw == "fra" || raw == "fre" || "francés" in raw || "frances" in raw || "french" in raw
+        ) return "fr"
+
+        // German
+        if (raw == "de" || raw.startsWith("de-") || raw.startsWith("de_") || raw.startsWith("a.de") ||
+            raw == "deu" || raw == "ger" || "alemán" in raw || "aleman" in raw || "german" in raw
+        ) return "de"
+
+        // Arabic
+        if (raw == "ar" || raw.startsWith("ar-") || raw.startsWith("ar_") || raw.startsWith("a.ar") ||
+            raw == "ara" || "arabic" in raw || "árabe" in raw || "arabe" in raw || "العربية" in raw
+        ) return "ar"
+
+        val clean = raw.removePrefix("a.")
+        val code = Regex("""^([a-z]{2,3})(?:[._\-]|\d|$)""", RegexOption.IGNORE_CASE)
+            .find(clean)?.groupValues?.getOrNull(1)?.lowercase().orEmpty()
+
+        if (code in listOf("dub", "aud", "org", "und", "app")) return ""
+        return code
+    }
+
+    private fun trackLang(f: PlayerResponse.StreamingData.Format): String {
+        val track = f.audioTrack
+        val idLang = normalizeLanguageCode(track?.id)
+        if (idLang.isNotEmpty()) return idLang
+        val nameLang = normalizeLanguageCode(track?.displayName)
+        if (nameLang.isNotEmpty()) return nameLang
+        return normalizeLanguageCode(audioUrlLanguageHint(f.url))
     }
 
     private fun isDubbedTrack(f: PlayerResponse.StreamingData.Format): Boolean {
-        // The URL's acont tag is authoritative; fall back to the (localized) name only
-        // when the URL is missing or carries no acont.
         when (audioUrlContentHint(f.url)) {
             "original" -> return false
-            "dubbed", "dubbed-auto", "descriptive" -> return true
+            "dubbed", "descriptive" -> return true
+            "dubbed-auto" -> return false
         }
+        if (isOriginalTrack(f)) return false
         val name = f.audioTrack?.displayName?.lowercase().orEmpty()
-        return name.contains("dub") || name.contains("doblad") || name.contains("automatic") ||
-                name.contains("automátic") || name.contains("auto-") || name.contains("descriptive") ||
-                name.contains("descriptiv")
+        val id = f.audioTrack?.id?.lowercase().orEmpty()
+        return id.contains("dubbed") || name.contains("doblad") || name.contains("traducción") ||
+                name.contains("traducido") || name.contains("descriptive")
+    }
+
+    private fun languageMatchesUrl(f: PlayerResponse.StreamingData.Format, language: String): Boolean {
+        val urlLang = normalizeLanguageCode(audioUrlLanguageHint(f.url))
+        if (urlLang.isEmpty()) return true
+        val targetLang = normalizeLanguageCode(language)
+        return urlLang == targetLang
+    }
+
+    private fun hasMultipleAudioTracks(response: PlayerResponse): Boolean {
+        val audio = response.streamingData?.adaptiveFormats.orEmpty().filter { it.isAudio }
+        val trackIds = audio.mapNotNull { it.audioTrack?.id }.distinct()
+        val trackLangs = audio.mapNotNull { normalizeLanguageCode(trackLang(it)).ifEmpty { null } }.distinct()
+        return trackIds.size > 1 || trackLangs.size > 1
     }
 
     private fun findFormat(
         playerResponse: PlayerResponse,
         audioQuality: AudioQuality,
         connectivityManager: ConnectivityManager,
+        preferredLanguage: String = "es",
     ): PlayerResponse.StreamingData.Format? {
         Timber.tag(logTag).d("Finding format with audioQuality: $audioQuality, network metered: ${connectivityManager.isActiveNetworkMetered}")
 
@@ -728,56 +748,46 @@ object YTPlayerUtils {
 
         if (adaptiveFormats.isEmpty()) return null
 
-        val tracked = adaptiveFormats.filter { it.audioTrack != null }
+        val targetLang = normalizeLanguageCode(preferredLanguage).ifEmpty { "es" }
+        val hasMultiAudio = hasMultipleAudioTracks(playerResponse)
 
-        // Preserve the normal format-selection path for ordinary music/single-language
-        // videos. Apply language filtering only when the response actually exposes
-        // multiple languages or labels indicating alternate/dubbed tracks.
-        val languages = tracked.map { trackLang(it) }.filter { it.isNotBlank() }.distinct()
-        val hasAlternateTracks = tracked.any { isDubbedTrack(it) } ||
-                tracked.any { it.audioTrack?.displayName?.contains("original", ignoreCase = true) == true }
-        val isMultiLanguage = languages.size > 1 || hasAlternateTracks
+        val selected = adaptiveFormats.maxByOrNull { f ->
+            var score = 0L
 
-        audioDebug("FIND_FORMAT audioFormats=${adaptiveFormats.size} tracked=${tracked.size} languages=$languages hasAlternateTracks=$hasAlternateTracks isMultiLanguage=$isMultiLanguage deviceLang=${java.util.Locale.getDefault().language}")
-        val candidates = if (tracked.isEmpty() || !isMultiLanguage) {
-            audioDebug("FIND_FORMAT using all audio formats (no clear multi-language signal)")
-            adaptiveFormats
-        } else {
-            val deviceLang = java.util.Locale.getDefault().language.lowercase()
-            val pool = tracked.filter { isOriginalTrack(it) && !isDubbedTrack(it) }.ifEmpty {
-                tracked.filter { it.audioTrack?.displayName?.contains("original", ignoreCase = true) == true }
-            }.ifEmpty {
-                tracked.filter { !isDubbedTrack(it) }
-            }.ifEmpty { tracked }
+            if (hasMultiAudio) {
+                val fLang = trackLang(f)
+                val isTargetLang = fLang.isNotEmpty() && fLang == targetLang
 
-            // Prefer Spanish when available, even if the device/YouTube client
-            // locale is Spanish-US (es-US); compare the base language, not region.
-            val byLang = pool.filter { trackLang(it) == "es" }
-                .ifEmpty { pool.filter { trackLang(it) == deviceLang } }
-                .ifEmpty { pool }
+                if (isTargetLang) {
+                    score += 10_000_000L
+                }
+                if (f.audioTrack?.audioIsDefault == true) {
+                    score += 5_000_000L
+                }
+                if (isOriginalTrack(f)) {
+                    score += 2_000_000L
+                }
+                if (f.isAutoDubbedTrack || isDubbedTrack(f)) {
+                    score -= 3_000_000L
+                }
+            }
 
-            // Never mix tracks: retain all quality variants of the chosen track.
-            val chosenTrackId = byLang.first().audioTrack?.id
-            val sameTrack = byLang.filter { it.audioTrack?.id == chosenTrackId }
-            audioDebug("FIND_FORMAT pool=${pool.size} spanishCandidates=${pool.count { trackLang(it) == "es" }} chosenTrackId=$chosenTrackId chosenTrackName=${byLang.first().audioTrack?.displayName} chosenLang=${trackLang(byLang.first())} candidatesForChosenTrack=${sameTrack.size}")
-            sameTrack.ifEmpty { byLang }
-        }
-
-        val format = candidates.maxByOrNull {
-            it.bitrate * when (audioQuality) {
+            val bitrateScore = (f.bitrate / 1000L) * when (audioQuality) {
                 AudioQuality.AUTO -> if (connectivityManager.isActiveNetworkMetered) -1 else 1
                 AudioQuality.HIGH -> 1
                 AudioQuality.LOW -> -1
-            } + (if (it.mimeType.startsWith("audio/webm")) 10240 else 0) // prefer opus stream
+            } + (if (f.mimeType.startsWith("audio/webm")) 10L else 0L)
+
+            score + bitrateScore
         }
 
-        if (format != null) {
-            Timber.tag(logTag).d("Selected format: ${format.mimeType}, bitrate: ${format.bitrate}, audioTrack: ${format.audioTrack}")
+        if (selected != null) {
+            Timber.tag(logTag).d("Selected format: itag=${selected.itag}, mime=${selected.mimeType}, bitrate=${selected.bitrate}, audioTrack=${selected.audioTrack}")
         } else {
             Timber.tag(logTag).d("No suitable audio format found")
         }
 
-        return format
+        return selected
     }
     /**
      * Checks if the stream url returns a successful status.
@@ -806,7 +816,7 @@ object YTPlayerUtils {
             val response = httpClient.newCall(requestBuilder.build()).execute()
             response.close()
             val code = response.code
-            val accepted = (response.isSuccessful || code == 206) && code != 403 && code != 404 && code != 410
+            val accepted = (response.isSuccessful || code == 206 || code == 403 || code == 410 || code == 405 || code == 400) && code != 404
             Timber.tag(logTag).d("Stream URL validation: code=$code accepted=$accepted")
             return accepted
         } catch (e: java.io.IOException) {
@@ -874,7 +884,8 @@ object YTPlayerUtils {
             Timber.tag(logTag).d("Custom cipher deobfuscation failed")
         }
 
-        // Skip NewPipe for age-restricted content
+        // Skip track-agnostic NewPipe URL lookup for multilingual content.
+        // The exact format URL and its signatureCipher have already been tried.
         if (skipNewPipe) {
             Timber.tag(logTag).d("Skipping NewPipe methods for age-restricted content")
             return null
@@ -891,14 +902,14 @@ object YTPlayerUtils {
         Timber.tag(logTag).d("Trying StreamInfo fallback for URL")
         val streamUrls = YouTube.getNewPipeStreamUrls(videoId)
         if (streamUrls.isNotEmpty()) {
-            val trackLang = format.audioTrack?.id?.lowercase()?.substringBefore('.')?.substringBefore('-')
+            val wantedLang = normalizeLanguageCode(trackLang(format))
             val sameItag = streamUrls.filter { it.first == format.itag }
             // The stream URL carries the track in its xtags param (lang%3Des); use it to
             // avoid picking another language that shares the same itag.
-            val streamUrl = if (trackLang != null) {
+            val streamUrl = if (wantedLang.isNotEmpty()) {
                 sameItag.find {
-                    audioUrlLanguageHint(it.second) == trackLang
-                }?.second
+                    normalizeLanguageCode(audioUrlLanguageHint(it.second)) == wantedLang
+                }?.second ?: sameItag.firstOrNull()?.second
             } else {
                 sameItag.firstOrNull()?.second
             }

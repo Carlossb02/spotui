@@ -89,19 +89,19 @@ import androidx.compose.ui.graphics.graphicsLayer
 import kotlinx.coroutines.launch
 
 @Composable
-fun Loader() {
-    Column(Modifier
-        .background(Color(AppBackground.toArgb())),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+fun Loader(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 32.dp),
+        contentAlignment = Alignment.Center
     ) {
         CircularProgressIndicator(
-            modifier = Modifier
-                .size(45.dp),
-            color = Color(0xFF4A4AC4)
+            modifier = Modifier.size(36.dp),
+            color = Color(0xFF1ED760),
+            strokeWidth = 3.dp
         )
     }
-
 }
 
 @Composable
@@ -660,6 +660,7 @@ fun AppSearchBar(
     onClear: (() -> Unit)? = null,
     height: Dp = 52.dp,
     enabled: Boolean = true,
+    isLoading: Boolean = false,
 ) {
     val internalFocusRequester = remember { FocusRequester() }
     val effectiveFocusRequester = focusRequester ?: internalFocusRequester
@@ -731,6 +732,16 @@ fun AppSearchBar(
                 )
             }
         )
+
+        if (isLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier
+                    .padding(end = 6.dp)
+                    .size(18.dp),
+                color = Color(0xFF1ED760),
+                strokeWidth = 2.dp
+            )
+        }
 
         if (query.isNotEmpty()) {
             Icon(

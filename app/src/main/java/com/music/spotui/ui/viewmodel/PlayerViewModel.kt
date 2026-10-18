@@ -49,26 +49,37 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
     /** Insert a track right after the one currently playing ("Play next"). */
     fun playNext(song: SongsModel) {
         val q = currentSongState.queue.value.toMutableList()
-        q.removeAll { it.id == song.id }
-        val cur = q.indexOfFirst { it.id == currentSongId.value }
-        val insertAt = (if (cur >= 0) cur + 1 else 0).coerceAtMost(q.size)
+        val curIdx = q.indexOfFirst { it.id == currentSongId.value }
+        val insertAt = (if (curIdx >= 0) curIdx + 1 else 0).coerceAtMost(q.size)
         q.add(insertAt, song)
         currentSongState.updateQueue(q, isManualEdit = true)
+        com.music.spotui.MyApplication.instance.let { ctx ->
+            android.widget.Toast.makeText(ctx, com.music.spotui.R.string.added_to_queue, android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
-    /** Append a track to the end of the queue ("Add to queue"). */
+    /** Append a track to "Next Up" in the queue ("Add to queue"). */
     fun addToQueue(song: SongsModel) {
-        val q = currentSongState.queue.value
-        if (q.any { it.id == song.id }) return
-        currentSongState.updateQueue(q + song, isManualEdit = true)
+        val q = currentSongState.queue.value.toMutableList()
+        val curIdx = q.indexOfFirst { it.id == currentSongId.value }
+        val insertAt = if (curIdx >= 0) (curIdx + 1).coerceAtMost(q.size) else q.size
+        q.add(insertAt, song)
+        currentSongState.updateQueue(q, isManualEdit = true)
+        com.music.spotui.MyApplication.instance.let { ctx ->
+            android.widget.Toast.makeText(ctx, com.music.spotui.R.string.added_to_queue, android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
-    /** Append multiple tracks to the end of the queue. */
+    /** Append multiple tracks to "Next Up" in the queue. */
     fun addAllToQueue(songs: List<SongsModel>) {
-        val current = currentSongState.queue.value
-        val newSongs = songs.filter { s -> current.none { it.id == s.id } }
-        if (newSongs.isNotEmpty()) {
-            currentSongState.updateQueue(current + newSongs, isManualEdit = true)
+        if (songs.isEmpty()) return
+        val q = currentSongState.queue.value.toMutableList()
+        val curIdx = q.indexOfFirst { it.id == currentSongId.value }
+        val insertAt = if (curIdx >= 0) (curIdx + 1).coerceAtMost(q.size) else q.size
+        q.addAll(insertAt, songs)
+        currentSongState.updateQueue(q, isManualEdit = true)
+        com.music.spotui.MyApplication.instance.let { ctx ->
+            android.widget.Toast.makeText(ctx, com.music.spotui.R.string.added_to_queue, android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -227,13 +238,37 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
     fun goToArtist(trackId: String, fallbackName: String, navigate: (route: String) -> Unit) {
         viewModelScope.launch {
             val route = withContext(Dispatchers.IO) {
-                val artist = if (trackId.isNotBlank())
-                    com.metrolist.spotify.Spotify.track(trackId).getOrNull()?.artists?.firstOrNull()
-                else null
-                artistRoute(
-                    artist?.name?.ifBlank { null } ?: fallbackName.substringBefore(",").trim(),
-                    artist?.id.orEmpty(),
+                val activeSong = currentSongState.queue.value.firstOrNull { it.id == currentSongId.value }
+                val isPodcast = activeSong != null && (
+                        activeSong.url.startsWith("yt_ep:") ||
+                        activeSong.url.startsWith("episode:") ||
+                        activeSong.album == "Podcast"
                 )
+                if (isPodcast && activeSong != null) {
+                    val rawId = activeSong.url.removePrefix("yt_ep:").removePrefix("episode:").substringBefore("|")
+                    val showName = activeSong.album.takeIf { it.isNotBlank() && it != "Podcast" }
+                        ?: activeSong.singer.ifBlank { fallbackName }
+                    val (shows, _) = com.music.spotui.providers.PodcastProvider.searchPodcasts(showName)
+                    val match = shows.firstOrNull()
+                    if (match != null) {
+                        com.music.spotui.ui.navigation.showRoute(match.id, match.name)
+                    } else if (rawId.isNotBlank() && !rawId.startsWith("http")) {
+                        com.music.spotui.ui.navigation.showRoute(
+                            if (rawId.startsWith("yt_podcast:")) rawId else "yt_podcast:$rawId",
+                            showName
+                        )
+                    } else {
+                        com.music.spotui.ui.navigation.showRoute("yt_podcast:$showName", showName)
+                    }
+                } else {
+                    val artist = if (trackId.isNotBlank())
+                        com.metrolist.spotify.Spotify.track(trackId).getOrNull()?.artists?.firstOrNull()
+                    else null
+                    artistRoute(
+                        artist?.name?.ifBlank { null } ?: fallbackName.substringBefore(",").trim(),
+                        artist?.id.orEmpty(),
+                    )
+                }
             }
             navigate(route)
         }

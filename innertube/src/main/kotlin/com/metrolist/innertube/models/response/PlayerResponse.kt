@@ -72,21 +72,27 @@ data class PlayerResponse(
                     if (audioTrack?.isAutoDubbed == true) return true
                     val id = audioTrack?.id?.lowercase().orEmpty()
                     val name = audioTrack?.displayName?.lowercase().orEmpty()
-                    if (id.contains("auto_dubbed") || id.contains("dubbed") || id.contains("translated") ||
-                        name.contains("auto-dubbed") || name.contains("doblado") || name.contains("traducido") ||
-                        name.contains("dubbed") || name.contains("translated") || name.contains("auto-translated")
-                    ) {
-                        return true
-                    }
-                    if (id in listOf("ar", "ar-sa", "ar-eg", "fr", "de", "hi", "zh", "ja", "ko", "it", "pt", "ru")) {
-                        return true
-                    }
-                    if (audioTrack?.audioIsDefault == false) return true
-                    return false
+                    return id.contains("auto_dubbed") || id.contains("dubbed-auto") ||
+                            name.contains("auto-dubbed") || name.contains("traducción automática") ||
+                            name.contains("traducido automáticamente") || name.contains("auto-translated")
+                }
+
+            val isDubbedTrack: Boolean
+                get() {
+                    if (isAutoDubbedTrack) return true
+                    val name = audioTrack?.displayName?.lowercase().orEmpty()
+                    val id = audioTrack?.id?.lowercase().orEmpty()
+                    return id.contains("dubbed") || name.contains("doblad") || name.contains("dubbed") || name.contains("traducción")
                 }
 
             val isOriginal: Boolean
-                get() = !isAutoDubbedTrack
+                get() {
+                    if (audioTrack?.audioIsDefault == true) return true
+                    if (isAutoDubbedTrack) return false
+                    val name = audioTrack?.displayName?.lowercase().orEmpty()
+                    val id = audioTrack?.id?.lowercase().orEmpty()
+                    return name.contains("original") || id.contains("original") || !isDubbedTrack
+                }
 
             @Serializable
             data class AudioTrack(

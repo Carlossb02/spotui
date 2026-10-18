@@ -108,7 +108,7 @@ fun SettingsScreen(navController: NavController) {
     var crossfadeMs by remember { mutableStateOf(getCrossfadeMs(context).toFloat()) }
     var videoFallback by remember { mutableStateOf(isVideoFallbackEnabled(context)) }
     var autoPlay by remember { mutableStateOf(isAutoPlayEnabled(context)) }
-    var audioNormalization by remember { mutableStateOf(com.music.spotui.data.preferences.isAudioNormalizationEnabled(context)) }
+    var normalizationMode by remember { mutableStateOf(com.music.spotui.data.preferences.getAudioNormalizationMode(context)) }
     var equalizerEnabled by remember { mutableStateOf(com.music.spotui.data.preferences.isEqualizerEnabled(context)) }
     var equalizerPreset by remember { mutableStateOf(com.music.spotui.data.preferences.getEqualizerPreset(context)) }
     var equalizerGains by remember { mutableStateOf(com.music.spotui.data.preferences.getEqualizerBandGains(context)) }
@@ -157,7 +157,7 @@ fun SettingsScreen(navController: NavController) {
                     crossfadeMs = getCrossfadeMs(context).toFloat()
                     videoFallback = isVideoFallbackEnabled(context)
                     autoPlay = isAutoPlayEnabled(context)
-                    audioNormalization = com.music.spotui.data.preferences.isAudioNormalizationEnabled(context)
+                    normalizationMode = com.music.spotui.data.preferences.getAudioNormalizationMode(context)
                     equalizerEnabled = com.music.spotui.data.preferences.isEqualizerEnabled(context)
                     equalizerPreset = com.music.spotui.data.preferences.getEqualizerPreset(context)
                     equalizerGains = com.music.spotui.data.preferences.getEqualizerBandGains(context)
@@ -400,13 +400,57 @@ fun SettingsScreen(navController: NavController) {
 
             Spacer(Modifier.height(12.dp))
             SectionTitle(stringResource(R.string.audio_normalization))
-            SettingsSwitchRow(
-                title = stringResource(R.string.normalize_volume),
-                subtitle = stringResource(R.string.normalize_desc),
-                checked = audioNormalization,
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                audioNormalization = it
-                com.music.spotui.data.preferences.setAudioNormalizationEnabled(context, it)
+                com.music.spotui.data.preferences.NormalizationMode.values().forEach { mode ->
+                    val isSel = mode == normalizationMode
+                    val (modeTitle, modeDesc) = when (mode) {
+                        com.music.spotui.data.preferences.NormalizationMode.OFF ->
+                            stringResource(R.string.normalization_off) to stringResource(R.string.normalization_off_desc)
+                        com.music.spotui.data.preferences.NormalizationMode.SUAVE ->
+                            stringResource(R.string.normalization_suave) to stringResource(R.string.normalization_suave_desc)
+                        com.music.spotui.data.preferences.NormalizationMode.BALANCED_BETA ->
+                            stringResource(R.string.normalization_balanced_beta) to stringResource(R.string.normalization_balanced_beta_desc)
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable {
+                                normalizationMode = mode
+                                com.music.spotui.data.preferences.setAudioNormalizationMode(context, mode)
+                            }
+                            .background(if (isSel) Color(0xFF1A1A20) else Color.Transparent)
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = modeTitle,
+                                color = Color.White,
+                                fontSize = 15.sp,
+                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.SemiBold
+                            )
+                            Text(
+                                text = modeDesc,
+                                color = Color(0xFFB3B3B3),
+                                fontSize = 12.sp
+                            )
+                        }
+                        if (isSel) {
+                            Icon(
+                                imageVector = Icons.Filled.Check,
+                                contentDescription = "Selected",
+                                tint = AppPalette,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
             }
 
             Spacer(Modifier.height(12.dp))

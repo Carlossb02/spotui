@@ -471,11 +471,15 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
 
                                     // Description Excerpt
                                     if (ep.description.isNotBlank()) {
+                                        val cleanDesc = ep.description.lines()
+                                            .map { it.trim() }
+                                            .filter { it.isNotBlank() }
+                                            .joinToString(" ")
                                         Text(
-                                            text = ep.description,
+                                            text = cleanDesc,
                                             color = Color(0xFFB3B3B3),
                                             fontSize = 13.sp,
-                                            maxLines = if (expanded) Int.MAX_VALUE else 2,
+                                            maxLines = if (expanded) 4 else 2,
                                             overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.clickable { expanded = !expanded }
                                         )
@@ -559,10 +563,16 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                             color = Color(0xFF2A2A30),
                                             shape = RoundedCornerShape(16.dp),
                                             modifier = Modifier.clickable {
+                                                val activeSongId = vm.currentSongId.value
+                                                val isSameEpisode = activeSongId == ep.id && SongPlayer.isPrepared()
                                                 vm.updateQueue(filteredEpisodes)
                                                 vm.updateSongState(ep.coverUri, ep.title, ep.singer, true, ep.id, i, ep.album)
-                                                SongPlayer.playSong(ep.url, context, "song/${ep.id}")
-                                                SongPlayer.seekTo(chapter.timeMs)
+                                                if (isSameEpisode) {
+                                                    SongPlayer.seekTo(chapter.timeMs)
+                                                } else {
+                                                    SongPlayer.setRestorePoint(ep.url, chapter.timeMs)
+                                                    SongPlayer.playSong(ep.url, context, "song/${ep.id}")
+                                                }
                                                 android.widget.Toast.makeText(
                                                     context,
                                                     "Saltando a ${chapter.timeFormatted}: ${chapter.title}",

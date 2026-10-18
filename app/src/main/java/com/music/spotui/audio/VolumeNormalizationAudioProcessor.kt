@@ -6,531 +6,302 @@ import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import kotlin.math.PI
-import kotlin.math.abs
-import kotlin.math.ceil
-import kotlin.math.exp
-import kotlin.math.log10
+import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
-import kotlin.math.tan
 
-// ---------------------------------------------------------------------------------------------
-// Parámetros (equivalentes a la configuración "Normal" de Spotify: -14 LUFS)
-// ---------------------------------------------------------------------------------------------
+/** Objetivo de Spotify en modo «Normal». */
 private const val TARGET_LUFS = -14.0
 
-/** Límites de ganancia por pista (dB). */
-private const val MAX_BOOST_DB = 9.0
-private const val MAX_CUT_DB = -20.0
-
-/** Techo del limitador: -1 dBFS (margen para picos entre muestras al convertir a analógico). */
-private const val CEILING = 0.891f
-private const val LOOKAHEAD_MS = 5.0
-private const val RELEASE_MS = 120.0
-
-/** Velocidades máximas de cambio de ganancia (dB por segundo). */
-private const val RATE_METADATA = 40.0       // cambio de pista: rampa de ~0,15 s para 6 dB
-private const val RATE_FALLBACK_FIRST = 3.0  // primera estimación: entra suave en ~2 s
-private const val RATE_FALLBACK_REFINE = 0.25 // refinamientos posteriores: imperceptibles
-private const val DEADBAND_DB = 0.3          // ignora correcciones menores a esto
-
-/** Bloques de 400 ms (solape 75 %) necesarios antes de fiarse de la medición (~2,5 s). */
-private const val MIN_BLOCKS_FOR_ESTIMATE = 20
+/** No amplificar si se superaría -1 dBTP (incluidos los picos entre muestras). */
+private const val POSITIVE_GAIN_CEILING_DBTP = -1.0
 
 /**
- * [AudioProcessor] de Media3 que normaliza la sonoridad de las pistas como lo hace Spotify:
+ * Normalización de SONORIDAD por pista, sin alterar su dinámica.
  *
- *  - **Ganancia constante por pista** (un único valor en dB, sin compresión ni dinámica), por lo que
- *    la canción suena exactamente igual, solo más fuerte o más suave.
- *  - Con metadatos (ReplayGain / loudness): la ganancia se conoce desde el primer segundo.
- *  - Sin metadatos: se mide la sonoridad integrada real (ITU-R BS.1770 / EBU R128: filtro K +
- *    gating) y la ganancia se mueve solo con rampas muy lentas, nunca a saltos.
- *  - Limitador con anticipación (lookahead) transparente: solo actúa si, tras subir el volumen, un
- *    pico superaría -1 dBFS. Si no hace falta, el audio sale bit a bit idéntico (ganancia 0 dB).
- *  - Dither TPDF al re-cuantizar a 16 bits cuando se modifica la ganancia (sin distorsión de truncado).
+ * Principios:
+ * 1. Se calcula UNA ganancia a partir de metadatos de toda la pista, ANTES de su primer frame.
+ * 2. Se mantiene EXACTAMENTE esa ganancia durante TODA la pista (también al hacer seek).
+ * 3. No hay compresor, limitador, lookahead, rampas ni medición durante la reproducción.
+ * 4. Para amplificar se exige el True Peak de la pista completa; de otro modo NO se amplifica.
+ * 5. A 0 dB se copian los bytes intactos; a otra ganancia solo se multiplica cada muestra.
  *
- * Uso: llama a [setTrackLoudness] / [setTrackGainDb] / [setTrackLoudnessLufs] al cambiar de pista, o
- * a [resetToFallbackEstimation] si no tienes metadatos de esa pista.
+ * IMPORTANTE: los metadatos deben corresponder al AUDIO FINAL que se va a decodificar.
+ * Un True Peak erróneo no permite garantizar que una amplificación esté libre de clipping.
+ * En PCM de 16 bits cualquier cambio de ganancia conlleva redondeo a ese formato.
+ * Para minimizarlo se admite también PCM FLOAT de 32 bits, si la cadena lo permite.
+ *
+ * Uso recomendado (antes de enviar el primer frame de cada pista):
+ *   processor.setTrackLoudnessLufs(-18.0, -7.0)  // LUFS integrado y True Peak en dBTP
+ *   processor.beginTrack()                       // frontera EXPLÍCITA entre pistas
+ *
+ * Durante la canción, no llamar a beginTrack(). Se permite actualizar metadatos para
+ * la SIGUIENTE canción: los nuevos valores no cambiarán la ganancia ya fijada.
+ * onFlush(), incluso tras un seek, no modifica la ganancia de la pista activa.
+ *
+ * Sin metadatos completos no es posible reproducir el método de Spotify con precisión
+ * desde la primera muestra. Es necesario precalcularlos o recuperarlos de una caché.
  */
 @UnstableApi
 class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
 
+    /** Se lee y se fija al iniciar cada pista; cambiarlo a mitad de canción actualiza la ganancia. */
     @Volatile
     var enabled: Boolean = true
-
-    // --- Control (hilo principal -> hilo de audio) ---
-    @Volatile private var controlVersion = 0
-    @Volatile private var metadataDriven = false
-    @Volatile private var requestedGainDb = 0.0
-    private var appliedVersion = 0
-
-    // --- Formato ---
-    private var sampleRate = 0
-    private var channelCount = 0
-    private var frameBuf = FloatArray(0)
-    private var outBuf = FloatArray(0)
-
-    // --- Estado de ganancia (solo hilo de audio) ---
-    private var currentDb = 0.0
-    private var fallbackTargetDb = 0.0
-    private var fallbackEstablished = false
-    private var fallbackSettled = false
-    private var hasProcessedAudio = false
-    private var wasActive = false
-
-    private val meter = LoudnessMeter()
-    private val limiter = LookaheadLimiter()
-    private var rng = 22222
-
-    // ------------------------------------------------------------------------------------------
-    // API pública
-    // ------------------------------------------------------------------------------------------
-
-    /** [loudnessDb]: sonoridad de la pista relativa a la referencia (positivo = más fuerte). */
-    fun setTrackLoudness(loudnessDb: Double?) {
-        setTrackGainDb(if (loudnessDb != null && loudnessDb.isFinite()) -loudnessDb else null)
-    }
-
-    /** [lufs]: sonoridad integrada absoluta de la pista (p. ej. -8.3). Ganancia = -14 - lufs. */
-    fun setTrackLoudnessLufs(lufs: Double?) {
-        setTrackGainDb(if (lufs != null && lufs.isFinite()) TARGET_LUFS - lufs else null)
-    }
-
-    /** Ganancia directa en dB a aplicar a la pista. */
-    fun setTrackGainDb(gainDb: Double?) {
-        if (gainDb == null || !gainDb.isFinite()) {
-            resetToFallbackEstimation()
-            return
+        set(value) {
+            field = value
+            updateGainFromCurrentSettings()
         }
-        requestedGainDb = gainDb.coerceIn(MAX_CUT_DB, MAX_BOOST_DB)
-        metadataDriven = true
-        controlVersion++
+
+    /** Modo de normalización (Desactivado, Suave o Equilibrado Beta). */
+    @Volatile
+    var mode: com.music.spotui.data.preferences.NormalizationMode =
+        com.music.spotui.data.preferences.NormalizationMode.SUAVE
+        set(value) {
+            field = value
+            updateGainFromCurrentSettings()
+        }
+
+    @Synchronized
+    private fun updateGainFromCurrentSettings() {
+        if (!enabled || mode == com.music.spotui.data.preferences.NormalizationMode.OFF) {
+            appliedGainDb = 0.0
+            linearGain = 1.0
+        } else {
+            val currentMeta = (explicitTrackStart?.metadata) ?: preparedTrack
+            lockGainForTrack(currentMeta)
+        }
     }
 
-    /** Sin metadatos: medir la sonoridad real de la pista mientras suena. Llamar en cada cambio de pista. */
+    /** Solo informativo: ganancia realmente fijada para la pista que está sonando. */
+    @Volatile
+    var appliedGainDb: Double = 0.0
+        private set
+
+    /** Número de muestras que han necesitado saturación: indica metadatos de pico incorrectos. */
+    @Volatile
+    var clippedSampleCount: Long = 0L
+        private set
+
+    private data class TrackMetadata(
+        val gainDb: Double?,
+        val truePeakDbtp: Double?
+    )
+
+    private data class TrackStart(val id: Long, val metadata: TrackMetadata)
+
+    // Es una referencia inmutable: ambos metadatos se publican juntos entre hilos.
+    @Volatile private var preparedTrack = TrackMetadata(null, null)
+    @Volatile private var explicitTrackStart: TrackStart? = null
+    private var nextTrackId = 0L
+
+    // Estado del hilo de audio; nunca se recalcula en función de las muestras recibidas.
+    private var appliedTrackId = 0L
+    private var trackLocked = false
+    private var linearGain = 1.0
+    private var encoding = C.ENCODING_INVALID
+    private var channelCount = 0
+
+    /**
+     * Sonoridad RELATIVA al objetivo: positivo = más fuerte que la referencia.
+     * Sin True Peak se permiten las bajadas de volumen, pero no las subidas.
+     */
+    fun setTrackLoudness(loudnessDb: Double?) {
+        setTrackLoudness(loudnessDb, null)
+    }
+
+    fun setTrackLoudness(loudnessDb: Double?, truePeakDbtp: Double?) {
+        setTrackGainDb(
+            loudnessDb?.takeIf { it.isFinite() }?.let { -it },
+            truePeakDbtp
+        )
+    }
+
+    /** Sonoridad integrada real de toda la pista, en LUFS. */
+    fun setTrackLoudnessLufs(lufs: Double?) {
+        setTrackLoudnessLufs(lufs, null)
+    }
+
+    /**
+     * [truePeakDbtp] es el True Peak MÁXIMO de la pista completa, en dBTP.
+     * Ejemplo: lufs = -20, truePeakDbtp = -5 -> máximo +4 dB, resultado -16 LUFS.
+     */
+    fun setTrackLoudnessLufs(lufs: Double?, truePeakDbtp: Double?) {
+        setTrackGainDb(
+            lufs?.takeIf { it.isFinite() }?.let { TARGET_LUFS - it },
+            truePeakDbtp
+        )
+    }
+
+    /**
+     * Ganancia solicitada, en decibelios; NO se aplica hasta la próxima frontera de pista.
+     * Sin True Peak conocido, una solicitud positiva se convierte por seguridad en 0 dB.
+     */
+    fun setTrackGainDb(gainDb: Double?) {
+        setTrackGainDb(gainDb, null)
+    }
+
+    fun setTrackGainDb(gainDb: Double?, truePeakDbtp: Double?) {
+        preparedTrack = TrackMetadata(
+            gainDb?.takeIf { it.isFinite() },
+            truePeakDbtp?.takeIf { it.isFinite() }
+        )
+    }
+
+    /** Pista sin metadatos: se deja a 0 dB en vez de corregirla mientras está sonando. */
+    fun clearTrackMetadata() {
+        preparedTrack = TrackMetadata(null, null)
+    }
+
+    /** Compatibilidad con el nombre de la API anterior: ya NO estima durante el audio. */
+    @Deprecated("La estimación en directo cambia el volumen: usa clearTrackMetadata().")
     fun resetToFallbackEstimation() {
-        metadataDriven = false
-        controlVersion++
+        clearTrackMetadata()
     }
 
-    // ------------------------------------------------------------------------------------------
-    // BaseAudioProcessor
-    // ------------------------------------------------------------------------------------------
+    /**
+     * Marca que el SIGUIENTE buffer PCM es el comienzo de una pista nueva.
+     * Debe invocarse DESPUÉS de setTrack... y justo ANTES de entregar su primer audio.
+     * No usar en seek. OBLIGATORIO en cada nueva pista después de la inicial,
+     * incluso si hay end-of-stream, flush o reconfiguración del decoder.
+     */
+    @Synchronized
+    fun beginTrack() {
+        explicitTrackStart = TrackStart(++nextTrackId, preparedTrack)
+    }
 
-    override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
-        if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT) {
+    override fun onConfigure(
+        inputAudioFormat: AudioProcessor.AudioFormat
+    ): AudioProcessor.AudioFormat {
+        if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT &&
+            inputAudioFormat.encoding != C.ENCODING_PCM_FLOAT
+        ) {
             return AudioProcessor.AudioFormat.NOT_SET
         }
-        sampleRate = inputAudioFormat.sampleRate
+        encoding = inputAudioFormat.encoding
         channelCount = inputAudioFormat.channelCount
-        frameBuf = FloatArray(channelCount)
-        outBuf = FloatArray(channelCount)
-        meter.configure(sampleRate, channelCount)
-        limiter.configure(sampleRate, channelCount)
-        wasActive = false
         return inputAudioFormat
     }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
-        val available = inputBuffer.remaining()
-        if (available == 0) return
+        if (!inputBuffer.hasRemaining()) return
+        if (channelCount <= 0) return
 
-        // Desactivado: paso directo, sin tocar nada.
-        if (!enabled || sampleRate == 0 || channelCount == 0) {
-            wasActive = false
-            val out = replaceOutputBuffer(available)
-            out.put(inputBuffer)
+        val bytesPerSample = if (encoding == C.ENCODING_PCM_FLOAT) 4 else 2
+        val bytesPerFrame = bytesPerSample * channelCount
+        val toProcess = (inputBuffer.remaining() / bytesPerFrame) * bytesPerFrame
+        if (toProcess == 0) return  // Mantener bytes incompletos para el siguiente envío.
+
+        // Latch ANTES de la primera muestra, nunca durante un buffer.
+        val newTrack = explicitTrackStart
+        if (newTrack != null && newTrack.id != appliedTrackId) {
+            appliedTrackId = newTrack.id
+            lockGainForTrack(newTrack.metadata)
+        } else if (!trackLocked) {
+            // La primera pista arranca con los metadatos preparados (o a 0 dB).
+            // Las siguientes solo cambian de ganancia con beginTrack().
+            lockGainForTrack(preparedTrack)
+        }
+
+        val out = replaceOutputBuffer(toProcess)
+        if (linearGain == 1.0) {
+            // Transparencia ABSOLUTA a 0 dB: bytes originales, sin re-cuantización.
+            val oldLimit = inputBuffer.limit()
+            inputBuffer.limit(inputBuffer.position() + toProcess)
+            try {
+                out.put(inputBuffer)
+            } finally {
+                inputBuffer.limit(oldLimit)
+            }
             out.flip()
             return
         }
-        if (!wasActive) {
-            wasActive = true
-            limiter.reset()
-            resetEstimation()
-        }
-
-        val frameSize = channelCount * 2
-        val frames = available / frameSize
-        if (frames == 0) {
-            inputBuffer.position(inputBuffer.limit())
-            return
-        }
-
-        applyPendingControl()
-
-        // --- Ganancia objetivo y rampa para este buffer (interpolada por frame, igual en todos los canales) ---
-        val useMetadata = metadataDriven
-        val targetDb: Double
-        val rate: Double
-        if (useMetadata) {
-            targetDb = requestedGainDb
-            rate = RATE_METADATA
-        } else {
-            targetDb = if (fallbackEstablished) fallbackTargetDb else currentDb
-            rate = if (fallbackSettled) RATE_FALLBACK_REFINE else RATE_FALLBACK_FIRST
-        }
-        val maxStep = rate * frames / sampleRate
-        val delta = targetDb - currentDb
-        val newDb = when {
-            abs(delta) <= maxStep -> targetDb
-            delta > 0 -> currentDb + maxStep
-            else -> currentDb - maxStep
-        }
-        var g = 10.0.pow(currentDb / 20.0)
-        val ratio = if (newDb == currentDb) 1.0 else 10.0.pow((newDb - currentDb) / 20.0 / frames)
 
         inputBuffer.order(ByteOrder.nativeOrder())
-        val out = replaceOutputBuffer(frames * frameSize)
-        val x = frameBuf
-        val y = outBuf
+        out.order(ByteOrder.nativeOrder())
+        val samples = toProcess / bytesPerSample
+        var clippedInBuffer = 0L
 
-        for (f in 0 until frames) {
-            for (c in 0 until channelCount) x[c] = inputBuffer.short / 32768f
-            if (!useMetadata) meter.process(x)
-
-            val gf = g.toFloat()
-            g *= ratio
-            for (c in 0 until channelCount) x[c] *= gf
-
-            val limiterGain = limiter.process(x, y)
-            val dither = gf != 1f || limiterGain != 1f
-            for (c in 0 until channelCount) out.putShort(quantize(y[c], dither))
+        when (encoding) {
+            C.ENCODING_PCM_16BIT -> {
+                repeat(samples) {
+                    val scaled = inputBuffer.short.toInt() * linearGain
+                    if (scaled > Short.MAX_VALUE || scaled < Short.MIN_VALUE) {
+                        clippedInBuffer++
+                    }
+                    out.putShort(softClip16(scaled))
+                }
+            }
+            C.ENCODING_PCM_FLOAT -> {
+                repeat(samples) {
+                    val scaled = (inputBuffer.float.toDouble() * linearGain).toFloat()
+                    if (scaled > 1f || scaled < -1f) clippedInBuffer++
+                    out.putFloat(softClipFloat(scaled))
+                }
+            }
         }
 
-        currentDb = newDb
-        hasProcessedAudio = true
-        if (!useMetadata) updateFallbackEstimate()
+        if (clippedInBuffer > 0) clippedSampleCount += clippedInBuffer
         out.flip()
     }
 
-    /** Vacía la latencia del limitador (5 ms) al terminar el stream. */
+    private fun softClip16(scaled: Double): Short {
+        val norm = scaled / 32768.0
+        val clipped = when {
+            norm > 0.9 -> 0.9 + 0.1 * kotlin.math.tanh((norm - 0.9) / 0.1)
+            norm < -0.9 -> -0.9 + 0.1 * kotlin.math.tanh((norm + 0.9) / 0.1)
+            else -> norm
+        }
+        return (clipped * 32767.0).roundToInt().coerceIn(-32768, 32767).toShort()
+    }
+
+    private fun softClipFloat(scaled: Float): Float {
+        return when {
+            scaled > 0.9f -> (0.9 + 0.1 * kotlin.math.tanh(((scaled - 0.9f) / 0.1f).toDouble())).toFloat()
+            scaled < -0.9f -> (-0.9 + 0.1 * kotlin.math.tanh(((scaled + 0.9f) / 0.1f).toDouble())).toFloat()
+            else -> scaled
+        }
+    }
+
+    /**
+     * Un EOS puede deberse a un cambio interno de flujo, no necesariamente de canción.
+     * Por seguridad NO se desbloquea la ganancia: solo beginTrack() cambia de pista.
+     */
     override fun onQueueEndOfStream() {
-        if (!wasActive || !enabled || channelCount == 0 || !hasProcessedAudio) return
-        val n = limiter.latencyFrames
-        if (n <= 0) return
-        val out = replaceOutputBuffer(n * channelCount * 2)
-        val x = frameBuf
-        val y = outBuf
-        java.util.Arrays.fill(x, 0f)
-        repeat(n) {
-            val limiterGain = limiter.process(x, y)
-            val dither = currentDb != 0.0 || limiterGain != 1f
-            for (c in 0 until channelCount) out.putShort(quantize(y[c], dither))
-        }
-        out.flip()
-        limiter.reset()
+        // No hay audio retenido ni latencia que vaciar.
     }
 
-    // Se llama también al hacer seek: se limpia el limitador, pero NO la ganancia ni la medición,
-    // para que un seek no provoque cambios de volumen.
+    /** También se ejecuta en un seek: NO resetear la ganancia ni el estado de pista. */
     @Suppress("DEPRECATION")
     override fun onFlush() {
         super.onFlush()
-        limiter.reset()
-        hasProcessedAudio = false
     }
 
     override fun onReset() {
         super.onReset()
-        // 'enabled' es un ajuste del usuario, no estado del stream: no se toca aquí.
-        limiter.reset()
-        resetEstimation()
-        currentDb = 0.0
-        hasProcessedAudio = false
-        wasActive = false
+        encoding = C.ENCODING_INVALID
+        channelCount = 0
+        // NO alterar la ganancia fijada: el renderer puede resetearse en mitad de una pista.
+        // Para un tema distinto debe llamarse explícitamente a beginTrack().
     }
 
-    // ------------------------------------------------------------------------------------------
-    // Internos
-    // ------------------------------------------------------------------------------------------
-
-    private fun applyPendingControl() {
-        val v = controlVersion
-        if (v == appliedVersion) return
-        appliedVersion = v
-        resetEstimation()
-        // Pista nueva sin audio previo en la tubería: la ganancia entra directa (no hay nada que "saltar").
-        // Con audio previo (gapless) entra con una rampa corta para evitar clics.
-        if (!hasProcessedAudio) {
-            currentDb = if (metadataDriven) requestedGainDb else 0.0
-        }
-    }
-
-    private fun resetEstimation() {
-        meter.reset()
-        fallbackEstablished = false
-        fallbackSettled = false
-        fallbackTargetDb = 0.0
-    }
-
-    private fun updateFallbackEstimate() {
-        if (!meter.consumeUpdated() || meter.blocks < MIN_BLOCKS_FOR_ESTIMATE) return
-        val lufs = meter.integratedLufs()
-        if (lufs.isNaN()) return
-        val desired = (TARGET_LUFS - lufs).coerceIn(MAX_CUT_DB, MAX_BOOST_DB)
-        if (!fallbackEstablished) {
-            fallbackEstablished = true
-            fallbackTargetDb = desired
-        } else if (abs(desired - fallbackTargetDb) > DEADBAND_DB) {
-            fallbackTargetDb = desired
-        }
-        if (!fallbackSettled && abs(currentDb - fallbackTargetDb) < 0.01) fallbackSettled = true
-    }
-
-    private fun nextRand(): Float {
-        rng = rng xor (rng shl 13)
-        rng = rng xor (rng ushr 17)
-        rng = rng xor (rng shl 5)
-        return (rng ushr 8) * (1f / 16777216f)
-    }
-
-    /** float [-1,1) -> short. Con [dither]: ruido TPDF de ±1 LSB; sin él, conversión exacta. */
-    private fun quantize(sample: Float, dither: Boolean): Short {
-        var v = sample * 32768f
-        if (dither) v += nextRand() - nextRand()
-        return v.roundToInt().coerceIn(-32768, 32767).toShort()
-    }
-
-    // ------------------------------------------------------------------------------------------
-    // Limitador con anticipación
-    //   1) ganancia necesaria por frame (nunca >1)
-    //   2) mínimo deslizante sobre la ventana de lookahead
-    //   3) release suave (el mínimo baja al instante, sube lentamente)
-    //   4) media móvil -> ataque suave que llega a tiempo al pico
-    // El audio se retrasa 'look' frames para que la ganancia ya esté bajada cuando llega el pico.
-    // ------------------------------------------------------------------------------------------
-    private class LookaheadLimiter {
-        private var channels = 0
-        var latencyFrames = 0
-            private set
-
-        private var delay = FloatArray(0)
-        private var delayPos = 0
-
-        private var dqVal = FloatArray(0)
-        private var dqIdx = LongArray(0)
-        private var dqHead = 0
-        private var dqSize = 0
-        private var dqCap = 0
-        private var frameCounter = 0L
-
-        private var avg = FloatArray(0)
-        private var avgPos = 0
-        private var avgSum = 0.0
-
-        private var releaseGain = 1f
-        private var releaseCoef = 0f
-
-        fun configure(sampleRate: Int, channels: Int) {
-            this.channels = channels
-            latencyFrames = maxOf(1, (LOOKAHEAD_MS * sampleRate / 1000.0).toInt())
-            delay = FloatArray(latencyFrames * channels)
-            dqCap = latencyFrames + 2
-            dqVal = FloatArray(dqCap)
-            dqIdx = LongArray(dqCap)
-            avg = FloatArray(latencyFrames)
-            releaseCoef = (1.0 - exp(-1.0 / (RELEASE_MS * sampleRate / 1000.0))).toFloat()
-            reset()
-        }
-
-        fun reset() {
-            java.util.Arrays.fill(delay, 0f)
-            java.util.Arrays.fill(avg, 1f)
-            avgSum = latencyFrames.toDouble()
-            avgPos = 0
-            delayPos = 0
-            dqHead = 0
-            dqSize = 0
-            frameCounter = 0L
-            releaseGain = 1f
-        }
-
-        /** Entra [frame]; escribe en [out] el frame retrasado y limitado. Devuelve la ganancia aplicada. */
-        fun process(frame: FloatArray, out: FloatArray): Float {
-            var peak = 0f
-            for (c in 0 until channels) {
-                val a = abs(frame[c])
-                if (a > peak) peak = a
-            }
-            val need = if (peak > CEILING) CEILING / peak else 1f
-
-            // Mínimo deslizante (deque monótona) sobre los últimos latencyFrames+1 frames.
-            val n = frameCounter++
-            while (dqSize > 0 && dqVal[(dqHead + dqSize - 1) % dqCap] >= need) dqSize--
-            val tail = (dqHead + dqSize) % dqCap
-            dqVal[tail] = need
-            dqIdx[tail] = n
-            dqSize++
-            while (dqIdx[dqHead] < n - latencyFrames) {
-                dqHead = (dqHead + 1) % dqCap
-                dqSize--
-            }
-            val m = dqVal[dqHead]
-
-            // Release suave.
-            releaseGain = if (m < releaseGain) m else releaseGain + (m - releaseGain) * releaseCoef
-            if (1f - releaseGain < 1e-6f) releaseGain = 1f
-
-            // Media móvil (ataque suave garantizado a tiempo).
-            avgSum += releaseGain - avg[avgPos]
-            avg[avgPos] = releaseGain
-            avgPos = (avgPos + 1) % latencyFrames
-            var s = (avgSum / latencyFrames).toFloat()
-            if (abs(1f - s) < 1e-6f) s = 1f
-
-            val base = delayPos * channels
-            for (c in 0 until channels) {
-                out[c] = delay[base + c] * s
-                delay[base + c] = frame[c]
-            }
-            delayPos = (delayPos + 1) % latencyFrames
-            return s
-        }
-    }
-
-    // ------------------------------------------------------------------------------------------
-    // Medidor de sonoridad integrada (ITU-R BS.1770-4 / EBU R128): filtro K + gating.
-    // Bloques de 400 ms cada 100 ms, puerta absoluta -70 LUFS y relativa -10 LU.
-    // ------------------------------------------------------------------------------------------
-    private class LoudnessMeter {
-        private companion object {
-            const val BINS = 800 // pasos de 0,1 LU desde -70 LUFS
-        }
-
-        private var channels = 0
-        private var subLen = 1
-        private val hs = DoubleArray(5) // b0 b1 b2 a1 a2 (shelf alto)
-        private val hp = DoubleArray(5) // b0 b1 b2 a1 a2 (paso alto)
-        private var z = DoubleArray(0)
-
-        private var subEnergy = 0.0
-        private var subCount = 0
-        private val subs = DoubleArray(4)
-        private var subsPos = 0
-        private var subsFilled = 0
-
-        private val binCount = LongArray(BINS)
-        private val binEnergy = DoubleArray(BINS)
-        private var updated = false
-
-        var blocks = 0
-            private set
-
-        fun configure(sampleRate: Int, channels: Int) {
-            this.channels = channels
-            subLen = maxOf(1, sampleRate / 10)
-            z = DoubleArray(channels * 4)
-
-            run {
-                val f0 = 1681.974450955533
-                val gain = 3.999843853973347
-                val q = 0.7071752369554196
-                val k = tan(PI * f0 / sampleRate)
-                val vh = 10.0.pow(gain / 20.0)
-                val vb = vh.pow(0.4996667741545416)
-                val a0 = 1.0 + k / q + k * k
-                hs[0] = (vh + vb * k / q + k * k) / a0
-                hs[1] = 2.0 * (k * k - vh) / a0
-                hs[2] = (vh - vb * k / q + k * k) / a0
-                hs[3] = 2.0 * (k * k - 1.0) / a0
-                hs[4] = (1.0 - k / q + k * k) / a0
-            }
-            run {
-                val f0 = 38.13547087602444
-                val q = 0.5003270373238773
-                val k = tan(PI * f0 / sampleRate)
-                val a0 = 1.0 + k / q + k * k
-                hp[0] = 1.0
-                hp[1] = -2.0
-                hp[2] = 1.0
-                hp[3] = 2.0 * (k * k - 1.0) / a0
-                hp[4] = (1.0 - k / q + k * k) / a0
-            }
-            reset()
-        }
-
-        fun reset() {
-            java.util.Arrays.fill(z, 0.0)
-            java.util.Arrays.fill(subs, 0.0)
-            java.util.Arrays.fill(binCount, 0L)
-            java.util.Arrays.fill(binEnergy, 0.0)
-            subEnergy = 0.0
-            subCount = 0
-            subsPos = 0
-            subsFilled = 0
-            blocks = 0
-            updated = false
-        }
-
-        fun consumeUpdated(): Boolean {
-            val u = updated
-            updated = false
-            return u
-        }
-
-        fun process(x: FloatArray) {
-            var e = 0.0
-            for (c in 0 until channels) {
-                val o = c * 4
-                val xin = x[c].toDouble()
-                // Etapa 1: shelf alto (forma transpuesta II)
-                var y = hs[0] * xin + z[o]
-                z[o] = hs[1] * xin - hs[3] * y + z[o + 1]
-                z[o + 1] = hs[2] * xin - hs[4] * y
-                // Etapa 2: paso alto
-                val x2 = y
-                y = hp[0] * x2 + z[o + 2]
-                z[o + 2] = hp[1] * x2 - hp[3] * y + z[o + 3]
-                z[o + 3] = hp[2] * x2 - hp[4] * y
-                e += y * y
-            }
-            subEnergy += e
-            if (++subCount >= subLen) finishSubBlock()
-        }
-
-        private fun finishSubBlock() {
-            subs[subsPos] = subEnergy / subLen
-            subsPos = (subsPos + 1) % 4
-            if (subsFilled < 4) subsFilled++
-            subEnergy = 0.0
-            subCount = 0
-            if (subsFilled == 4) {
-                blocks++
-                addBlock((subs[0] + subs[1] + subs[2] + subs[3]) / 4.0)
-                updated = true
+    private fun lockGainForTrack(metadata: TrackMetadata) {
+        val desiredGainDb = metadata.gainDb ?: 0.0
+        val safeGainDb = when {
+            !enabled || mode == com.music.spotui.data.preferences.NormalizationMode.OFF -> 0.0
+            desiredGainDb <= 0.0 -> desiredGainDb
+            mode == com.music.spotui.data.preferences.NormalizationMode.BALANCED_BETA -> desiredGainDb
+            metadata.truePeakDbtp == null -> 0.0
+            else -> {
+                // Solo subir el volumen si TODO el audio cabe bajo -1 dBTP.
+                val availableHeadroom =
+                    (POSITIVE_GAIN_CEILING_DBTP - metadata.truePeakDbtp).coerceAtLeast(0.0)
+                min(desiredGainDb, availableHeadroom)
             }
         }
-
-        private fun addBlock(energy: Double) {
-            if (energy <= 0.0) return
-            val lufs = -0.691 + 10.0 * log10(energy)
-            if (lufs < -70.0) return
-            val idx = ((lufs + 70.0) * 10.0).toInt().coerceIn(0, BINS - 1)
-            binCount[idx]++
-            binEnergy[idx] += energy
-        }
-
-        /** Sonoridad integrada con doble puerta. NaN si aún no hay material por encima de -70 LUFS. */
-        fun integratedLufs(): Double {
-            var totalE = 0.0
-            var totalN = 0L
-            for (i in 0 until BINS) {
-                totalE += binEnergy[i]
-                totalN += binCount[i]
-            }
-            if (totalN == 0L) return Double.NaN
-
-            val relGate = -0.691 + 10.0 * log10(totalE / totalN) - 10.0
-            val start = ceil((relGate + 70.0) * 10.0).toInt().coerceIn(0, BINS - 1)
-            var e = 0.0
-            var n = 0L
-            for (i in start until BINS) {
-                e += binEnergy[i]
-                n += binCount[i]
-            }
-            if (n == 0L) return Double.NaN
-            return -0.691 + 10.0 * log10(e / n)
-        }
+        appliedGainDb = if (enabled && mode != com.music.spotui.data.preferences.NormalizationMode.OFF) safeGainDb else 0.0
+        linearGain = 10.0.pow(appliedGainDb / 20.0)
+        clippedSampleCount = 0L
+        trackLocked = true
     }
 }

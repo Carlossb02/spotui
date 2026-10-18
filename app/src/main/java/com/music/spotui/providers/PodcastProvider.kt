@@ -13,6 +13,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -58,6 +61,8 @@ object PodcastProvider {
         showName: String = ""
     ): SongsModel {
         val videoId = episode.id
+        val authorName = episode.author?.name?.takeIf { it.isNotBlank() } ?: showName
+        val queryText = listOf(episode.title, authorName).filter { it.isNotBlank() }.joinToString(" ")
 
         return SongsModel(
             id = stableId("$YOUTUBE_EPISODE_PREFIX$videoId"),
@@ -71,37 +76,49 @@ object PodcastProvider {
                 },
             singer = episode.author?.name.orEmpty(),
             coverUri = episode.thumbnail,
-            url = "https://www.youtube.com/watch?v=$videoId",
+            url = "$YOUTUBE_EPISODE_PREFIX$videoId|$queryText",
             description = episode.title,
             durationMs = (episode.duration ?: 0) * 1000
         )
     }
 
-    private fun itemToShow(item: YTItem): PodcastModel? = when (item) {
-        is PodcastItem -> PodcastModel(
-            id = "$YOUTUBE_PODCAST_PREFIX${item.id}",
-            name = item.title,
-            publisher = item.author?.name.orEmpty(),
-            coverUri = item.thumbnail.orEmpty()
-        )
-
-        is PlaylistItem -> if (item.id.startsWith(PODCAST_BROWSE_PREFIX)) {
-            PodcastModel(
-                id = "$YOUTUBE_PODCAST_PREFIX${item.id}",
+    private fun itemToShow(item: YTItem): PodcastModel? {
+        val show = when (item) {
+            is PodcastItem -> PodcastModel(
+                id = if (item.id.startsWith(YOUTUBE_PODCAST_PREFIX)) item.id else "$YOUTUBE_PODCAST_PREFIX${item.id}",
                 name = item.title,
                 publisher = item.author?.name.orEmpty(),
                 coverUri = item.thumbnail.orEmpty()
             )
-        } else null
 
-        else -> null
+            is PlaylistItem -> if (item.isPodcast || item.id.startsWith(PODCAST_BROWSE_PREFIX) || item.id.startsWith("MPSP")) {
+                PodcastModel(
+                    id = if (item.id.startsWith(YOUTUBE_PODCAST_PREFIX)) item.id else "$YOUTUBE_PODCAST_PREFIX${item.id}",
+                    name = item.title,
+                    publisher = item.author?.name.orEmpty(),
+                    coverUri = item.thumbnail.orEmpty()
+                )
+            } else null
+
+            else -> null
+        }
+
+        if (show != null) {
+            val lowerName = show.name.lowercase()
+            val lowerPub = show.publisher.lowercase()
+            val musicKeywords = listOf("music", "cancion", "canción", "álbum", "album", "mezcla", "reggaeton", "pop español", "éxitos", "musica")
+            if (musicKeywords.any { lowerName.contains(it) || lowerPub.contains(it) }) {
+                return null
+            }
+        }
+        return show
     }
 
     // ------------------------------------------------------------------
     // Petición directa a YouTube Music (no depende del parser de innertube)
     // ------------------------------------------------------------------
 
-    private fun browseRaw(browseId: String): JSONObject? {
+    private fun browseRaw(browseId: String, params: String? = null): JSONObject? {
         val body = JSONObject()
             .put(
                 "context",
@@ -115,6 +132,9 @@ object PodcastProvider {
                 )
             )
             .put("browseId", browseId)
+        if (!params.isNullOrBlank()) {
+            body.put("params", params)
+        }
 
         val conn = (URL(BROWSE_URL).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
@@ -141,6 +161,81 @@ object PodcastProvider {
         } finally {
             conn.disconnect()
         }
+    }
+
+    private fun browseContinuation(token: String): JSONObject? {
+        val body = JSONObject()
+            .put(
+                "context",
+                JSONObject().put(
+                    "client",
+                    JSONObject()
+                        .put("clientName", "WEB_REMIX")
+                        .put("clientVersion", CLIENT_VERSION)
+                        .put("hl", "es")
+                        .put("gl", "ES")
+                )
+            )
+            .put("continuation", token)
+
+        val conn = (URL(BROWSE_URL).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 15_000
+            readTimeout = 15_000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("User-Agent", USER_AGENT)
+            setRequestProperty("Origin", "https://music.youtube.com")
+            setRequestProperty("Referer", "https://music.youtube.com/")
+        }
+
+        return try {
+            conn.outputStream.use { it.write(body.toString().toByteArray()) }
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                Log.e(TAG, "browseContinuation HTTP $code")
+                null
+            } else {
+                val text = conn.inputStream.bufferedReader().use { it.readText() }
+                JSONObject(text)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "browseContinuation failed", e)
+            null
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun findContinuationToken(node: Any?): String? {
+        when (node) {
+            is JSONObject -> {
+                if (node.has("continuationCommand")) {
+                    val token = node.optJSONObject("continuationCommand")?.optString("token")
+                    if (!token.isNullOrBlank()) return token
+                }
+                if (node.has("nextContinuationData")) {
+                    val token = node.optJSONObject("nextContinuationData")?.optString("continuation")
+                    if (!token.isNullOrBlank()) return token
+                }
+                val keys = node.keys()
+                while (keys.hasNext()) {
+                    val k = keys.next()
+                    if (k == "continuation" && node.opt(k) is String) {
+                        val token = node.optString("continuation")
+                        if (token.isNotBlank() && token.length > 20) return token
+                    } else {
+                        val found = findContinuationToken(node.opt(k))
+                        if (found != null) return found
+                    }
+                }
+            }
+            is JSONArray -> for (i in 0 until node.length()) {
+                val found = findContinuationToken(node.opt(i))
+                if (found != null) return found
+            }
+        }
+        return null
     }
 
     /** Recorre todo el JSON llamando a [onObj] por cada objeto (con la clave que lo contiene). */
@@ -361,6 +456,7 @@ object PodcastProvider {
                 }
             }
 
+            val queryText = listOf(title, showName).filter { it.isNotBlank() }.joinToString(" ")
             episodes.add(
                 SongsModel(
                     id = stableId("$YOUTUBE_EPISODE_PREFIX$videoId"),
@@ -368,7 +464,7 @@ object PodcastProvider {
                     album = showName.ifBlank { "Podcast" },
                     singer = showName,
                     coverUri = cover,
-                    url = "https://www.youtube.com/watch?v=$videoId",
+                    url = "$YOUTUBE_EPISODE_PREFIX$videoId|$queryText",
                     description = description.ifBlank { title },
                     durationMs = durationMs,
                     releaseDate = releaseDate
@@ -426,23 +522,7 @@ object PodcastProvider {
             }
 
             val distinctShows = shows.distinctBy { it.id }
-            var distinctEpisodes = episodes.distinctBy { it.id }
-
-            if (distinctEpisodes.isEmpty() && distinctShows.isNotEmpty()) {
-                distinctEpisodes = coroutineScope {
-                    distinctShows
-                        .take(MAX_SHOWS_FOR_EPISODES)
-                        .map { show ->
-                            async {
-                                getShowEpisodes(show.id, show.name)
-                                    .take(MAX_EPISODES_PER_SHOW)
-                            }
-                        }
-                        .awaitAll()
-                        .flatten()
-                        .distinctBy { it.id }
-                }
-            }
+            val distinctEpisodes = episodes.distinctBy { it.id }
 
             distinctShows to distinctEpisodes
         }
@@ -497,17 +577,20 @@ object PodcastProvider {
      * 1) Petición directa a YouTube Music.
      * 2) Fallback innertube.
      */
-    suspend fun getShowEpisodes(
+    fun getShowEpisodesFlow(
         showId: String,
         showName: String = ""
-    ): List<SongsModel> = withContext(Dispatchers.IO) {
-
+    ): kotlinx.coroutines.flow.Flow<List<SongsModel>> = kotlinx.coroutines.flow.flow {
         if (showId.isBlank() || showId.startsWith(ITUNES_PREFIX)) {
-            return@withContext emptyList()
+            emit(emptyList())
+            return@flow
         }
 
         val browseId = podcastBrowseId(showId)
-        if (browseId.isBlank()) return@withContext emptyList()
+        if (browseId.isBlank()) {
+            emit(emptyList())
+            return@flow
+        }
 
         var resolvedName = showName
 
@@ -518,9 +601,30 @@ object PodcastProvider {
                 if (headerShow != null && headerShow.name.isNotBlank()) {
                     resolvedName = headerShow.name
                 }
-                val list = parseEpisodesFromBrowse(root, resolvedName, headerShow?.coverUri.orEmpty())
-                if (list.isNotEmpty()) {
-                    return@withContext list
+                val initialEpisodes = parseEpisodesFromBrowse(root, resolvedName, headerShow?.coverUri.orEmpty())
+                if (initialEpisodes.isNotEmpty()) {
+                    val allEpisodes = initialEpisodes.toMutableList()
+                    emit(allEpisodes.toList())
+
+                    var currentRoot = root
+                    var pageCount = 0
+                    val maxPages = 15
+
+                    while (pageCount < maxPages) {
+                        val token = findContinuationToken(currentRoot) ?: break
+                        val contRoot = browseContinuation(token) ?: break
+                        val nextBatch = parseEpisodesFromBrowse(contRoot, resolvedName, headerShow?.coverUri.orEmpty())
+                        if (nextBatch.isEmpty()) break
+                        val newEpisodes = nextBatch.filter { ep -> allEpisodes.none { it.id == ep.id } }
+                        if (newEpisodes.isEmpty()) break
+                        allEpisodes.addAll(newEpisodes)
+                        emit(allEpisodes.toList())
+                        currentRoot = contRoot
+                        pageCount++
+                    }
+
+                    Log.d(TAG, "Loaded total ${allEpisodes.size} episodes across ${pageCount + 1} pages for $showId")
+                    return@flow
                 }
             }
         } catch (e: CancellationException) {
@@ -533,7 +637,9 @@ object PodcastProvider {
             val page = YouTube.podcast(browseId).getOrNull()
             if (page != null && page.episodes.isNotEmpty()) {
                 resolvedName = page.podcast.title.ifBlank { showName }
-                return@withContext page.episodes.map { episodeToSong(it, resolvedName) }
+                val eps = page.episodes.map { episodeToSong(it, resolvedName) }
+                emit(eps)
+                return@flow
             }
         } catch (e: CancellationException) {
             throw e
@@ -541,6 +647,212 @@ object PodcastProvider {
             Log.e(TAG, "innertube podcast page failed: $showId", e)
         }
 
-        emptyList()
+        emit(emptyList())
+    }
+
+    suspend fun getShowEpisodes(
+        showId: String,
+        showName: String = ""
+    ): List<SongsModel> = withContext(Dispatchers.IO) {
+        var last: List<SongsModel> = emptyList()
+        getShowEpisodesFlow(showId, showName).collect { last = it }
+        last
+    }
+
+    private fun extractPodcastShowsFromNode(node: Any?): List<PodcastModel> {
+        val shows = mutableListOf<PodcastModel>()
+        val seen = mutableSetOf<String>()
+
+        walk(node) { key, obj ->
+            if (key == "musicTwoRowItemRenderer" || key == "musicResponsiveListItemRenderer") {
+                val titleObj = obj.optJSONObject("title")
+                val title = titleObj?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                    ?.takeIf { it.isNotBlank() && it != "Podcast" && it != "Programa" }
+                    ?: run {
+                        val flex = obj.optJSONArray("flexColumns")
+                        flex?.optJSONObject(0)?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+                            ?.optJSONObject("text")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                    }
+                    ?: return@walk
+
+                val subtitleObj = obj.optJSONObject("subtitle")
+                var publisher = ""
+                val subRuns = subtitleObj?.optJSONArray("runs")
+                if (subRuns != null) {
+                    val texts = mutableListOf<String>()
+                    for (i in 0 until subRuns.length()) {
+                        val txt = subRuns.optJSONObject(i)?.optString("text").orEmpty().trim()
+                        if (txt.isNotBlank() && txt != "•" && txt != "Podcast" && txt != "Programa" && !isDateText(txt)) {
+                            texts.add(txt)
+                        }
+                    }
+                    publisher = texts.firstOrNull().orEmpty()
+                }
+
+                var coverUri = ""
+                val thumbs = findFirst(obj, "thumbnails") as? JSONArray
+                if (thumbs != null && thumbs.length() > 0) {
+                    coverUri = thumbs.optJSONObject(thumbs.length() - 1)?.optString("url").orEmpty()
+                }
+
+                var browseId = ""
+                val nav = obj.optJSONObject("navigationEndpoint")
+                val browse = nav?.optJSONObject("browseEndpoint")
+                val watch = nav?.optJSONObject("watchEndpoint")
+
+                val pageType = browse?.optJSONObject("browseEndpointContextSupportedConfigs")
+                    ?.optJSONObject("browseEndpointContextMusicConfig")
+                    ?.optString("pageType")
+
+                if (pageType == "MUSIC_PAGE_TYPE_PLAYLIST" ||
+                    pageType == "MUSIC_PAGE_TYPE_ALBUM" ||
+                    pageType == "MUSIC_PAGE_TYPE_AUDIOBOOK" ||
+                    pageType == "MUSIC_PAGE_TYPE_ARTIST"
+                ) {
+                    return@walk
+                }
+
+                if (browse != null && browse.has("browseId")) {
+                    browseId = browse.optString("browseId")
+                } else if (watch != null && watch.has("playlistId")) {
+                    browseId = watch.optString("playlistId")
+                } else {
+                    val runs = titleObj?.optJSONArray("runs")
+                    if (runs != null) {
+                        for (r in 0 until runs.length()) {
+                            val runNav = runs.optJSONObject(r)?.optJSONObject("navigationEndpoint")
+                            val runBrowse = runNav?.optJSONObject("browseEndpoint")
+                            if (runBrowse != null && runBrowse.has("browseId")) {
+                                browseId = runBrowse.optString("browseId")
+                                break
+                            }
+                        }
+                    }
+                }
+
+                if (browseId.isBlank() || browseId.startsWith("MV") || browseId.startsWith("MPED")) {
+                    return@walk
+                }
+
+                val finalId = podcastBrowseId(browseId)
+                val fullId = if (finalId.startsWith(YOUTUBE_PODCAST_PREFIX)) finalId else "$YOUTUBE_PODCAST_PREFIX$finalId"
+
+                if (seen.add(fullId)) {
+                    shows.add(
+                        PodcastModel(
+                            id = fullId,
+                            name = title,
+                            publisher = publisher,
+                            coverUri = coverUri
+                        )
+                    )
+                }
+            }
+        }
+        return shows
+    }
+
+    private val showSearchCache = java.util.concurrent.ConcurrentHashMap<String, PodcastModel?>()
+
+    fun getYouTubePodcastsFeedFlow(): kotlinx.coroutines.flow.Flow<com.music.spotui.data.entity.PodcastFeedModel> = kotlinx.coroutines.flow.channelFlow {
+        val spanishPodcastCategories = listOf(
+            "Podcasts populares en España" to listOf(
+                "The Wild Project", "La Ruina", "Nadie Sabe Nada", "Terrores Nocturnos", "Cuarto Milenio",
+                "Entiende Tu Mente", "La Escóbula de la Brújula", "BLACK MANGO", "La Noche de Cuesta",
+                "Poco Se Habla", "Estirando el Chicle", "Tengo un Plan", "Nude Project", "Caso 63"
+            ),
+            "Comedia y Humor" to listOf(
+                "La Ruina", "Nadie Sabe Nada", "Estirando el Chicle", "Poco Se Habla",
+                "Ilustres Ignorantes", "Misterios Y Cubatas", "No Hay Negros en el Tíbet"
+            ),
+            "Crímenes Reales y Misterio" to listOf(
+                "Terrores Nocturnos", "Días Extraños con Santiago Camacho", "Espacio en Blanco",
+                "Criminopatía", "Negra y Criminal", "Caso 63"
+            ),
+            "Noticias y Política" to listOf(
+                "Un Tema Al Día", "La noche de Cuesta", "Herrera en COPE", "La Ventana"
+            ),
+            "Ciencia, Historia y Tecnología" to listOf(
+                "La Escóbula de la Brújula", "A Hombros de Gigantes", "Materia Oscura", "Xataka", "Kernel"
+            ),
+            "Deportes" to listOf(
+                "Linea de cal", "El Partidazo de COPE", "El Larguero", "El Desmarque", "La Libreta de Van Gaal"
+            ),
+            "Negocios y Emprendimiento" to listOf(
+                "Tengo un Plan", "Nude Project", "Itnig", "Libros para Emprendedores"
+            )
+        )
+
+        val sectionShowsMap = java.util.concurrent.ConcurrentHashMap<String, MutableList<PodcastModel>>()
+        spanishPodcastCategories.forEach { (catTitle, _) ->
+            sectionShowsMap[catTitle] = java.util.Collections.synchronizedList(mutableListOf())
+        }
+
+        fun currentSnapshot(): com.music.spotui.data.entity.PodcastFeedModel {
+            val sections = spanishPodcastCategories.map { (catTitle, _) ->
+                com.music.spotui.data.entity.PodcastSectionModel(
+                    title = catTitle,
+                    shows = sectionShowsMap[catTitle]?.toList().orEmpty().distinctBy { it.id }
+                )
+            }
+            return com.music.spotui.data.entity.PodcastFeedModel(
+                categories = emptyList(),
+                selectedCategory = null,
+                sections = sections
+            )
+        }
+
+        send(currentSnapshot())
+
+        for ((catTitle, podcastQueries) in spanishPodcastCategories) {
+            coroutineScope {
+                podcastQueries.map { query ->
+                    async(Dispatchers.IO) {
+                        val cached = showSearchCache[query]
+                        val resolved = if (cached != null) cached else {
+                            runCatching {
+                                var resultShow: PodcastModel? = null
+                                val searchResult = YouTube.search(query, YouTube.SearchFilter.FILTER_PODCAST).getOrNull()
+                                for (item in searchResult?.items.orEmpty()) {
+                                    val show = itemToShow(item)
+                                    if (show != null && show.name.isNotBlank()) {
+                                        resultShow = show
+                                        break
+                                    }
+                                }
+                                if (resultShow == null) {
+                                    val (fallbackShows, _) = searchPodcasts(query)
+                                    resultShow = fallbackShows.firstOrNull()
+                                }
+                                if (resultShow == null) {
+                                    resultShow = PodcastModel(
+                                        id = "$YOUTUBE_PODCAST_PREFIX$query",
+                                        name = query,
+                                        publisher = "Podcast",
+                                        coverUri = ""
+                                    )
+                                }
+                                showSearchCache[query] = resultShow
+                                resultShow
+                            }.getOrNull()
+                        }
+
+                        if (resolved != null) {
+                            val list = sectionShowsMap[catTitle]
+                            if (list != null && list.none { it.id == resolved.id }) {
+                                list.add(resolved)
+                            }
+                        }
+                    }
+                }.awaitAll()
+            }
+            send(currentSnapshot())
+        }
+    }
+
+    suspend fun getYouTubePodcastsFeed(): com.music.spotui.data.entity.PodcastFeedModel {
+        var last = com.music.spotui.data.entity.PodcastFeedModel()
+        getYouTubePodcastsFeedFlow().collect { last = it }
+        return last
     }
 }

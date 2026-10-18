@@ -662,7 +662,7 @@ fun PlayerScreen(navController: NavController) {
                                     modifier = Modifier
                                         .aspectRatio(1f)
                                         .clip(RoundedCornerShape(10.dp))
-                                        .alpha(if (canvasUrl != null) 0f else 1f),
+                                        .alpha(1f),
                                     model = songCoverUri,
                                     contentScale = ContentScale.Crop,
                                     contentDescription = ""
@@ -676,7 +676,7 @@ fun PlayerScreen(navController: NavController) {
                                         modifier = Modifier
                                             .fillMaxSize()
                                             .clip(RoundedCornerShape(10.dp))
-                                            .alpha(if (canvasUrl != null) 0f else 1f),
+                                            .alpha(1f),
                                         model = queueSongs.getOrNull(page)?.coverUri ?: songCoverUri,
                                         contentScale = ContentScale.Crop,
                                         contentDescription = ""
@@ -710,20 +710,10 @@ fun PlayerScreen(navController: NavController) {
                                 resolveError = playerViewModel.resolveError.value,
                                 resolveDetailNote = playerViewModel.resolveDetailNote.value,
                                 onArtistClick = {
-                                    val artists = songSinger.split(",").map { it.trim() }
-                                        .filter { it.isNotBlank() }
-                                    val ids = playerViewModel.currentArtistIds.value.split(",")
-                                        .map { it.trim() }
-                                    if (artists.size == 1) {
-                                        val aId = ids.getOrElse(0) { "" }
-                                        navController.navigate(
-                                            com.music.spotui.ui.navigation.artistRoute(
-                                                artists[0],
-                                                aId
-                                            )
-                                        )
-                                    } else {
-                                        showArtistSheet = true
+                                    val currentPlayingSong = queueSongs.firstOrNull { it.id == songId }
+                                    val trackId = currentPlayingSong?.spotifyTrackId.orEmpty()
+                                    playerViewModel.goToArtist(trackId, songSinger) { route ->
+                                        navController.navigate(route)
                                     }
                                 },
                                 spotifyTrackId = queueSongs.firstOrNull { it.id == songId }?.spotifyTrackId.orEmpty(),
@@ -881,20 +871,10 @@ fun PlayerScreen(navController: NavController) {
                                 resolveError = playerViewModel.resolveError.value,
                                 resolveDetailNote = playerViewModel.resolveDetailNote.value,
                                 onArtistClick = {
-                                    val artists = songSinger.split(",").map { it.trim() }
-                                        .filter { it.isNotBlank() }
-                                    val ids = playerViewModel.currentArtistIds.value.split(",")
-                                        .map { it.trim() }
-                                    if (artists.size == 1) {
-                                        val aId = ids.getOrElse(0) { "" }
-                                        navController.navigate(
-                                            com.music.spotui.ui.navigation.artistRoute(
-                                                artists[0],
-                                                aId
-                                            )
-                                        )
-                                    } else {
-                                        showArtistSheet = true
+                                    val currentPlayingSong = queueSongs.firstOrNull { it.id == songId }
+                                    val trackId = currentPlayingSong?.spotifyTrackId.orEmpty()
+                                    playerViewModel.goToArtist(trackId, songSinger) { route ->
+                                        navController.navigate(route)
                                     }
                                 },
                                 spotifyTrackId = queueSongs.firstOrNull { it.id == songId }?.spotifyTrackId.orEmpty(),

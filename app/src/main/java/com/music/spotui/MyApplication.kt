@@ -4,12 +4,10 @@ import android.app.Application
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.YouTubeLocale
 import com.metrolist.music.utils.cipher.CipherDeobfuscator
-import com.music.spotui.data.api.Api
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -51,18 +49,10 @@ class MyApplication : Application(){
         // to matching normal YouTube uploads instead of requiring sign-in.
         YouTube.cookie = null
 
-        // Warm the Home feed cache so the first navigation to Home is instant.
-        // No-op (gracefully) until a Spotify token is available.
-        val api = Api(this)
-        appScope.launch { runCatching { api.getHomeFeed().collect {} } }
-        appScope.launch { runCatching { api.getAlbums().collect {} } }
-        appScope.launch { runCatching { api.getArtists().collect {} } }
         // Pre-warm the YouTube playback pipeline so the first tap doesn't pay for
         // cold-starting the player.js parser and BotGuard WebView (~2-4s combined).
         appScope.launch {
             runCatching { com.metrolist.innertube.NewPipeExtractor.init() }
         }
-        // Purge stale stream caches so all track resolutions run through the strict artist-matching algorithm
-        com.music.spotui.data.preferences.clearAllCachedStreams(this)
     }
 }

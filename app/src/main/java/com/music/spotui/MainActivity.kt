@@ -80,8 +80,9 @@ class MainActivity : ComponentActivity() {
         // orphaned WebView gets a 0×0 viewport and Spotify won't render/navigate).
         com.music.spotui.di.SpotifyWebPlayer.attach(this)
 
-        // Perform background auto-backup if a backup directory is configured.
+        // Perform background auto-backup if a backup directory is configured (deferred to avoid blocking cold-start).
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            kotlinx.coroutines.delay(3000L)
             com.music.spotui.util.BackupHelper.performAutoBackup(applicationContext)
         }
 

@@ -209,7 +209,7 @@ fun QueueContent(
                             modifier = Modifier.padding(16.dp, 18.dp, 16.dp, 6.dp)
                         )
                     }
-                    itemsIndexed(upcoming, key = { _, s -> s.id }) { _, song ->
+                    itemsIndexed(upcoming, key = { index, s -> "${s.id}_$index" }) { _, song ->
                         val isDragging = draggingId == song.id
                         val dismissState = rememberSwipeToDismissBoxState(
                             confirmValueChange = { value ->

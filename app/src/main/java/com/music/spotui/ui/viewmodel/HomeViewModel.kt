@@ -1,5 +1,6 @@
 package com.music.spotui.ui.viewmodel
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.music.spotui.data.api.Response
@@ -9,6 +10,9 @@ import com.music.spotui.data.entity.HomeFeedModel
 import com.music.spotui.ui.repository.AppRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -30,8 +34,17 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository)  
     private val _songs : MutableStateFlow<Response<List<com.music.spotui.data.entity.SongsModel>>> = MutableStateFlow(Response.Loading())
     val songs : StateFlow<Response<List<com.music.spotui.data.entity.SongsModel>>> = _songs
 
-    private val _podcasts : MutableStateFlow<Response<com.music.spotui.data.entity.SearchResults>> = MutableStateFlow(Response.Loading())
-    val podcasts : StateFlow<Response<com.music.spotui.data.entity.SearchResults>> = _podcasts
+    private val _podcastFeed = MutableStateFlow<Response<com.music.spotui.data.entity.PodcastFeedModel>>(Response.Loading())
+    val podcastFeed: StateFlow<Response<com.music.spotui.data.entity.PodcastFeedModel>> = _podcastFeed
+
+    private val _selectedPodcastCategory = MutableStateFlow<com.music.spotui.data.entity.PodcastCategoryModel?>(null)
+    val selectedPodcastCategory: StateFlow<com.music.spotui.data.entity.PodcastCategoryModel?> = _selectedPodcastCategory
+
+    private val _isPodcastCategoryLoading = MutableStateFlow(false)
+    val isPodcastCategoryLoading: StateFlow<Boolean> = _isPodcastCategoryLoading
+
+    private val _isPodcastsLoading = MutableStateFlow(false)
+    val isPodcastsLoading: StateFlow<Boolean> = _isPodcastsLoading
 
     private val _audiobooks : MutableStateFlow<Response<com.music.spotui.data.entity.SearchResults>> = MutableStateFlow(Response.Loading())
     val audiobooks : StateFlow<Response<com.music.spotui.data.entity.SearchResults>> = _audiobooks
@@ -50,8 +63,6 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository)  
         fetchArtists()
         fetchAlbums()
         fetchSongs()
-        fetchPodcasts()
-        fetchAudiobooks()
         fetchFollowedArtists()
     }
 
@@ -59,6 +70,23 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository)  
         if (_selectedFilter.value != filter) {
             _selectedFilter.value = filter
             _isFollowingOnly.value = false
+            if (filter == "Podcasts") {
+                ensurePodcastsLoaded()
+            } else if (filter == "Audiobooks") {
+                ensureAudiobooksLoaded()
+            }
+        }
+    }
+
+    fun ensurePodcastsLoaded() {
+        if (_podcastFeed.value !is Response.Success && !_isPodcastsLoading.value) {
+            fetchPodcasts()
+        }
+    }
+
+    fun ensureAudiobooksLoaded() {
+        if (_audiobooks.value !is Response.Success) {
+            fetchAudiobooks()
         }
     }
 
@@ -96,20 +124,19 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository)  
     }
 
     private fun fetchPodcasts() = viewModelScope.launch(Dispatchers.IO) {
-        val allShows = mutableListOf<com.music.spotui.data.entity.PodcastModel>()
-        val allEpisodes = mutableListOf<com.music.spotui.data.entity.SongsModel>()
-        val terms = listOf("The Wild Project", "BLACK MANGO", "Nadie Sabe Nada", "La Ruina", "Entiende Tu Mente")
-        for (term in terms) {
-            repository.searchEverything(term).collect { podRes ->
-                if (podRes is Response.Success) {
-                    allShows.addAll(podRes.data.shows)
-                    allEpisodes.addAll(podRes.data.episodes)
-                }
+        _isPodcastsLoading.value = true
+        try {
+            repository.providePodcastFeedFlow().collect { feed ->
+                _podcastFeed.value = Response.Success(feed)
             }
+        } catch (e: Exception) {
+            Log.e("HomeViewModel", "Failed to fetch podcast feed", e)
+            if (_podcastFeed.value !is Response.Success) {
+                _podcastFeed.value = Response.Error(e.message ?: "Failed to load podcast feed")
+            }
+        } finally {
+            _isPodcastsLoading.value = false
         }
-        val distinctShows = allShows.distinctBy { it.name.trim().lowercase() }
-        val distinctEpisodes = allEpisodes.distinctBy { it.title.trim().lowercase() }
-        _podcasts.value = Response.Success(com.music.spotui.data.entity.SearchResults(shows = distinctShows, episodes = distinctEpisodes))
     }
 
     private fun fetchAudiobooks() = viewModelScope.launch(Dispatchers.IO) {

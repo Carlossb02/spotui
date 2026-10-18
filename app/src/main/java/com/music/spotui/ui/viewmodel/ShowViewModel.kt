@@ -53,7 +53,7 @@ class ShowViewModel @Inject constructor(
         _isSubscribed.value = SubscribedPodcastPref.isPodcastSubscribed(context, showId)
         if (showKey == showId) return
         showKey = showId
-        _visibleCount.value = 15
+        _visibleCount.value = 30
         if (showName.isNotBlank() && _show.value == null) {
             _show.value = PodcastModel(id = showId, name = showName, publisher = "", coverUri = "")
         }
@@ -65,7 +65,15 @@ class ShowViewModel @Inject constructor(
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
-            repository.provideShowEpisodes(showId, showName).collect { _episodes.value = it }
+            repository.provideShowEpisodes(showId, showName).collect { res ->
+                _episodes.value = res
+                if (res is Response.Success) {
+                    val count = res.data.size
+                    if (count > _visibleCount.value && _visibleCount.value <= 30) {
+                        _visibleCount.value = count
+                    }
+                }
+            }
         }
     }
 
