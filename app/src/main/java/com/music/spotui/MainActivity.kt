@@ -29,7 +29,7 @@ class MainActivity : ComponentActivity() {
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* no-op */ }
 
-    @kotlin.OptIn(androidx.media3.common.util.UnstableApi::class)
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     @RequiresApi(Build.VERSION_CODES.S)
     override fun onCreate(savedInstanceState: Bundle?){
 
@@ -46,8 +46,8 @@ class MainActivity : ComponentActivity() {
             notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        // Connect a controller to bootstrap the MediaSessionService: this brings up
-        // the system media notification and keeps playback alive in the background.
+        // Connect a MediaController to bind PlaybackService. MediaSessionService
+        // automatically promotes itself to a foreground service when playback begins.
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
         controllerFuture = MediaController.Builder(this, token).buildAsync()
 
@@ -75,10 +75,13 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Experimental Spotify web-player engine: attach its hidden WebView AFTER
-        // setContent so the Compose content view doesn't replace/orphan it (an
-        // orphaned WebView gets a 0×0 viewport and Spotify won't render/navigate).
-        com.music.spotui.di.SpotifyWebPlayer.attach(this)
+        // Experimental Spotify web-player engine: attach its hidden WebView deferred
+        // via postDelayed so cold-start UI inflation is unblocked and ANR is prevented.
+        window.decorView.postDelayed({
+            if (!isFinishing && !isDestroyed) {
+                com.music.spotui.di.SpotifyWebPlayer.attach(this)
+            }
+        }, 2000L)
 
         // Perform background auto-backup if a backup directory is configured (deferred to avoid blocking cold-start).
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {

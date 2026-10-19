@@ -1,6 +1,7 @@
 package com.music.spotui.di
 
 import android.content.Context
+import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.wifi.WifiManager
 import android.os.PowerManager
@@ -51,18 +52,38 @@ object SongPlayer {
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+    private val activeWakeLockTags = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    fun ensureServiceStarted(context: Context) {
+        runCatching {
+            val appContext = context.applicationContext
+            val intent = Intent(appContext, com.music.spotui.ui.notification.PlaybackService::class.java)
+            if (isPlaying() && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                runCatching { androidx.core.content.ContextCompat.startForegroundService(appContext, intent) }
+            } else {
+                runCatching { appContext.startService(intent) }
+            }
+        }.onFailure { Log.w(TAG, "Failed to start PlaybackService", it) }
+    }
 
     @Synchronized
     fun acquireWakeLock(context: Context, tag: String = "spotui:playback", timeoutMs: Long = 60_000L) {
         runCatching {
             val appContext = context.applicationContext
+            appCtx = appContext
+
+            val expiry = System.currentTimeMillis() + timeoutMs
+            activeWakeLockTags[tag] = expiry
+
             if (wakeLock == null) {
                 val pm = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
                 wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Spotui:AudioWakeLock")?.apply {
                     setReferenceCounted(false)
                 }
             }
-            wakeLock?.acquire(timeoutMs)
+            if (wakeLock?.isHeld != true) {
+                wakeLock?.acquire(12 * 60 * 60_000L)
+            }
 
             if (wifiLock == null) {
                 val wm = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
@@ -71,15 +92,36 @@ object SongPlayer {
                     setReferenceCounted(false)
                 }
             }
-            wifiLock?.acquire()
+            if (wifiLock?.isHeld != true) {
+                wifiLock?.acquire()
+            }
         }.onFailure { Log.w(TAG, "Failed to acquire wake/wifi lock for $tag", it) }
     }
 
     @Synchronized
     fun releaseWakeLock(tag: String? = null) {
         runCatching {
-            if (wakeLock?.isHeld == true) wakeLock?.release()
-            if (wifiLock?.isHeld == true) wifiLock?.release()
+            if (tag != null) {
+                activeWakeLockTags.remove(tag)
+            } else {
+                activeWakeLockTags.clear()
+            }
+
+            val now = System.currentTimeMillis()
+            activeWakeLockTags.entries.removeIf { it.value <= now }
+
+            val active = isResolvingOrPlaying()
+            val hasActiveTags = activeWakeLockTags.isNotEmpty()
+
+            if (!active && !hasActiveTags) {
+                activeWakeLockTags.clear()
+                if (wakeLock?.isHeld == true) {
+                    runCatching { wakeLock?.release() }
+                }
+                if (wifiLock?.isHeld == true) {
+                    runCatching { wifiLock?.release() }
+                }
+            }
         }.onFailure { Log.w(TAG, "Failed to release wake/wifi lock for $tag", it) }
     }
 
@@ -2948,6 +2990,14 @@ object SongPlayer {
         return player?.isPlaying ?: false
     }
 
+    fun isResolvingOrPlaying(): Boolean {
+        if (isCrossfading) return true
+        if (playWhenResolved && currentRequest.isNotBlank()) return true
+        if (boundState?.isResolving?.value == true) return true
+        if (webPlaybackActive()) return SpotifyWebPlayer.isPlaying
+        return player?.let { it.isPlaying || it.playWhenReady || it.playbackState == ExoPlayer.STATE_BUFFERING } ?: false
+    }
+
     fun webPlaybackActive(): Boolean {
         if (!webPlayerEnabled) return false
         val ctx = appCtx ?: return false
@@ -3242,7 +3292,7 @@ object SongPlayer {
         positionWatchJob?.cancel()
         positionWatchJob = scope.launch {
             while (isActive) {
-                kotlinx.coroutines.delay(250)
+                kotlinx.coroutines.delay(1000)
                 val ctx = appCtx ?: continue
                 if (++posSaveTick % 12 == 0 && !webPlaybackActive()) {
                     player?.let { p ->
@@ -3255,13 +3305,14 @@ object SongPlayer {
                 if (isCrossfading) continue
                 val state = boundState ?: continue
                 val p = player ?: continue
-                val playing = withContext(Dispatchers.Main) { p.isPlaying || p.playWhenReady }
+                val (playing, exoDur, pos) = withContext(Dispatchers.Main) {
+                    Triple(p.isPlaying || p.playWhenReady, p.duration, p.currentPosition)
+                }
                 if (!playing) continue
+                if (exoDur == androidx.media3.common.C.TIME_UNSET) continue
 
                 val currentSongUrl = state.songUrl.value
                 val expectedMs = expectedDurationMs(currentSongUrl)
-                val exoDur = withContext(Dispatchers.Main) { p.duration }
-                if (exoDur == androidx.media3.common.C.TIME_UNSET) continue
                 val dur = when {
                     expectedMs != null && expectedMs > 0L -> {
                         if (exoDur > 0L && abs(exoDur - expectedMs) <= maxOf(15_000L, expectedMs / 10)) {
@@ -3273,7 +3324,6 @@ object SongPlayer {
                     exoDur > 0L -> exoDur
                     else -> 0L
                 }
-                val pos = withContext(Dispatchers.Main) { p.currentPosition }
                 if (dur <= 0L || pos < 0L) continue
 
                 val crossfadeMs = com.music.spotui.data.preferences.getCrossfadeMs(ctx)
@@ -3545,6 +3595,9 @@ object SongPlayer {
             lastCrossfadeCompletedMs = System.currentTimeMillis()
             isCrossfading = false
             crossfadeTriggered.set(false)
+            if (ctx != null) {
+                acquireWakeLock(ctx, "spotui:playing", 12 * 60 * 60_000L)
+            }
             releaseWakeLock("spotui:crossfade")
         }
         startPositionWatch()

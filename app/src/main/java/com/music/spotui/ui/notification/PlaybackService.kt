@@ -287,6 +287,9 @@ class PlaybackService : MediaLibraryService() {
             newPlayer.addListener(playerListener)
             playerListener.onPlaybackStateChanged(newPlayer.playbackState)
             playerListener.onIsPlayingChanged(newPlayer.isPlaying)
+            if (newPlayer.isPlaying || newPlayer.playWhenReady) {
+                SongPlayer.acquireWakeLock(applicationContext, "spotui:playing", 12 * 60 * 60_000L)
+            }
             currentSongState.updatePlayingState(newPlayer.isPlaying || newPlayer.playWhenReady)
         }
 
@@ -427,17 +430,26 @@ class PlaybackService : MediaLibraryService() {
         private val listenerWrappers = java.util.concurrent.ConcurrentHashMap<Player.Listener, Player.Listener>()
 
         override fun getPlaybackState(): Int {
-            if (SongPlayer.isCrossfadeActive()) return Player.STATE_READY
+            if (SongPlayer.isCrossfadeActive() || SongPlayer.isResolvingOrPlaying()) {
+                val state = super.getPlaybackState()
+                if (state == Player.STATE_IDLE || state == Player.STATE_ENDED) {
+                    return Player.STATE_BUFFERING
+                }
+            }
             return super.getPlaybackState()
         }
 
         override fun getPlayWhenReady(): Boolean {
-            if (SongPlayer.isCrossfadeActive()) return true
+            if (SongPlayer.isCrossfadeActive() || SongPlayer.isResolvingOrPlaying()) return true
             return super.getPlayWhenReady()
         }
 
         override fun isPlaying(): Boolean {
-            if (SongPlayer.isCrossfadeActive()) return true
+            if (SongPlayer.isCrossfadeActive() || SongPlayer.isResolvingOrPlaying()) {
+                val baseIsPlaying = super.isPlaying()
+                if (baseIsPlaying) return true
+                return base.playbackState == Player.STATE_READY || base.playbackState == Player.STATE_BUFFERING
+            }
             return super.isPlaying()
         }
 
@@ -1079,7 +1091,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /** Runs a paged/cached response flow to completion and keeps the final data. */
-    private suspend fun <T> lastSuccess(flow: Flow<Response<T>>): T? {
+    private suspend fun <T> lastSuccess(flow: Flow<Response<T>>): T? = kotlinx.coroutines.withContext(Dispatchers.IO) {
         var result: T? = null
         try {
             // Android Auto requires quick responses to avoid infinite loading screens.
@@ -1100,7 +1112,7 @@ class PlaybackService : MediaLibraryService() {
         } catch (e: Exception) {
             android.util.Log.e("PlaybackService", "Error in lastSuccess flow collection", e)
         }
-        return result
+        result
     }
 
     private fun registerTracks(parentId: String, songs: List<SongsModel>): List<MediaItem> {
@@ -1167,10 +1179,21 @@ class PlaybackService : MediaLibraryService() {
         return f
     }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
+        if (SongPlayer.isPlaying()) {
+            SongPlayer.acquireWakeLock(applicationContext, "spotui:playing", 12 * 60 * 60_000L)
+        }
+        return START_STICKY
+    }
+
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // Stop playback + tear the service down when the app is swiped away.
-        SongPlayer.pause()
-        stopSelf()
+        super.onTaskRemoved(rootIntent)
+        // Keep playback running in background if active or resolving; otherwise stop the service.
+        if (!SongPlayer.isResolvingOrPlaying()) {
+            SongPlayer.pause()
+            stopSelf()
+        }
     }
 
     override fun onDestroy() {
