@@ -18,7 +18,9 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
@@ -97,6 +99,8 @@ fun SongOptionsSheet(
 
     // Spotify-style "Saved in" sheet (Liked Songs + playlists, add/remove/create).
     var showSavedIn by remember { mutableStateOf(false) }
+    var showEditDialog by remember { mutableStateOf(false) }
+
     if (showSavedIn) {
         SavedInSheet(
             song = song,
@@ -105,6 +109,101 @@ fun SongOptionsSheet(
             onLikedChanged = { liked = it },
         )
         return
+    }
+
+    if (showEditDialog) {
+        var editTitle by remember { mutableStateOf(song.title) }
+        var editArtist by remember { mutableStateOf(song.singer) }
+        var editAlbum by remember { mutableStateOf(song.album) }
+        var editCover by remember { mutableStateOf(song.coverUri) }
+
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showEditDialog = false },
+            title = { Text("Edit Metadata", color = Color.White) },
+            containerColor = Color(0xFF242424),
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Title", color = Color.Gray, fontSize = 12.sp)
+                    androidx.compose.material3.OutlinedTextField(
+                        value = editTitle,
+                        onValueChange = { editTitle = it },
+                        singleLine = true,
+                        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(AppPalette.toArgb()),
+                            unfocusedBorderColor = Color.Gray
+                        )
+                    )
+                    Text("Artist", color = Color.Gray, fontSize = 12.sp)
+                    androidx.compose.material3.OutlinedTextField(
+                        value = editArtist,
+                        onValueChange = { editArtist = it },
+                        singleLine = true,
+                        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(AppPalette.toArgb()),
+                            unfocusedBorderColor = Color.Gray
+                        )
+                    )
+                    Text("Album", color = Color.Gray, fontSize = 12.sp)
+                    androidx.compose.material3.OutlinedTextField(
+                        value = editAlbum,
+                        onValueChange = { editAlbum = it },
+                        singleLine = true,
+                        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(AppPalette.toArgb()),
+                            unfocusedBorderColor = Color.Gray
+                        )
+                    )
+                    Text("Cover URI", color = Color.Gray, fontSize = 12.sp)
+                    androidx.compose.material3.OutlinedTextField(
+                        value = editCover,
+                        onValueChange = { editCover = it },
+                        singleLine = true,
+                        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(AppPalette.toArgb()),
+                            unfocusedBorderColor = Color.Gray
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        val finalTitle = editTitle.ifBlank { "Unknown title" }
+                        val finalArtist = editArtist.ifBlank { "Unknown artist" }
+                        com.music.spotui.data.preferences.updateLocalTrackMetadata(
+                            context,
+                            song,
+                            finalTitle,
+                            finalArtist,
+                            editAlbum,
+                            editCover
+                        )
+                        onSongRemovedFromPlaylist?.invoke()
+                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                            com.music.spotui.util.BackupHelper.performAutoBackup(context)
+                        }
+                        android.widget.Toast.makeText(context, "Metadata updated", android.widget.Toast.LENGTH_SHORT).show()
+                        showEditDialog = false
+                        onDismiss()
+                    }
+                ) {
+                    Text("Save", color = Color(AppPalette.toArgb()))
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showEditDialog = false }) {
+                    Text("Cancel", color = Color.Gray)
+                }
+            }
+        )
     }
 
     ModalBottomSheet(
@@ -135,6 +234,15 @@ fun SongOptionsSheet(
             }
             HorizontalDivider(color = Color(0xFF2A2A2A))
 
+            if (song.singer.equals("unknown artist", ignoreCase = true)) {
+                SongMenuRow(
+                    icon = Icons.Default.Edit,
+                    label = "Edit metadata",
+                ) {
+                    showEditDialog = true
+                }
+            }
+
             SongMenuRow(Icons.Default.PlayArrow, "Play next") {
                 playerViewModel.playNext(song)
                 onDismiss()
@@ -149,15 +257,26 @@ fun SongOptionsSheet(
             ) {
                 showSavedIn = true
             }
-            if (currentPlaylistId != null && currentPlaylistId.startsWith("local_pl_")) {
+            if (!currentPlaylistId.isNullOrBlank()) {
                 SongMenuRow(
                     icon = Icons.Default.Delete,
                     label = "Remove from this playlist",
                     iconTint = Color.White
                 ) {
-                    com.music.spotui.data.preferences.LocalPlaylistPref.removeSongFromPlaylist(context, currentPlaylistId, song.id, song.spotifyTrackId)
-                    com.music.spotui.data.api.Api.HomeCache.library = null
-                    onSongRemovedFromPlaylist?.invoke()
+                    if (currentPlaylistId.startsWith("local_pl_")) {
+                        com.music.spotui.data.preferences.LocalPlaylistPref.removeSongFromPlaylist(context, currentPlaylistId, song)
+                        com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(currentPlaylistId)
+                        com.music.spotui.data.api.Api.HomeCache.library = null
+                        onSongRemovedFromPlaylist?.invoke()
+                    } else {
+                        val trackId = song.spotifyTrackId.ifBlank { song.id.toString() }
+                        com.music.spotui.data.api.SpotifySync.removeTrackFromPlaylist(context, currentPlaylistId, trackId) { ok ->
+                            com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(currentPlaylistId)
+                            if (ok) {
+                                onSongRemovedFromPlaylist?.invoke()
+                            }
+                        }
+                    }
                     onDismiss()
                 }
             }

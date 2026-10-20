@@ -104,7 +104,7 @@ class Api @Inject constructor(
             }
         }
         
-        SongsModel(
+        val baseSong = SongsModel(
             id = stableId("track:$trackId"),
             title = trackName.take(128),
             album = album?.name ?: "",
@@ -119,6 +119,14 @@ class Api @Inject constructor(
             durationMs = durationMs,
             artistIds = artists.joinToString(",") { it.id.orEmpty() },
         )
+        val overridden = com.music.spotui.data.preferences.CustomMetadataPref.applyOverride(context, baseSong)
+        if (overridden.title != baseSong.title || overridden.singer != baseSong.singer) {
+            overridden.copy(
+                url = com.music.spotui.di.SongPlayer.buildSpotifyPlayQuery(trackId, overridden.title, overridden.singer)
+            )
+        } else {
+            overridden
+        }
     } catch (e: Exception) {
         Log.e("Api", "toSongModel failed for track: $name", e)
         SongsModel(

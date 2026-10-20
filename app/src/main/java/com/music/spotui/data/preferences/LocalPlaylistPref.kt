@@ -94,19 +94,46 @@ object LocalPlaylistPref {
         val ids = getPlaylistIds(context)
         val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         return ids.mapNotNull { id ->
-            prefs.getString(id, null)?.let { parsePlaylist(it) }
+            prefs.getString(id, null)?.let { json ->
+                parsePlaylist(json)?.let { playlist ->
+                    val updatedSongs = playlist.songs.map { song -> CustomMetadataPref.applyOverride(context, song) }
+                    playlist.copy(songs = updatedSongs)
+                }
+            }
         }
     }
 
     fun getLocalPlaylist(context: Context, playlistId: String): LocalPlaylist? {
         val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         val json = prefs.getString(playlistId, null) ?: return null
-        return parsePlaylist(json)
+        return parsePlaylist(json)?.let { playlist ->
+            val updatedSongs = playlist.songs.map { song -> CustomMetadataPref.applyOverride(context, song) }
+            playlist.copy(songs = updatedSongs)
+        }
+    }
+
+    private fun cleanSpotifyTrackId(id: String): String =
+        id.removePrefix("spotify:track:")
+            .removePrefix("track:")
+            .substringBefore("?")
+            .substringBefore("|")
+            .trim()
+
+    fun isSongMatch(item: SongsModel, song: SongsModel): Boolean {
+        if (song.id != 0 && song.id != -1 && item.id == song.id) return true
+        val targetCleanId = cleanSpotifyTrackId(song.spotifyTrackId)
+        val itemCleanId = cleanSpotifyTrackId(item.spotifyTrackId)
+        if (targetCleanId.isNotBlank() && itemCleanId.isNotBlank() && targetCleanId == itemCleanId) return true
+        if (song.url.isNotBlank() && item.url == song.url) return true
+        if (song.title.isNotBlank() && song.singer.isNotBlank() &&
+            item.title.equals(song.title, ignoreCase = true) &&
+            item.singer.equals(song.singer, ignoreCase = true)) return true
+        return false
     }
 
     fun addSongToPlaylist(context: Context, playlistId: String, song: SongsModel): Boolean {
         val playlist = getLocalPlaylist(context, playlistId) ?: return false
-        if (playlist.songs.any { it.id == song.id || (it.spotifyTrackId.isNotBlank() && song.spotifyTrackId.isNotBlank() && it.spotifyTrackId == song.spotifyTrackId) }) {
+        if (playlist.songs.any { isSongMatch(it, song) }) {
             return true
         }
         val updatedSongs = playlist.songs + song
@@ -116,10 +143,22 @@ object LocalPlaylistPref {
         return true
     }
 
+    fun removeSongFromPlaylist(context: Context, playlistId: String, song: SongsModel): Boolean {
+        val playlist = getLocalPlaylist(context, playlistId) ?: return false
+        val updatedSongs = playlist.songs.filterNot { isSongMatch(it, song) }
+        val coverUri = if (updatedSongs.isNotEmpty()) playlist.coverUri.ifBlank { updatedSongs.first().coverUri } else playlist.coverUri
+        val updatedPlaylist = playlist.copy(songs = updatedSongs, coverUri = coverUri)
+        savePlaylist(context, updatedPlaylist)
+        return true
+    }
+
     fun removeSongFromPlaylist(context: Context, playlistId: String, songId: Int, spotifyTrackId: String = ""): Boolean {
         val playlist = getLocalPlaylist(context, playlistId) ?: return false
-        val updatedSongs = playlist.songs.filterNot { 
-            it.id == songId || (spotifyTrackId.isNotBlank() && it.spotifyTrackId == spotifyTrackId) 
+        val cleanTargetId = cleanSpotifyTrackId(spotifyTrackId)
+        val updatedSongs = playlist.songs.filterNot { item ->
+            val cleanItemId = cleanSpotifyTrackId(item.spotifyTrackId)
+            (songId != 0 && songId != -1 && item.id == songId) ||
+            (cleanTargetId.isNotBlank() && cleanItemId.isNotBlank() && cleanItemId == cleanTargetId)
         }
         val coverUri = if (updatedSongs.isNotEmpty()) playlist.coverUri.ifBlank { updatedSongs.first().coverUri } else playlist.coverUri
         val updatedPlaylist = playlist.copy(songs = updatedSongs, coverUri = coverUri)
@@ -127,9 +166,19 @@ object LocalPlaylistPref {
         return true
     }
 
+    fun isSongInPlaylist(context: Context, playlistId: String, song: SongsModel): Boolean {
+        val playlist = getLocalPlaylist(context, playlistId) ?: return false
+        return playlist.songs.any { isSongMatch(it, song) }
+    }
+
     fun isSongInPlaylist(context: Context, playlistId: String, songId: Int, spotifyTrackId: String = ""): Boolean {
         val playlist = getLocalPlaylist(context, playlistId) ?: return false
-        return playlist.songs.any { it.id == songId || (spotifyTrackId.isNotBlank() && it.spotifyTrackId == spotifyTrackId) }
+        val cleanTargetId = cleanSpotifyTrackId(spotifyTrackId)
+        return playlist.songs.any { item ->
+            val cleanItemId = cleanSpotifyTrackId(item.spotifyTrackId)
+            (songId != 0 && songId != -1 && item.id == songId) ||
+            (cleanTargetId.isNotBlank() && cleanItemId.isNotBlank() && cleanItemId == cleanTargetId)
+        }
     }
 
     fun renamePlaylist(context: Context, playlistId: String, newName: String): Boolean {
@@ -145,6 +194,26 @@ object LocalPlaylistPref {
         val existingIds = getPlaylistIds(context).toMutableList()
         existingIds.remove(playlistId)
         savePlaylistIds(context, existingIds)
+    }
+
+    fun updateSongInPlaylists(context: Context, targetSong: SongsModel, newTitle: String, newArtist: String, newAlbum: String, newCoverUri: String) {
+        getLocalPlaylists(context).forEach { playlist ->
+            val hasSong = playlist.songs.any { isSongMatch(it, targetSong) }
+            if (hasSong) {
+                val updatedSongs = playlist.songs.map { song ->
+                    if (isSongMatch(song, targetSong)) {
+                        song.copy(
+                            title = newTitle,
+                            singer = newArtist,
+                            album = newAlbum,
+                            coverUri = newCoverUri
+                        )
+                    } else song
+                }
+                val updatedPlaylist = playlist.copy(songs = updatedSongs)
+                savePlaylist(context, updatedPlaylist)
+            }
+        }
     }
 
     private fun getPlaylistIds(context: Context): List<String> {

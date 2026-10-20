@@ -9,6 +9,10 @@ import com.music.spotui.data.entity.SongsModel
 import com.music.spotui.data.preferences.BackupPref
 import com.music.spotui.data.preferences.LocalPlaylist
 import com.music.spotui.data.preferences.LocalPlaylistPref
+import com.music.spotui.data.preferences.LocalTrack
+import com.music.spotui.data.preferences.addLocalTracks
+import com.music.spotui.data.preferences.getLocalTracks
+import com.music.spotui.data.preferences.localTrackId
 import com.music.spotui.data.preferences.StreamQuality
 import com.music.spotui.data.preferences.addLikedSongId
 import com.music.spotui.data.preferences.getCellularQuality
@@ -120,6 +124,33 @@ object BackupHelper {
                     })
                 }
                 put("subscribedPodcasts", podcastsArray)
+
+                // 6. Local Library Tracks
+                val localTracksArray = JSONArray()
+                getLocalTracks(context).forEach { track ->
+                    localTracksArray.put(JSONObject().apply {
+                        put("id", track.id)
+                        put("uri", track.uri)
+                        put("title", track.title)
+                        put("artist", track.artist)
+                        put("album", track.album)
+                        put("durationMs", track.durationMs)
+                        put("coverUri", track.coverUri)
+                    })
+                }
+                put("localTracks", localTracksArray)
+
+                // 7. Custom Metadata Overrides
+                val overridesObj = JSONObject()
+                com.music.spotui.data.preferences.CustomMetadataPref.getAllOverrides(context).forEach { (key, meta) ->
+                    overridesObj.put(key, JSONObject().apply {
+                        put("title", meta.title)
+                        put("singer", meta.singer)
+                        put("album", meta.album)
+                        put("coverUri", meta.coverUri)
+                    })
+                }
+                put("customMetadata", overridesObj)
             }
             put("data", data)
         }
@@ -324,8 +355,57 @@ object BackupHelper {
                 }
             }
 
+            // 6. Restore Local Tracks
+            var restoredLocalTracks = 0
+            if (data.has("localTracks")) {
+                val arr = data.getJSONArray("localTracks")
+                val restoredTracks = mutableListOf<LocalTrack>()
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    restoredTracks.add(
+                        LocalTrack(
+                            id = o.optInt("id", localTrackId(o.optString("uri"))),
+                            uri = o.getString("uri"),
+                            title = o.getString("title"),
+                            artist = o.getString("artist"),
+                            album = o.optString("album"),
+                            durationMs = o.optInt("durationMs", 0),
+                            coverUri = o.optString("coverUri", "")
+                        )
+                    )
+                    restoredLocalTracks++
+                }
+                if (restoredTracks.isNotEmpty()) {
+                    addLocalTracks(context, restoredTracks)
+                }
+            }
+
+            // 7. Restore Custom Metadata Overrides
+            var restoredCustomMeta = 0
+            if (data.has("customMetadata")) {
+                val customObj = data.getJSONObject("customMetadata")
+                val map = mutableMapOf<String, com.music.spotui.data.preferences.CustomMetadataPref.TrackMetadataOverride>()
+                val keys = customObj.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val item = customObj.optJSONObject(key)
+                    if (item != null) {
+                        map[key] = com.music.spotui.data.preferences.CustomMetadataPref.TrackMetadataOverride(
+                            title = item.optString("title"),
+                            singer = item.optString("singer"),
+                            album = item.optString("album"),
+                            coverUri = item.optString("coverUri"),
+                        )
+                    }
+                }
+                if (map.isNotEmpty()) {
+                    com.music.spotui.data.preferences.CustomMetadataPref.restoreOverrides(context, map)
+                    restoredCustomMeta = map.size
+                }
+            }
+
             Api.HomeCache.clear()
-            Pair(true, "Restored $restoredPlaylists playlist(s), $restoredLiked liked song(s), $restoredPodcasts podcast(s), and $restoredAltStreams alternative stream(s)!")
+            Pair(true, "Restored $restoredPlaylists playlist(s), $restoredLiked liked song(s), $restoredPodcasts podcast(s), $restoredAltStreams alternative stream(s), $restoredLocalTracks local track(s), and $restoredCustomMeta custom metadata override(s)!")
 
         }.getOrElse { e ->
             Log.e(TAG, "Error restoring backup", e)

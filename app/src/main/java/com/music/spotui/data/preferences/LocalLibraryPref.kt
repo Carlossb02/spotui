@@ -75,6 +75,36 @@ fun removeLocalTrack(context: Context, uri: String) {
     save(context, getLocalTracks(context).filterNot { it.uri == uri })
 }
 
+fun updateLocalTrackMetadata(
+    context: Context,
+    song: SongsModel,
+    newTitle: String,
+    newArtist: String,
+    newAlbum: String,
+    newCoverUri: String
+) {
+    CustomMetadataPref.saveOverride(context, song, newTitle, newArtist, newAlbum, newCoverUri)
+
+    val tracks = getLocalTracks(context)
+    val songUri = song.url
+    val songId = song.id
+    val updatedTracks = tracks.map { track ->
+        if ((songUri.isNotBlank() && track.uri == songUri) || track.id == songId) {
+            track.copy(
+                title = newTitle,
+                artist = newArtist,
+                album = newAlbum,
+                coverUri = newCoverUri
+            )
+        } else track
+    }
+    save(context, updatedTracks)
+
+    LocalPlaylistPref.updateSongInPlaylists(context, song, newTitle, newArtist, newAlbum, newCoverUri)
+    com.music.spotui.di.SongPlayer.updateTrackInQueue(song, newTitle, newArtist, newAlbum, newCoverUri)
+    com.music.spotui.data.api.Api.HomeCache.clear()
+}
+
 fun clearLocalTracks(context: Context) {
     prefs(context).edit().remove(KEY).apply()
 }
@@ -85,17 +115,20 @@ private fun save(context: Context, tracks: List<LocalTrack>) {
     prefs(context).edit().putString(KEY, arr.toString()).apply()
 }
 
-fun LocalTrack.toSong(): SongsModel = SongsModel(
-    id = id,
-    title = title.ifBlank { "Unknown title" },
-    album = album,
-    singer = artist.ifBlank { "Unknown artist" },
-    coverUri = coverUri,
-    url = uri,
-    spotifyTrackId = "",
-    explicit = false,
-    durationMs = durationMs,
-)
+fun LocalTrack.toSong(context: Context? = null): SongsModel {
+    val base = SongsModel(
+        id = id,
+        title = title.ifBlank { "Unknown title" },
+        album = album,
+        singer = artist.ifBlank { "Unknown artist" },
+        coverUri = coverUri,
+        url = uri,
+        spotifyTrackId = "",
+        explicit = false,
+        durationMs = durationMs,
+    )
+    return context?.let { CustomMetadataPref.applyOverride(it, base) } ?: base
+}
 
 fun getLocalSongs(context: Context): List<SongsModel> =
-    getLocalTracks(context).map { it.toSong() }
+    getLocalTracks(context).map { it.toSong(context) }

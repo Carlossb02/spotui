@@ -680,7 +680,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                         }
                     }
 
-                    itemsIndexed(filteredSongs, key = { _, song -> song.id }) { index, song ->
+                    itemsIndexed(filteredSongs, key = { index, song -> "${song.id}_$index" }) { index, song ->
                         val currentColor = if (song.id == playlistViewModel.currentSongId.value)
                             Color(AppPalette.toArgb()) else Color.White
 
@@ -781,7 +781,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                         }
                     }
 
-                    item { Spacer(modifier = Modifier.height(160.dp)) }
+                    item { Spacer(modifier = Modifier.height(220.dp)) }
                 }
                 com.music.spotui.ui.components.FastScrollbarForLazyList(
                     state = listState,

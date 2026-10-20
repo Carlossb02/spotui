@@ -447,7 +447,7 @@ fun DownloadsScreen(navController: NavController) {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(160.dp))
+                Spacer(modifier = Modifier.height(220.dp))
             }
 
             com.music.spotui.ui.components.FastScrollbarForScrollState(

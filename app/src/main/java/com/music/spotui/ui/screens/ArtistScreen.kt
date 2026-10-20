@@ -482,7 +482,7 @@ private fun ArtistOverviewContent(
             }
         }
 
-            item { Spacer(Modifier.height(160.dp)) }
+            item { Spacer(Modifier.height(220.dp)) }
         }
         com.music.spotui.ui.components.FastScrollbarForLazyList(
             state = listState,
@@ -799,7 +799,7 @@ fun ArtistReleasesScreen(navController: NavController, artistName: String) {
                     }
                 }
             }
-        item { Spacer(Modifier.height(160.dp)) }
+        item { Spacer(Modifier.height(220.dp)) }
         }
     }
 }

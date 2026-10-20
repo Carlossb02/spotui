@@ -2597,7 +2597,7 @@ fun YouTubeSearchView(
                 ) {
                     items(
                         count = viewModel.searchResults.size,
-                        key = { viewModel.searchResults[it].id },
+                        key = { "${viewModel.searchResults[it].id}_$it" },
                     ) { index ->
                         val song = viewModel.searchResults[index]
                         YouTubeSearchResultRow(

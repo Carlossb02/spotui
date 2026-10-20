@@ -3213,6 +3213,10 @@ object SongPlayer {
 
     fun bindState(state: CurrentSongState) { boundState = state }
 
+    fun updateTrackInQueue(song: com.music.spotui.data.entity.SongsModel, newTitle: String, newArtist: String, newAlbum: String, newCoverUri: String) {
+        boundState?.updateTrackInQueue(song, newTitle, newArtist, newAlbum, newCoverUri)
+    }
+
     fun onNormalizationSettingChanged(context: Context) {
         val normMode = com.music.spotui.data.preferences.getAudioNormalizationMode(context)
         val enabled = normMode != com.music.spotui.data.preferences.NormalizationMode.OFF

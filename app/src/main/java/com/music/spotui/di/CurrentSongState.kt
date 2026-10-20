@@ -101,6 +101,39 @@ class CurrentSongState @Inject constructor() {
         com.music.spotui.data.preferences.saveLastQueue(com.music.spotui.MyApplication.instance, songs)
     }
 
+    fun updateTrackInQueue(targetSong: SongsModel, newTitle: String, newArtist: String, newAlbum: String, newCoverUri: String) {
+        val q = _queue.value
+        val isMatch = { item: SongsModel ->
+            (targetSong.id != 0 && targetSong.id != -1 && item.id == targetSong.id) ||
+            (targetSong.url.isNotBlank() && item.url == targetSong.url) ||
+            (targetSong.spotifyTrackId.isNotBlank() && item.spotifyTrackId == targetSong.spotifyTrackId)
+        }
+        val updatedQ = q.map { song ->
+            if (isMatch(song)) {
+                song.copy(
+                    title = newTitle,
+                    singer = newArtist,
+                    album = newAlbum,
+                    coverUri = newCoverUri
+                )
+            } else song
+        }
+        _queue.value = updatedQ
+        val activeSong = updatedQ.firstOrNull { isMatch(it) || it.id == _songId.value }
+        if (activeSong != null && isMatch(activeSong)) {
+            _title.value = newTitle
+            _singer.value = newArtist
+            _album.value = newAlbum
+            _coverUri.value = newCoverUri
+            SongPlayer.setNowPlayingMeta(newTitle, newArtist, newCoverUri)
+        }
+        updateQueue(updatedQ, isManualEdit = true)
+        if (targetSong.url.isNotBlank()) {
+            SongPlayer.registerMetadata(listOf(targetSong.url to SongPlayer.TrackMatchMetadata(newTitle, newArtist, newAlbum)))
+            SongPlayer.invalidateSongCacheByUrl(targetSong.url, com.music.spotui.MyApplication.instance, songTitle = newTitle)
+        }
+    }
+
     val shuffle = mutableStateOf(false)
     val repeat = mutableStateOf(
         com.music.spotui.data.preferences.loadRepeatMode(com.music.spotui.MyApplication.instance)

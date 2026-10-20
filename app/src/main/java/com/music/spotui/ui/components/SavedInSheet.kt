@@ -236,9 +236,9 @@ fun SavedInSheet(
                 }
 
                 // ── Local Playlists ──
-                items(localPlaylists.size, key = { "local_${localPlaylists[it].id}" }) { index ->
+                items(localPlaylists.size, key = { "local_${localPlaylists[it].id}_$it" }) { index ->
                     val pl = localPlaylists[index]
-                    val saved = membership[pl.id] ?: LocalPlaylistPref.isSongInPlaylist(context, pl.id, song.id, song.spotifyTrackId)
+                    val saved = membership[pl.id] ?: LocalPlaylistPref.isSongInPlaylist(context, pl.id, song)
                     SavedInRow(
                         name = pl.name,
                         subtitle = "${pl.songs.size} song" + (if (pl.songs.size == 1) "" else "s"),
@@ -257,9 +257,9 @@ fun SavedInSheet(
                             )
                         },
                     ) {
-                        val isCurrentlySaved = membership[pl.id] ?: LocalPlaylistPref.isSongInPlaylist(context, pl.id, song.id, song.spotifyTrackId)
+                        val isCurrentlySaved = membership[pl.id] ?: LocalPlaylistPref.isSongInPlaylist(context, pl.id, song)
                         if (isCurrentlySaved) {
-                            LocalPlaylistPref.removeSongFromPlaylist(context, pl.id, song.id, song.spotifyTrackId)
+                            LocalPlaylistPref.removeSongFromPlaylist(context, pl.id, song)
                             membership[pl.id] = false
                         } else {
                             LocalPlaylistPref.addSongToPlaylist(context, pl.id, song)
@@ -272,12 +272,19 @@ fun SavedInSheet(
 
                 // ── Remote Spotify Playlists ──
                 val remoteList = remotePlaylists.orEmpty()
-                items(remoteList.size, key = { "remote_${remoteList[it].id}" }) { i ->
+                val cleanTrackId = SpotifySync.cleanTrackId(song.spotifyTrackId)
+                items(remoteList.size, key = { "remote_${remoteList[it].id}_$it" }) { i ->
                     val pl = remoteList[i]
-                    LaunchedEffect(pl.id, song.spotifyTrackId) {
-                        if (membership[pl.id] == null && song.spotifyTrackId.isNotBlank()) {
-                            membership[pl.id] = withContext(Dispatchers.IO) {
-                                SpotifySync.playlistTrackIds(context, pl.id).contains(song.spotifyTrackId)
+                    LaunchedEffect(pl.id, cleanTrackId) {
+                        if (membership[pl.id] == null) {
+                            if (cleanTrackId.isNotBlank()) {
+                                membership[pl.id] = withContext(Dispatchers.IO) {
+                                    SpotifySync.playlistTrackIds(context, pl.id).contains(cleanTrackId)
+                                }
+                            } else {
+                                val localMatchingPl = LocalPlaylistPref.getLocalPlaylists(context)
+                                    .firstOrNull { it.name.trim().lowercase() == pl.name.trim().lowercase() }
+                                membership[pl.id] = localMatchingPl?.let { LocalPlaylistPref.isSongInPlaylist(context, it.id, song) } ?: false
                             }
                         }
                     }
@@ -300,10 +307,29 @@ fun SavedInSheet(
                             )
                         },
                     ) {
-                        if (song.spotifyTrackId.isBlank()) return@SavedInRow
-                        membership[pl.id] = !saved
-                        if (saved) SpotifySync.removeTrackFromPlaylist(context, pl.id, song.spotifyTrackId)
-                        else SpotifySync.addTrackToPlaylist(context, pl.id, song.spotifyTrackId)
+                        if (cleanTrackId.isNotBlank()) {
+                            membership[pl.id] = !saved
+                            if (saved) SpotifySync.removeTrackFromPlaylist(context, pl.id, cleanTrackId)
+                            else SpotifySync.addTrackToPlaylist(context, pl.id, cleanTrackId)
+                        } else {
+                            val localPls = LocalPlaylistPref.getLocalPlaylists(context)
+                            var targetPl = localPls.firstOrNull { it.name.trim().lowercase() == pl.name.trim().lowercase() }
+                            if (targetPl == null) {
+                                targetPl = LocalPlaylistPref.createPlaylist(context, pl.name.ifBlank { "My Playlist" })
+                            }
+                            val isCurrentlySaved = LocalPlaylistPref.isSongInPlaylist(context, targetPl.id, song)
+                            if (isCurrentlySaved) {
+                                LocalPlaylistPref.removeSongFromPlaylist(context, targetPl.id, song)
+                                membership[pl.id] = false
+                                android.widget.Toast.makeText(context, "Removed locally from '${pl.name}'", android.widget.Toast.LENGTH_SHORT).show()
+                            } else {
+                                LocalPlaylistPref.addSongToPlaylist(context, targetPl.id, song)
+                                membership[pl.id] = true
+                                android.widget.Toast.makeText(context, "Added locally to '${pl.name}'", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                            localPlaylists = LocalPlaylistPref.getLocalPlaylists(context)
+                            Api.HomeCache.library = null
+                        }
                     }
                 }
             }

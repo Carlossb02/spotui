@@ -91,12 +91,20 @@ object OfflineCollectionsPref {
     fun getCollection(context: Context, id: String): OfflineCollection? {
         val json = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             .getString(id, null) ?: return null
-        return parseCollection(json)
+        return parseCollection(json)?.let { col ->
+            val updatedSongs = col.songs.map { CustomMetadataPref.applyOverride(context, it) }
+            col.copy(songs = updatedSongs)
+        }
     }
 
     fun getOfflineCollections(context: Context): List<OfflineCollection> {
         val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-        val allCollections = prefs.all.values.mapNotNull { (it as? String)?.let { parseCollection(it) } }
+        val allCollections = prefs.all.values.mapNotNull { (it as? String)?.let { json ->
+            parseCollection(json)?.let { col ->
+                val updatedSongs = col.songs.map { CustomMetadataPref.applyOverride(context, it) }
+                col.copy(songs = updatedSongs)
+            }
+        } }
         // Filter: only return collections that have at least one downloaded song
         return allCollections.filter { col ->
             col.songs.any { song ->
