@@ -33,6 +33,7 @@ class VolumeNormalizationAudioProcessorTest {
         // Gain should be 10^(-3.5 / 20) = ~0.6683439
         normalizer.mode = NormalizationMode.SUAVE
         normalizer.setTrackLoudness(3.5)
+        normalizer.beginTrack()
 
         val inputSampleCount = 100
         val inputBuffer = ByteBuffer.allocateDirect(inputSampleCount * 2).order(ByteOrder.nativeOrder())
@@ -55,6 +56,7 @@ class VolumeNormalizationAudioProcessorTest {
         // Quiet track (-6.0 dB relative to target) without true peak in SUAVE mode should cap gain at 0.0 dB
         normalizer.mode = NormalizationMode.SUAVE
         normalizer.setTrackLoudness(-6.0)
+        normalizer.beginTrack()
 
         val inputSampleCount = 100
         val inputBuffer = ByteBuffer.allocateDirect(inputSampleCount * 2).order(ByteOrder.nativeOrder())
@@ -75,6 +77,7 @@ class VolumeNormalizationAudioProcessorTest {
         // Quiet track (-6.0 dB relative to target) in BALANCED_BETA mode applies full linear gain (~1.99526)
         normalizer.mode = NormalizationMode.BALANCED_BETA
         normalizer.setTrackLoudness(-6.0)
+        normalizer.beginTrack()
 
         val inputSampleCount = 100
         val inputBuffer = ByteBuffer.allocateDirect(inputSampleCount * 2).order(ByteOrder.nativeOrder())

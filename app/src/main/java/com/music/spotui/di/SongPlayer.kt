@@ -58,7 +58,7 @@ object SongPlayer {
         runCatching {
             val appContext = context.applicationContext
             val intent = Intent(appContext, com.music.spotui.ui.notification.PlaybackService::class.java)
-            if (isPlaying() && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 runCatching { androidx.core.content.ContextCompat.startForegroundService(appContext, intent) }
             } else {
                 runCatching { appContext.startService(intent) }
@@ -1100,7 +1100,19 @@ object SongPlayer {
         }
 
         val deferred = scope.async {
-            doResolveStreamUrl(song, appContext, forPlayback)
+            var attempt = 0
+            var res: String? = null
+            val maxAttempts = if (forPlayback) 3 else 1
+            while (attempt < maxAttempts && res == null && isActive) {
+                if (attempt > 0) {
+                    acquireWakeLock(appContext, "spotui:retry_resolve", 15_000L)
+                    logResolution("Transient resolution issue, retrying (attempt ${attempt + 1}/$maxAttempts)...")
+                    kotlinx.coroutines.delay(1000L * attempt)
+                }
+                res = runCatching { doResolveStreamUrl(song, appContext, forPlayback) }.getOrNull()
+                attempt++
+            }
+            res
         }
         inFlightResolutions[song] = deferred
         try {
@@ -2922,10 +2934,10 @@ object SongPlayer {
         }
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                15_000,
-                50_000,
-                1_500,
-                3_000
+                25_000,
+                90_000,
+                2_500,
+                5_000
             )
             .build()
 
@@ -3392,6 +3404,12 @@ object SongPlayer {
         }
     }
 
+    fun cancelCrossfadeFromService() {
+        cancelCrossfade()
+    }
+
+    fun getSecondaryPlayerForService(): ExoPlayer? = secondaryPlayer
+
     private fun triggerCrossfade(ctx: Context, configuredMs: Int) {
         if (isCrossfading || !crossfadeTriggered.compareAndSet(false, true)) return
         val state = boundState ?: return
@@ -3420,24 +3438,29 @@ object SongPlayer {
                     }
                     return@launch
                 }
-                val remaining = withContext(Dispatchers.Main) {
-                    val p = player ?: return@withContext configuredMs.toLong()
-                    val d = p.duration; val ps = p.currentPosition
-                    if (d > 0 && ps >= 0) (d - ps) else configuredMs.toLong()
-                }
-                val effectiveMs = minOf(configuredMs.toLong(), remaining).coerceAtLeast(1000L).toInt()
-                val djMode = com.music.spotui.data.preferences.isCrossfadeDjMode(ctx)
 
-                withContext(Dispatchers.Main) {
-                    val comp = createPlayerWithFilter(ctx, handleAudioFocus = false)
-                    secondaryPlayer = comp.player
-                    secondaryPlayerFilter = comp.filter
-                    secondaryPlayerEqualizer = comp.equalizer
-                    secondaryPlayerNormalizer = comp.normalizer
-                    
-                    comp.player.addListener(object : androidx.media3.common.Player.Listener {
+                val djMode = com.music.spotui.data.preferences.isCrossfadeDjMode(ctx)
+                val readyDeferred = kotlinx.coroutines.CompletableDeferred<Boolean>()
+
+                val comp = withContext(Dispatchers.Main) {
+                    val playerComp = createPlayerWithFilter(ctx, handleAudioFocus = false)
+                    secondaryPlayer = playerComp.player
+                    secondaryPlayerFilter = playerComp.filter
+                    secondaryPlayerEqualizer = playerComp.equalizer
+                    secondaryPlayerNormalizer = playerComp.normalizer
+
+                    playerComp.player.addListener(object : androidx.media3.common.Player.Listener {
+                        override fun onPlaybackStateChanged(playbackState: Int) {
+                            if (playbackState == androidx.media3.common.Player.STATE_READY) {
+                                readyDeferred.complete(true)
+                            } else if (playbackState == androidx.media3.common.Player.STATE_ENDED) {
+                                readyDeferred.complete(false)
+                            }
+                        }
+
                         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                             Log.e(TAG, "Secondary player error during crossfade: ${error.message}", error)
+                            readyDeferred.complete(false)
                             cancelCrossfade()
                             next(ctx)
                         }
@@ -3460,15 +3483,53 @@ object SongPlayer {
                         .setMediaMetadata(metadataBuilder.build())
                         .build()
                     val nextLoudness = loudnessCache[nextSong.url]
-                    comp.normalizer.apply {
+                    playerComp.normalizer.apply {
                         setTrackLoudness(nextLoudness)
                         beginTrack()
                     }
-                    comp.player.setMediaItem(item)
-                    comp.player.prepare()
-                    comp.player.volume = 0f
-                    comp.player.playWhenReady = true
+                    playerComp.player.setMediaItem(item)
+                    playerComp.player.prepare()
+                    playerComp.player.volume = 0f
+                    playerComp.player.playWhenReady = true
+                    playerComp
                 }
+
+                // Wait up to 6 seconds for secondary player to reach STATE_READY
+                val isReady = withTimeoutOrNull(6000L) {
+                    if (comp.player.playbackState == androidx.media3.common.Player.STATE_READY) {
+                        true
+                    } else {
+                        readyDeferred.await()
+                    }
+                } ?: false
+
+                if (!isReady || !isActive) {
+                    Log.w(TAG, "Secondary player was not ready in time for crossfade (isReady=$isReady); falling back to normal playback")
+                    withContext(Dispatchers.Main) {
+                        cancelCrossfade()
+                    }
+                    return@launch
+                }
+
+                val (remainingMs, isOldPlaying, oldEnded) = withContext(Dispatchers.Main) {
+                    val p = player
+                    if (p != null) {
+                        val d = p.duration
+                        val ps = p.currentPosition
+                        val rem = if (d > 0 && ps >= 0) (d - ps) else configuredMs.toLong()
+                        Triple(rem, p.isPlaying, p.playbackState == androidx.media3.common.Player.STATE_ENDED)
+                    } else {
+                        Triple(configuredMs.toLong(), false, true)
+                    }
+                }
+
+                if (remainingMs <= 200L || !isOldPlaying || oldEnded) {
+                    Log.d(TAG, "Old track already finished/ending (remainingMs=$remainingMs); finalizing crossfade immediately")
+                    finalizeCrossfade(nextSong, cur + 1)
+                    return@launch
+                }
+
+                val effectiveMs = minOf(configuredMs.toLong(), remainingMs).coerceAtLeast(500L).toInt()
                 performCrossfade(effectiveMs, djMode, nextSong, cur + 1)
             } catch (e: Exception) {
                 Log.e(TAG, "crossfade failed", e)
@@ -3487,7 +3548,7 @@ object SongPlayer {
         nextIdx: Int,
     ) {
         val steps = 50
-        val delayPerStep = (effectiveMs / steps).coerceAtLeast(20)
+        val delayPerStep = (effectiveMs / steps).coerceAtLeast(15)
         if (djMode) {
             currentPlayerFilter?.apply {
                 filterType = com.music.spotui.audio.BiquadFilter.FilterType.LOW_PASS
@@ -3522,7 +3583,12 @@ object SongPlayer {
             }
         }
         crossfadeJob = job
-        job.join()
+        withTimeoutOrNull((effectiveMs + 8000).toLong()) {
+            job.join()
+        } ?: run {
+            Log.w(TAG, "performCrossfade timed out; force finalizing")
+            finalizeCrossfade(nextSong, nextIdx)
+        }
     }
 
     private suspend fun finalizeCrossfade(
@@ -3585,10 +3651,9 @@ object SongPlayer {
                 nextSong.id, nextIdx, nextSong.album,
             )
 
-            // Re-trigger play state so ExoPlayer's internal AudioFocusManager requests focus from Android OS
-            incoming.pause()
-            incoming.playWhenReady = true
-            incoming.play()
+            if (!incoming.isPlaying && incoming.playWhenReady) {
+                incoming.play()
+            }
 
             onPlayerSwapped?.invoke(old, incoming)
             runCatching {

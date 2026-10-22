@@ -3,15 +3,9 @@ package com.music.spotui.ui.screens
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.res.stringResource
-import com.music.spotui.R
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Surface
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +16,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -30,8 +27,22 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Surface
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import com.music.spotui.R
+import kotlin.math.log10
+import kotlin.math.pow
 import com.music.spotui.data.preferences.BackupPref
 import com.music.spotui.util.BackupHelper
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -466,48 +477,32 @@ fun SettingsScreen(navController: NavController) {
 
             if (equalizerEnabled) {
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "Preset",
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(bottom = 6.dp)
+
+                // Interactive Frequency Response Curve Visualizer
+                EqualizerFrequencyCurve(
+                    gains = equalizerGains,
+                    modifier = Modifier.padding(bottom = 12.dp)
                 )
 
-                val presets = remember { com.music.spotui.audio.EqualizerAudioProcessor.PRESETS.keys.toList() + "Custom" }
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
-                ) {
-                    items(presets) { preset ->
-                        val isSelected = (preset == equalizerPreset)
-                        Surface(
-                            onClick = {
-                                equalizerPreset = preset
-                                if (preset != "Custom") {
-                                    val gains = com.music.spotui.audio.EqualizerAudioProcessor.PRESETS[preset]
-                                        ?: floatArrayOf(0f, 0f, 0f, 0f, 0f)
-                                    equalizerGains = gains
-                                    com.music.spotui.data.preferences.setEqualizerPreset(context, preset)
-                                } else {
-                                    com.music.spotui.data.preferences.setEqualizerPreset(context, "Custom")
-                                    equalizerGains = com.music.spotui.data.preferences.getEqualizerBandGains(context)
-                                }
-                            },
-                            shape = RoundedCornerShape(16.dp),
-                            color = if (isSelected) AppPalette else Color(0xFF28282E),
-                            contentColor = if (isSelected) Color.Black else Color.White,
-                        ) {
-                            Text(
-                                text = preset,
-                                fontSize = 13.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                            )
+                // Grouped Grid Preset Selector
+                GroupedPresetGrid(
+                    selectedPreset = equalizerPreset,
+                    onPresetSelected = { preset ->
+                        equalizerPreset = preset
+                        if (preset != "Custom") {
+                            val gains = com.music.spotui.audio.EqualizerAudioProcessor.PRESETS[preset]
+                                ?: FloatArray(com.music.spotui.audio.EqualizerAudioProcessor.BAND_COUNT) { 0f }
+                            equalizerGains = gains
+                            com.music.spotui.data.preferences.setEqualizerPreset(context, preset)
+                        } else {
+                            com.music.spotui.data.preferences.setEqualizerPreset(context, "Custom")
+                            equalizerGains = com.music.spotui.data.preferences.getEqualizerBandGains(context)
                         }
-                    }
-                }
+                    },
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
 
+                // 6 Band Frequency Sliders
                 val bandLabels = remember { com.music.spotui.audio.EqualizerAudioProcessor.FREQUENCY_LABELS }
                 Column(
                     modifier = Modifier
@@ -517,7 +512,7 @@ fun SettingsScreen(navController: NavController) {
                         .padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    for (i in 0 until 5) {
+                    for (i in 0 until com.music.spotui.audio.EqualizerAudioProcessor.BAND_COUNT) {
                         val gainValue = equalizerGains.getOrElse(i) { 0f }
                         Column {
                             Row(
@@ -536,7 +531,7 @@ fun SettingsScreen(navController: NavController) {
                                 value = gainValue,
                                 onValueChange = { newGain ->
                                     val newGains = equalizerGains.copyOf()
-                                    newGains[i] = newGain
+                                    if (i < newGains.size) newGains[i] = newGain
                                     equalizerGains = newGains
                                     equalizerPreset = "Custom"
                                     com.music.spotui.data.preferences.setEqualizerPreset(context, "Custom")
@@ -930,6 +925,250 @@ private fun QualityPicker(
                 }
             }
             Spacer(Modifier.height(2.dp))
+        }
+    }
+}
+
+private val PRESET_CATEGORIES: Map<String, List<String>> = mapOf(
+    "Básico" to listOf("Flat", "Custom"),
+    "Bajos y Agudos" to listOf("Bass Booster", "Bass Reducer", "Treble Booster", "Treble Reducer", "Loudness", "Deep"),
+    "Géneros" to listOf("Acoustic", "Classical", "Dance", "Electronic", "Hip-Hop", "Jazz", "Latin", "Pop", "R&B", "Rock"),
+    "Voz e Instrumentos" to listOf("Vocal Booster", "Spoken Word", "Piano", "Lounge", "Small Speakers")
+)
+
+@Composable
+private fun GroupedPresetGrid(
+    selectedPreset: String,
+    onPresetSelected: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var isExpanded by remember { mutableStateOf(false) }
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        Surface(
+            onClick = { isExpanded = !isExpanded },
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFF1E1E24),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "Preset actual",
+                        color = Color.Gray,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = selectedPreset,
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = AppPalette.copy(alpha = 0.15f)
+                    ) {
+                        Text(
+                            text = "22 presets",
+                            color = AppPalette,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Icon(
+                        imageVector = if (isExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                        contentDescription = if (isExpanded) "Colapsar presets" else "Expandir presets",
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+        }
+
+        if (isExpanded) {
+            Spacer(Modifier.height(8.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFF18181E))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                for ((category, presetList) in PRESET_CATEGORIES) {
+                    Column {
+                        Text(
+                            text = category,
+                            color = AppPalette,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(bottom = 6.dp)
+                        )
+                        val chunkedRows = presetList.chunked(2)
+                        for (rowPresets in chunkedRows) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                for (preset in rowPresets) {
+                                    val isSelected = (preset == selectedPreset)
+                                    Surface(
+                                        onClick = {
+                                            onPresetSelected(preset)
+                                            isExpanded = false
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (isSelected) AppPalette else Color(0xFF28282E),
+                                        contentColor = if (isSelected) Color.Black else Color.White,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(
+                                                text = preset,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                            )
+                                            if (isSelected) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Check,
+                                                    contentDescription = null,
+                                                    tint = Color.Black,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                if (rowPresets.size == 1) {
+                                    Spacer(Modifier.weight(1f))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable
+private fun EqualizerFrequencyCurve(
+    gains: FloatArray,
+    modifier: Modifier = Modifier
+) {
+    val processor = remember { com.music.spotui.audio.EqualizerAudioProcessor() }
+
+    Canvas(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(130.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF141418))
+            .padding(12.dp)
+    ) {
+        val width = size.width
+        val height = size.height
+        val centerY = height / 2f
+
+        val dBValues = floatArrayOf(12f, 6f, 0f, -6f, -12f)
+        for (dB in dBValues) {
+            val lineY = centerY - (dB / 12f) * (height / 2.3f)
+            drawLine(
+                color = if (dB == 0f) Color.White.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.08f),
+                start = Offset(0f, lineY),
+                end = Offset(width, lineY),
+                strokeWidth = if (dB == 0f) 1.5f else 1f
+            )
+        }
+
+        processor.setBandGains(gains)
+
+        val numPoints = 100
+        val minFreq = 20.0
+        val maxFreq = 20000.0
+        val logMin = log10(minFreq)
+        val logMax = log10(maxFreq)
+
+        val path = Path()
+        val fillPath = Path()
+        val points = ArrayList<Offset>(numPoints)
+
+        for (i in 0 until numPoints) {
+            val fraction = i.toFloat() / (numPoints - 1)
+            val logFreq = logMin + fraction * (logMax - logMin)
+            val freqHz = 10.0.pow(logFreq).toFloat()
+
+            val responseDb = processor.getFrequencyResponse(freqHz).coerceIn(-12f, 12f)
+            val x = fraction * width
+            val y = centerY - (responseDb / 12f) * (height / 2.3f)
+            points.add(Offset(x, y))
+        }
+
+        if (points.isNotEmpty()) {
+            path.moveTo(points[0].x, points[0].y)
+            fillPath.moveTo(points[0].x, centerY)
+            fillPath.lineTo(points[0].x, points[0].y)
+
+            for (i in 1 until points.size) {
+                val p1 = points[i - 1]
+                val p2 = points[i]
+                val controlX = (p1.x + p2.x) / 2f
+                path.cubicTo(controlX, p1.y, controlX, p2.y, p2.x, p2.y)
+                fillPath.cubicTo(controlX, p1.y, controlX, p2.y, p2.x, p2.y)
+            }
+
+            val lastP = points.last()
+            fillPath.lineTo(lastP.x, centerY)
+            fillPath.close()
+
+            drawPath(
+                path = fillPath,
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        AppPalette.copy(alpha = 0.35f),
+                        AppPalette.copy(alpha = 0.02f)
+                    )
+                )
+            )
+
+            drawPath(
+                path = path,
+                color = AppPalette,
+                style = Stroke(
+                    width = 3.5f,
+                    cap = StrokeCap.Round
+                )
+            )
+
+            val bandFreqs = com.music.spotui.audio.EqualizerAudioProcessor.FREQUENCIES
+            for (f in bandFreqs) {
+                val logF = log10(f.toDouble())
+                val fraction = ((logF - logMin) / (logMax - logMin)).toFloat()
+                val x = fraction * width
+                val responseDb = processor.getFrequencyResponse(f).coerceIn(-12f, 12f)
+                val y = centerY - (responseDb / 12f) * (height / 2.3f)
+
+                drawCircle(color = AppPalette, radius = 5.5f, center = Offset(x, y))
+                drawCircle(color = Color.White, radius = 2.5f, center = Offset(x, y))
+            }
         }
     }
 }

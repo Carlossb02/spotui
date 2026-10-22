@@ -72,6 +72,9 @@ class MainActivity : ComponentActivity() {
 
                 // Default link handler prompt: helps user enable open.spotify.com defaults.
                 com.music.spotui.ui.components.DefaultAppPrompt()
+
+                // Battery optimization prompt: requests unrestricted background execution if not exempt.
+                com.music.spotui.ui.components.BatteryOptimizationPrompt()
             }
         }
 

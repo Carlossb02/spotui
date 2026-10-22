@@ -408,7 +408,6 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                 // Render batch of displayed episodes
                 items(displayedEpisodes.size) { i ->
                     val ep = displayedEpisodes[i]
-                    var expanded by remember(ep.id) { mutableStateOf(false) }
                     val chapters = remember(ep.description) { parsePodcastChapters(ep.description) }
 
                     SwipeToPlayNextWrapper(
@@ -469,20 +468,29 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
 
                                     Spacer(modifier = Modifier.height(4.dp))
 
-                                    // Description Excerpt
+                                    // Description Excerpt (Fixed height container for exactly 2 lines, non-dynamic)
                                     if (ep.description.isNotBlank()) {
-                                        val cleanDesc = ep.description.lines()
+                                        val cleanDesc = ep.description
+                                            .replace(Regex("<[^>]*>"), "")
+                                            .lines()
                                             .map { it.trim() }
                                             .filter { it.isNotBlank() }
                                             .joinToString(" ")
-                                        Text(
-                                            text = cleanDesc,
-                                            color = Color(0xFFB3B3B3),
-                                            fontSize = 13.sp,
-                                            maxLines = if (expanded) 4 else 2,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.clickable { expanded = !expanded }
-                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(36.dp),
+                                            contentAlignment = Alignment.TopStart
+                                        ) {
+                                            Text(
+                                                text = cleanDesc,
+                                                color = Color(0xFFB3B3B3),
+                                                fontSize = 13.sp,
+                                                lineHeight = 17.sp,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
                                         Spacer(modifier = Modifier.height(6.dp))
                                     }
 

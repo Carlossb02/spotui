@@ -97,9 +97,14 @@ class PlaybackService : MediaLibraryService() {
             }
             if (playbackState == Player.STATE_ENDED) {
                 if (SongPlayer.isCrossfadeActive()) {
-                    // Ignore the old player's STATE_ENDED event during an active crossfade.
-                    // The crossfade routine itself handles the transition and promotes the new player.
-                    return
+                    val sec = SongPlayer.getSecondaryPlayerForService()
+                    if (sec != null && (sec.isPlaying || sec.playbackState == Player.STATE_READY || sec.playbackState == Player.STATE_BUFFERING)) {
+                        // Secondary player is actively transitioning or buffering, ignore old player STATE_ENDED
+                        return
+                    } else {
+                        // Secondary player is missing or stalled, cancel crossfade so fallback advance can proceed
+                        SongPlayer.cancelCrossfadeFromService()
+                    }
                 }
                 errorRetryCounts.clear()
                 SongPlayer.acquireWakeLock(applicationContext, "spotui:advance", 60_000L)
@@ -458,7 +463,10 @@ class PlaybackService : MediaLibraryService() {
             val wrapper = object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     if ((SongPlayer.isCrossfadeActive() || base != SongPlayer.exoPlayer) && (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE)) {
-                        return
+                        val sec = SongPlayer.getSecondaryPlayerForService()
+                        if (sec != null && (sec.isPlaying || sec.playbackState == Player.STATE_READY || sec.playbackState == Player.STATE_BUFFERING)) {
+                            return
+                        }
                     }
                     listener.onPlaybackStateChanged(playbackState)
                 }
@@ -1181,7 +1189,7 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        if (SongPlayer.isPlaying()) {
+        if (SongPlayer.isPlaying() || SongPlayer.isResolvingOrPlaying()) {
             SongPlayer.acquireWakeLock(applicationContext, "spotui:playing", 12 * 60 * 60_000L)
         }
         return START_STICKY
@@ -1189,10 +1197,9 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        // Keep playback running in background if active or resolving; otherwise stop the service.
-        if (!SongPlayer.isResolvingOrPlaying()) {
-            SongPlayer.pause()
-            stopSelf()
+        // Keep PlaybackService running in background / foreground like Spotify when app task is swiped away.
+        if (SongPlayer.isPlaying() || SongPlayer.isResolvingOrPlaying()) {
+            SongPlayer.acquireWakeLock(applicationContext, "spotui:playing", 12 * 60 * 60_000L)
         }
     }
 

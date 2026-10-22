@@ -272,18 +272,29 @@ fun getEqualizerBandGains(c: Context): FloatArray {
     val preset = getEqualizerPreset(c)
     if (preset != "Custom") {
         return com.music.spotui.audio.EqualizerAudioProcessor.PRESETS[preset]
-            ?: floatArrayOf(0f, 0f, 0f, 0f, 0f)
+            ?: FloatArray(com.music.spotui.audio.EqualizerAudioProcessor.BAND_COUNT) { 0f }
     }
     val raw = prefs(c).getString(KEY_CUSTOM_EQUALIZER_BANDS, "") ?: ""
     if (raw.isBlank()) {
         return com.music.spotui.audio.EqualizerAudioProcessor.PRESETS["Flat"]
-            ?: floatArrayOf(0f, 0f, 0f, 0f, 0f)
+            ?: FloatArray(com.music.spotui.audio.EqualizerAudioProcessor.BAND_COUNT) { 0f }
     }
     return try {
         val parts = raw.split(",").map { it.toFloat() }
-        if (parts.size == 5) parts.toFloatArray() else floatArrayOf(0f, 0f, 0f, 0f, 0f)
+        when (parts.size) {
+            com.music.spotui.audio.EqualizerAudioProcessor.BAND_COUNT -> parts.toFloatArray()
+            5 -> floatArrayOf(
+                parts[0],
+                parts[0] * 0.6f + parts[1] * 0.4f,
+                parts[1] * 0.5f + parts[2] * 0.5f,
+                parts[2],
+                parts[3],
+                parts[4]
+            )
+            else -> FloatArray(com.music.spotui.audio.EqualizerAudioProcessor.BAND_COUNT) { 0f }
+        }
     } catch (e: Exception) {
-        floatArrayOf(0f, 0f, 0f, 0f, 0f)
+        FloatArray(com.music.spotui.audio.EqualizerAudioProcessor.BAND_COUNT) { 0f }
     }
 }
 
