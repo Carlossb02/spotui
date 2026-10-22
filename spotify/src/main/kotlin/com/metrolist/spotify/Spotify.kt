@@ -1245,10 +1245,11 @@ object Spotify {
             }
         }
 
-    suspend fun showEpisodes(showId: String, limit: Int = 50): Result<SpotifyPaging<com.metrolist.spotify.models.SpotifyEpisode>> =
+    suspend fun showEpisodes(showId: String, limit: Int = 50, offset: Int = 0): Result<SpotifyPaging<com.metrolist.spotify.models.SpotifyEpisode>> =
         runCatching {
             authenticatedGet<SpotifyPaging<com.metrolist.spotify.models.SpotifyEpisode>>("shows/$showId/episodes") {
                 parameter("limit", limit)
+                parameter("offset", offset)
             }
         }
 

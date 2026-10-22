@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.CircleShape
@@ -49,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -333,6 +335,29 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
             if (episodesState is Response.Loading) {
                 item { Loader() }
             }
+            if (episodesState is Response.Error) {
+                item {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = (episodesState as Response.Error).error,
+                            color = Color(0xFFB3B3B3),
+                            fontSize = 13.sp,
+                            maxLines = 3,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            "Reintentar episodios",
+                            color = Color(0xFF1ED760),
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.clickable { vm.retryShow(context, showId, showName) }.padding(12.dp)
+                        )
+                    }
+                }
+            }
 
             if (episodes.isNotEmpty()) {
                 // Search Bar inside Episodes
@@ -409,6 +434,10 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                 items(displayedEpisodes.size) { i ->
                     val ep = displayedEpisodes[i]
                     val chapters = remember(ep.description) { parsePodcastChapters(ep.description) }
+                    // No renderizar descripciones erróneamente almacenadas como fecha.
+                    val releaseDate = remember(ep.releaseDate) {
+                        com.music.spotui.providers.PodcastProvider.validatedReleaseDate(ep.releaseDate).orEmpty()
+                    }
 
                     SwipeToPlayNextWrapper(
                         onPlayNext = {
@@ -424,6 +453,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(AppBackground)
+                                .clipToBounds()
                                 .combinedClickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null,
@@ -468,30 +498,26 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
 
                                     Spacer(modifier = Modifier.height(4.dp))
 
-                                    // Description Excerpt (Fixed height container for exactly 2 lines, non-dynamic)
-                                    if (ep.description.isNotBlank()) {
-                                        val cleanDesc = ep.description
-                                            .replace(Regex("<[^>]*>"), "")
-                                            .lines()
-                                            .map { it.trim() }
-                                            .filter { it.isNotBlank() }
-                                            .joinToString(" ")
+                                    // Compact podcast preview: always sanitized and visually capped.
+                                    val previewText = remember(ep.description) { buildEpisodePreview(ep.description) }
+                                    if (previewText.isNotBlank()) {
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .height(36.dp),
+                                                .height(38.dp)
+                                                .clipToBounds(),
                                             contentAlignment = Alignment.TopStart
                                         ) {
                                             Text(
-                                                text = cleanDesc,
+                                                text = previewText,
                                                 color = Color(0xFFB3B3B3),
                                                 fontSize = 13.sp,
-                                                lineHeight = 17.sp,
+                                                lineHeight = 18.sp,
                                                 maxLines = 2,
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                         }
-                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Spacer(modifier = Modifier.height(8.dp))
                                     }
 
                                     // Meta Row: Duration Badge & Quick Play
@@ -501,12 +527,15 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                            if (ep.releaseDate.isNotBlank()) {
+                                            if (releaseDate.isNotBlank()) {
                                                 Text(
-                                                    text = ep.releaseDate,
+                                                    text = releaseDate,
                                                     color = Color(0xFFB3B3B3),
                                                     fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Medium
+                                                    fontWeight = FontWeight.Medium,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.widthIn(max = 120.dp)
                                                 )
                                                 Text(" • ", color = Color(0xFFB3B3B3), fontSize = 12.sp)
                                             }
@@ -551,21 +580,40 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                 }
                             }
 
-                            // Chapters list
+                            // Chapters: compact horizontal chips to avoid giant episode cards.
                             if (chapters.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = "Capítulos (${chapters.size})",
-                                    color = Color(0xFF1ED760),
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Surface(
+                                        color = Color(0x1422C55E),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text(
+                                            text = "${chapters.size} capítulos",
+                                            color = Color(0xFF1ED760),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Pulsa un bloque para saltar",
+                                        color = Color(0xFF8E8E93),
+                                        fontSize = 11.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
                                 LazyRow(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    items(chapters.size) { cIdx ->
+                                    items(chapters.take(3).size) { cIdx ->
                                         val chapter = chapters[cIdx]
                                         Surface(
                                             color = Color(0xFF2A2A30),
@@ -589,7 +637,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                             }
                                         ) {
                                             Row(
-                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 Text(
@@ -605,6 +653,22 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                                     fontSize = 12.sp,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (chapters.size > 3) {
+                                        item {
+                                            Surface(
+                                                color = Color(0xFF202026),
+                                                shape = RoundedCornerShape(16.dp)
+                                            ) {
+                                                Text(
+                                                    text = "+${chapters.size - 3} más",
+                                                    color = Color(0xFFB3B3B3),
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
                                                 )
                                             }
                                         }
@@ -753,6 +817,34 @@ private fun parsePodcastChapters(description: String): List<PodcastChapter> {
         }
     }
     return chapters
+}
+
+private fun buildEpisodePreview(description: String): String {
+    if (description.isBlank()) return ""
+
+    // The provider can include raw YouTube descriptions with ads, links and chapter lists.
+    // Pick the first editorial paragraph, not the first arbitrary string (e.g. "Publi").
+    val chapterLine = Regex("""^\s*(?:\[?\d{1,2}:\d{2}(?::\d{2})?\]?\s*[-:·•\s]+).*$""")
+    val promotionLine = Regex(
+        """(?i)^(?:[-*#\s]*)?(?:publi(?:cidad)?|patrocinad[oa]|sponsor(?:ed)?|ad(?:vertisement)?|sígueme|s[ií]guenos|suscr[ií]bete|hazte miembro|hazte socio|código descuento|codigo descuento|descuento|colaboraci[oó]n comercial|tienda|merch|mail para|contacto|mis libros?|mi libro|el libro|nuevo libro|redes sociales|instagram|facebook|twitter|tiktok|canal de yt|web oficial|jordi wild web|realizaci[oó]n y edici[oó]n|momentos clave|cap[ií]tulos|marcas de tiempo)\b.*$"""
+    )
+    val url = Regex("""(?i)(?:https?://|www\.)\S+""")
+    val normalized = description
+        .replace(Regex("""(?i)<br\s*/?>|</p>"""), "\n")
+        .replace(Regex("""<[^>]*>"""), " ")
+        .replace("\u2028", "\n")
+        .replace("\u2029", "\n")
+
+    val excerpt = normalized.lineSequence()
+        .map { url.replace(it, " ").replace(Regex("""\s+"""), " ").trim() }
+        .filter { it.isNotBlank() }
+        .filterNot { chapterLine.matches(it) || promotionLine.matches(it) }
+        .filter { line -> line.count { it.isLetter() } >= 35 }
+        .firstOrNull()
+        ?: return ""
+
+    return if (excerpt.length <= 200) excerpt
+    else excerpt.take(197).trimEnd('.', ',', ';', ':', ' ') + "..."
 }
 
 private fun formatDuration(ms: Int): String {

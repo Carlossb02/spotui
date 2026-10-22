@@ -362,10 +362,15 @@ class Api @Inject constructor(
     /** A podcast show's episodes, as playable [SongsModel]. Emits progressively as continuation pages load. */
     suspend fun getShowEpisodes(showId: String, showName: String = ""): Flow<Response<List<SongsModel>>> = flow {
         emit(Response.Loading())
+        var receivedEpisodes = false
         com.music.spotui.providers.PodcastProvider.getShowEpisodesFlow(showId, showName).collect { episodes ->
             if (episodes.isNotEmpty()) {
+                receivedEpisodes = true
                 emit(Response.Success(episodes))
             }
+        }
+        if (!receivedEpisodes) {
+            emit(Response.Error("No hay episodios disponibles para este programa. Comprueba la conexión y la sesión de Spotify."))
         }
     }
 

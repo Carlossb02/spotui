@@ -80,8 +80,14 @@ class MainActivity : ComponentActivity() {
 
         // Experimental Spotify web-player engine: attach its hidden WebView deferred
         // via postDelayed so cold-start UI inflation is unblocked and ANR is prevented.
+        // A hidden Spotify WebView has a large memory footprint and is tied to
+        // the Activity window. Do not allocate it when the experimental engine
+        // is disabled (the default), especially on memory-constrained devices.
         window.decorView.postDelayed({
-            if (!isFinishing && !isDestroyed) {
+            if (!isFinishing && !isDestroyed &&
+                com.music.spotui.di.SongPlayer.webPlayerEnabled &&
+                com.music.spotui.data.preferences.isWebPlaybackEnabled(this)
+            ) {
                 com.music.spotui.di.SpotifyWebPlayer.attach(this)
             }
         }, 2000L)

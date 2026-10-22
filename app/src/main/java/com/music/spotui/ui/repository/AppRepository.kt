@@ -34,8 +34,8 @@ class AppRepository @Inject constructor(private val api : Api) {
     suspend fun providePodcastFeed(categoryParams: String? = null, categoryBrowseId: String? = null) =
         com.music.spotui.providers.PodcastProvider.getYouTubePodcastsFeed()
 
-    fun providePodcastFeedFlow() =
-        com.music.spotui.providers.PodcastProvider.getYouTubePodcastsFeedFlow()
+    fun providePodcastFeedFlow(forceRefresh: Boolean = false) =
+        com.music.spotui.providers.PodcastProvider.getYouTubePodcastsFeedFlow(forceRefresh)
 
     suspend fun provideLibrary() = api.getLibrary()
 

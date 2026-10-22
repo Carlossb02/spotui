@@ -10,6 +10,8 @@ import com.music.spotui.data.entity.HomeFeedModel
 import com.music.spotui.ui.repository.AppRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -78,10 +80,22 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository)  
         }
     }
 
+    private var lastPodcastLoadAtMs: Long = 0L
+    private var podcastLoadJob: Job? = null
+
     fun ensurePodcastsLoaded() {
-        if (_podcastFeed.value !is Response.Success && !_isPodcastsLoading.value) {
-            fetchPodcasts()
-        }
+        if (_isPodcastsLoading.value) return
+        val feed = (_podcastFeed.value as? Response.Success)?.data
+        val hasShows = feed?.sections?.any { it.shows.isNotEmpty() } == true
+        if (hasShows) return
+        // Avoid a request storm if all providers are temporarily unavailable.
+        if (System.currentTimeMillis() - lastPodcastLoadAtMs < 30_000L) return
+        fetchPodcasts()
+    }
+
+    fun retryPodcasts() {
+        if (_isPodcastsLoading.value) return
+        fetchPodcasts(forceRefresh = true)
     }
 
     fun ensureAudiobooksLoaded() {
@@ -123,19 +137,29 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository)  
         }
     }
 
-    private fun fetchPodcasts() = viewModelScope.launch(Dispatchers.IO) {
+    private fun fetchPodcasts(forceRefresh: Boolean = false) {
+        podcastLoadJob?.cancel()
         _isPodcastsLoading.value = true
-        try {
-            repository.providePodcastFeedFlow().collect { feed ->
-                _podcastFeed.value = Response.Success(feed)
+        lastPodcastLoadAtMs = System.currentTimeMillis()
+        podcastLoadJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                repository.providePodcastFeedFlow(forceRefresh).collect { feed ->
+                    val previous = (_podcastFeed.value as? Response.Success)?.data
+                    // Keep already shown cards while a forced refresh resolves new results.
+                    if (feed.sections.any { it.shows.isNotEmpty() } || previous == null) {
+                        _podcastFeed.value = Response.Success(feed)
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("HomeViewModel", "Failed to fetch podcast feed", e)
+                if ((_podcastFeed.value as? Response.Success)?.data?.sections?.none { it.shows.isNotEmpty() } != false) {
+                    _podcastFeed.value = Response.Error(e.message ?: "No se pudieron cargar los podcasts")
+                }
+            } finally {
+                _isPodcastsLoading.value = false
             }
-        } catch (e: Exception) {
-            Log.e("HomeViewModel", "Failed to fetch podcast feed", e)
-            if (_podcastFeed.value !is Response.Success) {
-                _podcastFeed.value = Response.Error(e.message ?: "Failed to load podcast feed")
-            }
-        } finally {
-            _isPodcastsLoading.value = false
         }
     }
 

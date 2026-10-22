@@ -2,6 +2,7 @@ package com.music.spotui.providers
 
 import android.util.Log
 import com.metrolist.innertube.YouTube
+import com.music.spotui.MyApplication
 import com.metrolist.innertube.models.EpisodeItem
 import com.metrolist.innertube.models.PlaylistItem
 import com.metrolist.innertube.models.PodcastItem
@@ -12,8 +13,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -21,6 +26,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.Normalizer
+import java.util.Locale
 
 object PodcastProvider {
 
@@ -28,6 +35,7 @@ object PodcastProvider {
     private const val YOUTUBE_PODCAST_PREFIX = "yt_podcast:"
     private const val YOUTUBE_EPISODE_PREFIX = "yt_ep:"
     private const val ITUNES_PREFIX = "itunes:"
+    private const val LEGACY_SPOTIFY_SHOW_PREFIX = "spotify:show:"
 
     // YouTube Music pide la página de un programa con "MPSP" + id de playlist.
     private const val PODCAST_BROWSE_PREFIX = "MPSP"
@@ -54,6 +62,66 @@ object PodcastProvider {
             raw.startsWith("PL") -> "$PODCAST_BROWSE_PREFIX$raw"
             else -> raw
         }
+    }
+
+    /**
+     * A real YouTube Music podcast item with a plausible name is sufficient.
+     * The previous very strict ID/name filter rejected genuine MPSP results.
+     * We never fabricate IDs from the user's search text.
+     */
+    internal fun podcastNameScore(query: String, title: String): Int {
+        fun normalize(raw: String): String = Normalizer.normalize(raw, Normalizer.Form.NFD)
+            .replace(Regex("""\p{M}+"""), "")
+            .lowercase(Locale.ROOT)
+            .replace(Regex("""[^a-z0-9]+"""), " ")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+        val q = normalize(query)
+        val t = normalize(title)
+        if (q.isBlank() || t.isBlank()) return 0
+        if (q == t) return 100
+        if (t.startsWith("$q ") || t.endsWith(" $q")) return 90
+        if (t.contains(" $q ")) return 85
+        // Some shows have a suffix/prefix (e.g. "La Ruina - Podcast oficial").
+        val generic = setOf("podcast", "oficial", "programa", "con", "de", "el", "la", "los", "las", "un", "una")
+        val qWords = q.split(' ').filter { it !in generic }
+        val tWords = t.split(' ').filter { it !in generic }
+        if (qWords.isNotEmpty() && tWords.size <= qWords.size + 5 &&
+            (" " + tWords.joinToString(" ") + " ").contains(" " + qWords.joinToString(" ") + " ")) return 70
+        return 0
+    }
+
+    /** Discover a playable show using YouTube Music only. */
+    private suspend fun resolveCuratedPodcast(query: String): PodcastModel? {
+        suspend fun search(q: String, filter: YouTube.SearchFilter): List<PodcastModel> {
+            val items = YouTube.search(q, filter)
+                .onFailure { Log.w(TAG, "YouTube podcast search failed for '$q'", it) }
+                .getOrNull()?.items.orEmpty()
+            return items.mapNotNull { item ->
+                val show = itemToShow(item) ?: return@mapNotNull null
+                val realId = show.id.removePrefix(YOUTUBE_PODCAST_PREFIX)
+                if (realId.isBlank() || realId.equals(query, ignoreCase = true)) return@mapNotNull null
+                val score = podcastNameScore(query, show.name)
+                if (score < 70) return@mapNotNull null
+                score to show
+            }.sortedByDescending { it.first }.map { it.second }
+        }
+
+        val attempts = listOf(
+            query to YouTube.SearchFilter.FILTER_PODCAST,
+            query to YouTube.SearchFilter(""),
+            "$query podcast" to YouTube.SearchFilter.FILTER_PODCAST
+        )
+        for ((text, filter) in attempts) {
+            val candidates = withTimeoutOrNull(6_000L) { search(text, filter) }.orEmpty()
+            for (candidate in candidates.take(3)) {
+                if (candidate.coverUri.startsWith("http")) return candidate
+                // Keep valid IDs even if YouTube omitted artwork in its search response.
+                val detail = withTimeoutOrNull(2_500L) { getShow(candidate.id, candidate.name) }
+                if (detail != null && detail.coverUri.startsWith("http")) return detail
+            }
+        }
+        return null
     }
 
     private fun episodeToSong(
@@ -302,6 +370,8 @@ object PodcastProvider {
     private val timePattern = Regex("""^(\d{1,2}:)?\d{1,2}:\d{2}$""")
 
     private fun parseDurationFromText(text: String): Int {
+        // Duration is a short metadata label, not free-form description text.
+        if (text.length > 32 || text.contains('\n') || text.contains("http", ignoreCase = true)) return 0
         val trimmed = text.trim().lowercase()
         if (timePattern.matches(trimmed)) {
             return parseDurationMs(trimmed)
@@ -322,13 +392,24 @@ object PodcastProvider {
         return totalSeconds * 1000
     }
 
-    private fun isDateText(text: String): Boolean {
-        val lower = text.trim().lowercase()
-        return lower.contains("hace") || lower.contains("ayer") || lower.contains("hoy") ||
-                lower.contains("ago") || lower.contains("yesterday") ||
-                Regex("""\b(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic|jan|apr|aug)\b""").containsMatchIn(lower) ||
-                Regex("""\b20\d{2}\b""").containsMatchIn(lower)
+    // Match the COMPLETE publication-date label, never substrings inside episode descriptions.
+    // In particular, `hoy`, `ago`, month names or four-digit years found in an entire
+    // video description must never turn that description into releaseDate.
+    private val relativePublicationDate = Regex(
+        """(?i)^(?:(?:publicad[oa]\s+)?hace\s+\d+\s+(?:segundos?|minutos?|horas?|d[ií]as?|semanas?|meses?|a[nñ]os?)|(?:\d+\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago)|hoy|ayer|today|yesterday)$"""
+    )
+    private val calendarPublicationDate = Regex(
+        """(?i)^(?:(?:\d{1,2}\s+(?:de\s+)?(?:ene(?:ro)?|feb(?:rero)?|mar(?:zo)?|abr(?:il)?|may(?:o)?|jun(?:io)?|jul(?:io)?|ago(?:sto)?|sep(?:tiembre)?|set(?:iembre)?|oct(?:ubre)?|nov(?:iembre)?|dic(?:iembre)?|jan(?:uary)?|apr(?:il)?|aug(?:ust)?|dec(?:ember)?)\s+(?:de\s+)?\d{4})|(?:\d{4}[-/]\d{1,2}[-/]\d{1,2})|(?:(?:ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic|jan|apr|aug|dec)[a-z]*\s+\d{1,2},?\s+\d{4}))$"""
+    )
+
+    fun validatedReleaseDate(value: String): String? {
+        val date = value.trim().trimStart('•', '·', '-').trim()
+        if (date.length !in 2..48 || date.any { it == '\n' || it == '\r' || it == '\t' } ||
+            date.contains("http", ignoreCase = true) || date.contains("www.", ignoreCase = true)) return null
+        return date.takeIf { relativePublicationDate.matches(it) || calendarPublicationDate.matches(it) }
     }
+
+    private fun isDateText(text: String): Boolean = validatedReleaseDate(text) != null
 
     private fun parseShowFromBrowse(root: JSONObject, showId: String, fallbackName: String = ""): PodcastModel? {
         var title: String? = null
@@ -452,7 +533,7 @@ object PodcastProvider {
                     }
                 }
                 if (releaseDate.isBlank() && isDateText(clean)) {
-                    releaseDate = clean
+                    releaseDate = validatedReleaseDate(clean).orEmpty()
                 }
             }
 
@@ -536,6 +617,12 @@ object PodcastProvider {
             return@withContext null
         }
 
+        // Old versions saved some Spotify show IDs. Resolve by name on YouTube instead.
+        if (showId.startsWith(LEGACY_SPOTIFY_SHOW_PREFIX)) {
+            return@withContext showName.takeIf { it.isNotBlank() }
+                ?.let { withTimeoutOrNull(15_000L) { resolveCuratedPodcast(it) } }
+        }
+
         val browseId = podcastBrowseId(showId)
         if (browseId.isBlank()) return@withContext null
 
@@ -583,6 +670,15 @@ object PodcastProvider {
     ): kotlinx.coroutines.flow.Flow<List<SongsModel>> = kotlinx.coroutines.flow.flow {
         if (showId.isBlank() || showId.startsWith(ITUNES_PREFIX)) {
             emit(emptyList())
+            return@flow
+        }
+
+        if (showId.startsWith(LEGACY_SPOTIFY_SHOW_PREFIX)) {
+            val youtubeShow = showName.takeIf { it.isNotBlank() }
+                ?.let { withTimeoutOrNull(15_000L) { resolveCuratedPodcast(it) } }
+            if (youtubeShow != null) {
+                getShowEpisodesFlow(youtubeShow.id, youtubeShow.name).collect { emit(it) }
+            } else emit(emptyList())
             return@flow
         }
 
@@ -752,12 +848,50 @@ object PodcastProvider {
         return shows
     }
 
-    private val showSearchCache = java.util.concurrent.ConcurrentHashMap<String, PodcastModel?>()
+    // Verified show metadata only. Never cache a fabricated card without a source id.
+    private val showSearchCache = java.util.concurrent.ConcurrentHashMap<String, PodcastModel>()
+    private const val VERIFIED_SHOW_CACHE_PREFS = "podcasts_youtube_only_v3"
+    private const val VERIFIED_SHOW_TTL_MS = 6 * 60 * 60_000L
 
-    fun getYouTubePodcastsFeedFlow(): kotlinx.coroutines.flow.Flow<com.music.spotui.data.entity.PodcastFeedModel> = kotlinx.coroutines.flow.channelFlow {
+    private fun verifiedCachedShow(query: String): PodcastModel? {
+        showSearchCache[query]?.let { return it }
+        val prefs = MyApplication.instance.getSharedPreferences(VERIFIED_SHOW_CACHE_PREFS, android.content.Context.MODE_PRIVATE)
+        val stored = prefs.getString(query, null) ?: return null
+        return runCatching {
+            val obj = JSONObject(stored)
+            val ageMs = System.currentTimeMillis() - obj.optLong("savedAt", 0L)
+            if (ageMs < 0L || ageMs > VERIFIED_SHOW_TTL_MS) return@runCatching null
+            val show = PodcastModel(
+                id = obj.getString("id"),
+                name = obj.getString("name"),
+                publisher = obj.optString("publisher"),
+                coverUri = obj.getString("cover")
+            )
+            if (show.coverUri.startsWith("http") &&
+                (show.id.startsWith(YOUTUBE_PODCAST_PREFIX)) &&
+                podcastNameScore(query, show.name) >= 80
+            ) show.also { showSearchCache[query] = it } else null
+        }.getOrNull()
+    }
+
+    private fun storeVerifiedShow(query: String, show: PodcastModel) {
+        showSearchCache[query] = show
+        MyApplication.instance.getSharedPreferences(VERIFIED_SHOW_CACHE_PREFS, android.content.Context.MODE_PRIVATE)
+            .edit().putString(query, JSONObject()
+                .put("id", show.id)
+                .put("name", show.name)
+                .put("publisher", show.publisher)
+                .put("cover", show.coverUri)
+                .put("savedAt", System.currentTimeMillis())
+                .toString())
+            .apply()
+    }
+
+    fun getYouTubePodcastsFeedFlow(forceRefresh: Boolean = false): kotlinx.coroutines.flow.Flow<com.music.spotui.data.entity.PodcastFeedModel> = channelFlow {
+        if (forceRefresh) showSearchCache.clear()
         val spanishPodcastCategories = listOf(
             "Podcasts populares en España" to listOf(
-                "The Wild Project", "La Ruina", "Nadie Sabe Nada", "Terrores Nocturnos", "Cuarto Milenio",
+                "The Wild Project", "La Ruina", "Nadie Sabe Nada", "Terrores Nocturnos",
                 "Entiende Tu Mente", "La Escóbula de la Brújula", "BLACK MANGO", "La Noche de Cuesta",
                 "Poco Se Habla", "Estirando el Chicle", "Tengo un Plan", "Nude Project", "Caso 63"
             ),
@@ -776,78 +910,57 @@ object PodcastProvider {
                 "La Escóbula de la Brújula", "A Hombros de Gigantes", "Materia Oscura", "Xataka", "Kernel"
             ),
             "Deportes" to listOf(
-                "Linea de cal", "El Partidazo de COPE", "El Larguero", "El Desmarque", "La Libreta de Van Gaal"
+                "Línea de Cal", "El Partidazo de COPE", "El Larguero", "El Desmarque", "La Libreta de Van Gaal"
             ),
             "Negocios y Emprendimiento" to listOf(
                 "Tengo un Plan", "Nude Project", "Itnig", "Libros para Emprendedores"
             )
         )
 
-        val sectionShowsMap = java.util.concurrent.ConcurrentHashMap<String, MutableList<PodcastModel>>()
-        spanishPodcastCategories.forEach { (catTitle, _) ->
-            sectionShowsMap[catTitle] = java.util.Collections.synchronizedList(mutableListOf())
+        val queries = spanishPodcastCategories.flatMap { it.second }.distinct()
+        // Thread-safe snapshots. Query order, not network completion order, drives UI ordering.
+        val resolved = java.util.concurrent.ConcurrentHashMap<String, PodcastModel>()
+        if (!forceRefresh) {
+            for (query in queries) verifiedCachedShow(query)?.let { resolved[query] = it }
         }
 
-        fun currentSnapshot(): com.music.spotui.data.entity.PodcastFeedModel {
-            val sections = spanishPodcastCategories.map { (catTitle, _) ->
+        fun snapshot(): com.music.spotui.data.entity.PodcastFeedModel {
+            val sections = spanishPodcastCategories.map { (title, names) ->
                 com.music.spotui.data.entity.PodcastSectionModel(
-                    title = catTitle,
-                    shows = sectionShowsMap[catTitle]?.toList().orEmpty().distinctBy { it.id }
+                    title = title,
+                    shows = names.mapNotNull { resolved[it] }.distinctBy { it.id }
                 )
             }
-            return com.music.spotui.data.entity.PodcastFeedModel(
-                categories = emptyList(),
-                selectedCategory = null,
-                sections = sections
-            )
+            return com.music.spotui.data.entity.PodcastFeedModel(sections = sections)
         }
 
-        send(currentSnapshot())
+        send(snapshot()) // Fast cached result, before network lookups.
 
-        for ((catTitle, podcastQueries) in spanishPodcastCategories) {
-            coroutineScope {
-                podcastQueries.map { query ->
-                    async(Dispatchers.IO) {
-                        val cached = showSearchCache[query]
-                        val resolved = if (cached != null) cached else {
-                            runCatching {
-                                var resultShow: PodcastModel? = null
-                                val searchResult = YouTube.search(query, YouTube.SearchFilter.FILTER_PODCAST).getOrNull()
-                                for (item in searchResult?.items.orEmpty()) {
-                                    val show = itemToShow(item)
-                                    if (show != null && show.name.isNotBlank()) {
-                                        resultShow = show
-                                        break
-                                    }
-                                }
-                                if (resultShow == null) {
-                                    val (fallbackShows, _) = searchPodcasts(query)
-                                    resultShow = fallbackShows.firstOrNull()
-                                }
-                                if (resultShow == null) {
-                                    resultShow = PodcastModel(
-                                        id = "$YOUTUBE_PODCAST_PREFIX$query",
-                                        name = query,
-                                        publisher = "Podcast",
-                                        coverUri = ""
-                                    )
-                                }
-                                showSearchCache[query] = resultShow
-                                resultShow
-                            }.getOrNull()
-                        }
-
-                        if (resolved != null) {
-                            val list = sectionShowsMap[catTitle]
-                            if (list != null && list.none { it.id == resolved.id }) {
-                                list.add(resolved)
+        // All categories search concurrently; bounded concurrency avoids overloading APIs.
+        val semaphore = Semaphore(6)
+        coroutineScope {
+            queries.filterNot { resolved.containsKey(it) }.map { query ->
+                async(Dispatchers.IO) {
+                    semaphore.withPermit {
+                        try {
+                            val show = withTimeoutOrNull(19_000L) { resolveCuratedPodcast(query) }
+                            if (show != null && show.coverUri.startsWith("http") && show.id.startsWith(YOUTUBE_PODCAST_PREFIX)) {
+                                resolved[query] = show
+                                storeVerifiedShow(query, show)
+                                send(snapshot()) // A podcast appears as soon as it is verified.
+                            } else {
+                                Log.w(TAG, "No verified, playable podcast card for '$query'")
                             }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Podcast category search failed: $query", e)
                         }
                     }
-                }.awaitAll()
-            }
-            send(currentSnapshot())
+                }
+            }.awaitAll()
         }
+        send(snapshot())
     }
 
     suspend fun getYouTubePodcastsFeed(): com.music.spotui.data.entity.PodcastFeedModel {

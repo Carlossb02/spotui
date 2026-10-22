@@ -115,6 +115,7 @@ fun HomeScreen(navController: NavController){
     val artists by homeViewModel.artists.collectAsState()
     val songs by homeViewModel.songs.collectAsState()
     val podcastFeed by homeViewModel.podcastFeed.collectAsState()
+    val podcastsLoading by homeViewModel.isPodcastsLoading.collectAsState()
     val audiobooks by homeViewModel.audiobooks.collectAsState()
     val followedArtists by homeViewModel.followedArtists.collectAsState()
     val selectedFilter by homeViewModel.selectedFilter.collectAsState()
@@ -169,6 +170,7 @@ fun HomeScreen(navController: NavController){
                     navController = navController,
                     homeViewModel = homeViewModel,
                     podcastFeedResult = podcastFeed,
+                    isLoading = podcastsLoading,
                     selectedFilter = selectedFilter,
                     isFollowingOnly = isFollowingOnly,
                     onTrackOptions = { menuSong = it },
@@ -1104,6 +1106,7 @@ private fun HomePodcastsFeedContent(
     navController: NavController,
     homeViewModel: HomeViewModel,
     podcastFeedResult: Response<com.music.spotui.data.entity.PodcastFeedModel>,
+    isLoading: Boolean,
     selectedFilter: String,
     isFollowingOnly: Boolean,
     onTrackOptions: (SongsModel) -> Unit = {},
@@ -1134,13 +1137,27 @@ private fun HomePodcastsFeedContent(
         }
 
         item {
-            Text(
-                text = if (isFollowingOnly) "Podcasts que sigues" else "Podcasts y categorías",
-                color = Color.White,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(16.dp, 16.dp, 16.dp, 12.dp)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp, 16.dp, 16.dp, 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = if (isFollowingOnly) "Podcasts que sigues" else "Podcasts y categorías",
+                    color = Color.White,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                if (!isFollowingOnly && !isLoading) {
+                    Text(
+                        text = "Actualizar",
+                        color = Color(0xFF1ED760),
+                        fontSize = 13.sp,
+                        modifier = Modifier.clickable { homeViewModel.retryPodcasts() }.padding(6.dp)
+                    )
+                }
+            }
         }
 
         if (isFollowingOnly) {
@@ -1221,18 +1238,31 @@ private fun HomePodcastsFeedContent(
                 }
             }
         } else {
-            val displaySections = if (sections.isNotEmpty()) {
-                sections
-            } else {
-                listOf(
-                    "Podcasts populares en España",
-                    "Comedia y Humor",
-                    "Crímenes Reales y Misterio",
-                    "Noticias y Política",
-                    "Ciencia, Historia y Tecnología",
-                    "Deportes",
-                    "Negocios y Emprendimiento"
-                ).map { com.music.spotui.data.entity.PodcastSectionModel(title = it, shows = emptyList()) }
+            // Never show permanent skeletons for unresolved or invalid search results.
+            val displaySections = sections.filter { it.shows.isNotEmpty() }
+            if (displaySections.isEmpty()) {
+                item {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 42.dp, horizontal = 24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        if (isLoading) {
+                            CircularProgressIndicator(color = Color(0xFF1ED760), modifier = Modifier.size(28.dp))
+                            Spacer(Modifier.height(14.dp))
+                            Text("Cargando podcast…", color = Color(0xFFB3B3B3), fontSize = 14.sp)
+                        } else {
+                            Text("No se han encontrado podcasts disponibles", color = Color.White, fontSize = 15.sp)
+                            Spacer(Modifier.height(8.dp))
+                            Text("Comprueba tu conexión y vuelve a intentarlo.", color = Color.Gray, fontSize = 12.sp)
+                            Spacer(Modifier.height(14.dp))
+                            Text(
+                                "Reintentar",
+                                color = Color(0xFF1ED760),
+                                modifier = Modifier.clickable { homeViewModel.retryPodcasts() }.padding(10.dp)
+                            )
+                        }
+                    }
+                }
             }
 
             items(displaySections.size) { idx ->

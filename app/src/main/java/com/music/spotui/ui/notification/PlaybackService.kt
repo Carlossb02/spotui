@@ -90,13 +90,16 @@ class PlaybackService : MediaLibraryService() {
 
         override fun onPlaybackStateChanged(playbackState: Int) {
             currentSongState.updateBufferingState(playbackState == Player.STATE_BUFFERING)
-            if (playbackState == Player.STATE_READY && (SongPlayer.exoPlayer?.playWhenReady == true)) {
-                SongPlayer.acquireWakeLock(applicationContext, "spotui:playing", 12 * 60 * 60_000L)
-            } else if ((playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE) && !SongPlayer.isCrossfadeActive()) {
-                SongPlayer.releaseWakeLock("spotui:playback_end")
-            }
+            // ExoPlayer's WAKE_MODE_LOCAL is responsible for the CPU wake lock.
+            // No 12-hour application-held wake locks are needed here.
             if (playbackState == Player.STATE_ENDED) {
+                // Ignore a stale END from the outgoing track while a replacement
+                // stream is being resolved; SongPlayer owns its failure fallback.
+                if (SongPlayer.isPreparingTrack()) return
                 if (SongPlayer.isCrossfadeActive()) {
+                    // If the next player is already ready, hand off now instead
+                    // of suppressing ENDED and waiting for a delayed fade timer.
+                    if (SongPlayer.promoteReadyCrossfadeOnEnd()) return
                     val sec = SongPlayer.getSecondaryPlayerForService()
                     if (sec != null && (sec.isPlaying || sec.playbackState == Player.STATE_READY || sec.playbackState == Player.STATE_BUFFERING)) {
                         // Secondary player is actively transitioning or buffering, ignore old player STATE_ENDED
@@ -107,7 +110,6 @@ class PlaybackService : MediaLibraryService() {
                     }
                 }
                 errorRetryCounts.clear()
-                SongPlayer.acquireWakeLock(applicationContext, "spotui:advance", 60_000L)
                 when (currentSongState.repeat.value) {
                     RepeatMode.ONE -> {
                         val p = SongPlayer.exoPlayer
@@ -124,8 +126,6 @@ class PlaybackService : MediaLibraryService() {
                                     ?: currentSongState.songIndex.value.coerceIn(0, queue.size - 1)
                                 val song = queue[cur]
                                 SongPlayer.playSong(song.url, applicationContext, "song/${song.id}")
-                            } else {
-                                SongPlayer.releaseWakeLock("spotui:advance")
                             }
                         }
                     }
@@ -144,31 +144,44 @@ class PlaybackService : MediaLibraryService() {
                                 ?: currentSongState.songIndex.value.coerceIn(0, queue.size - 1)
                             if (cur < queue.size - 1) {
                                 advance(forward = true)
-                            } else {
-                                SongPlayer.releaseWakeLock("spotui:advance")
                             }
-                        } else {
-                            SongPlayer.releaseWakeLock("spotui:advance")
                         }
                     }
                 }
             }
         }
 
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            android.util.Log.w("SpotuiTransition", "session underlying playWhenReady=$playWhenReady reason=$reason " +
+                "state=${SongPlayer.exoPlayer?.playbackState}, crossfade=${SongPlayer.isCrossfadeActive()}")
+        }
+
+        override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
+            android.util.Log.w("SpotuiTransition", "session underlying suppression=$playbackSuppressionReason " +
+                "state=${SongPlayer.exoPlayer?.playbackState}, crossfade=${SongPlayer.isCrossfadeActive()}")
+        }
+
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            android.util.Log.i("SpotuiTransition", "session underlying isPlaying=$isPlaying " +
+                "state=${SongPlayer.exoPlayer?.playbackState}, crossfade=${SongPlayer.isCrossfadeActive()}")
             // Mirror ExoPlayer's real play/pause state into the in-app UI so the
             // on-screen play button stays in sync when the notification controls are used.
             // Ignore transient stops/pauses from the outgoing player during an active crossfade.
             if (SongPlayer.isCrossfadeActive()) return
-            if (isPlaying) {
-                SongPlayer.acquireWakeLock(applicationContext, "spotui:playing", 12 * 60 * 60_000L)
-            } else {
-                SongPlayer.releaseWakeLock("spotui:paused")
-            }
+            if (!isPlaying && SongPlayer.isPreparingTrack()) return
+            // Do not leak a manual wake lock across an entire playback session.
             if (!showingWeb) currentSongState.updatePlayingState(isPlaying)
         }
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            if (SongPlayer.isCrossfadeActive()) {
+                android.util.Log.w("PlaybackService", "Outgoing player failed during crossfade; checking incoming player", error)
+                // If the incoming player is READY, its promotion is queued on the
+                // main looper. If still buffering, SongPlayer's bounded watchdog
+                // takes over instead of losing the transition silently.
+                SongPlayer.promoteReadyCrossfadeOnEnd()
+                return
+            }
             android.util.Log.e(
                 "PlaybackService",
                 "Player error during playback: ${error.message}",
@@ -198,7 +211,6 @@ class PlaybackService : MediaLibraryService() {
                 return
             }
             errorRetryCounts.remove(songUrl)
-            SongPlayer.acquireWakeLock(applicationContext, "spotui:error_advance", 60_000L)
             if (songUrl.isNotBlank()) {
                 SongPlayer.invalidateResolvedStream(songUrl)
             }
@@ -256,6 +268,19 @@ class PlaybackService : MediaLibraryService() {
 
         // Let the player advance the in-app queue itself during a crossfade.
         SongPlayer.bindState(currentSongState)
+        // Android Auto/media buttons may start this service with no Activity at all.
+        // Restore the *paused* queue here so controls work after process recreation.
+        if (currentSongState.queue.value.isEmpty()) {
+            com.music.spotui.data.preferences.loadLastPlayback(applicationContext)?.let { (savedSong, positionMs) ->
+                val savedQueue = com.music.spotui.data.preferences.loadLastQueue(applicationContext)
+                val restoredQueue = savedQueue.ifEmpty { listOf(savedSong) }
+                currentSongState.updateQueue(restoredQueue, isManualEdit = true)
+                val idx = restoredQueue.indexOfFirst { it.id == savedSong.id }.coerceAtLeast(0)
+                currentSongState.updateSongState(savedSong.coverUri, savedSong.title,
+                    savedSong.singer, false, savedSong.id, idx, savedSong.album)
+                SongPlayer.setRestorePoint(savedSong.url, positionMs)
+            }
+        }
         SongPlayer.ensureCreated(this)
         val base = SongPlayer.exoPlayer ?: return
         base.addListener(playerListener)
@@ -276,6 +301,13 @@ class PlaybackService : MediaLibraryService() {
             .build()
 
 
+        // The session must see a buffering/play-intent event while the current
+        // stream URL is being resolved. Otherwise Media3 may demote the service
+        // when the outgoing player pauses, especially under battery restrictions.
+        SongPlayer.onPlaybackIntentChanged = {
+            activeForwardingPlayer?.dispatchPlaybackRefresh()
+        }
+
         // When a crossfade promotes a new ExoPlayer instance, re-bind the session to it
         // (runs on the main thread; setPlayer is the supported way to swap a session's player).
         SongPlayer.onPlayerCreated = { newPlayer ->
@@ -283,6 +315,10 @@ class PlaybackService : MediaLibraryService() {
             newPlayer.addListener(playerListener)
         }
         SongPlayer.onPlayerSwapped = { oldPlayer, newPlayer ->
+            android.util.Log.i("SpotuiTransition", "media session swap: " +
+                "old=${oldPlayer?.playbackState} new=${newPlayer.playbackState} " +
+                "newPlaying=${newPlayer.isPlaying} newWhenReady=${newPlayer.playWhenReady} " +
+                "newSuppression=${newPlayer.playbackSuppressionReason}")
             oldPlayer?.removeListener(playerListener)
             if (!showingWeb) {
                 val wrapped = wrap(newPlayer)
@@ -292,9 +328,7 @@ class PlaybackService : MediaLibraryService() {
             newPlayer.addListener(playerListener)
             playerListener.onPlaybackStateChanged(newPlayer.playbackState)
             playerListener.onIsPlayingChanged(newPlayer.isPlaying)
-            if (newPlayer.isPlaying || newPlayer.playWhenReady) {
-                SongPlayer.acquireWakeLock(applicationContext, "spotui:playing", 12 * 60 * 60_000L)
-            }
+            // Media3 will hold its own playback wake lock after player swap.
             currentSongState.updatePlayingState(newPlayer.isPlaying || newPlayer.playWhenReady)
         }
 
@@ -435,6 +469,12 @@ class PlaybackService : MediaLibraryService() {
         private val listenerWrappers = java.util.concurrent.ConcurrentHashMap<Player.Listener, Player.Listener>()
 
         override fun getPlaybackState(): Int {
+            if (SongPlayer.isCrossfadeActive()) {
+                val incoming = SongPlayer.getSecondaryPlayerForService()
+                if (incoming != null && incoming.playbackState == Player.STATE_READY) {
+                    return Player.STATE_READY
+                }
+            }
             if (SongPlayer.isCrossfadeActive() || SongPlayer.isResolvingOrPlaying()) {
                 val state = super.getPlaybackState()
                 if (state == Player.STATE_IDLE || state == Player.STATE_ENDED) {
@@ -445,16 +485,17 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun getPlayWhenReady(): Boolean {
-            if (SongPlayer.isCrossfadeActive() || SongPlayer.isResolvingOrPlaying()) return true
+            if (SongPlayer.isCrossfadeActive() || SongPlayer.isPreparingTrack()) return true
             return super.getPlayWhenReady()
         }
 
         override fun isPlaying(): Boolean {
-            if (SongPlayer.isCrossfadeActive() || SongPlayer.isResolvingOrPlaying()) {
-                val baseIsPlaying = super.isPlaying()
-                if (baseIsPlaying) return true
-                return base.playbackState == Player.STATE_READY || base.playbackState == Player.STATE_BUFFERING
+            if (SongPlayer.isCrossfadeActive()) {
+                val incoming = SongPlayer.getSecondaryPlayerForService()
+                if (incoming?.isPlaying == true) return true
             }
+            // Do not report false playback while resolving as physically playing;
+            // PlayWhenReady + buffering express the intention to continue.
             return super.isPlaying()
         }
 
@@ -462,36 +503,41 @@ class PlaybackService : MediaLibraryService() {
             sessionListeners.add(listener)
             val wrapper = object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
-                    if ((SongPlayer.isCrossfadeActive() || base != SongPlayer.exoPlayer) && (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE)) {
-                        val sec = SongPlayer.getSecondaryPlayerForService()
-                        if (sec != null && (sec.isPlaying || sec.playbackState == Player.STATE_READY || sec.playbackState == Player.STATE_BUFFERING)) {
-                            return
-                        }
-                    }
-                    listener.onPlaybackStateChanged(playbackState)
+                    if (base !== SongPlayer.exoPlayer) return
+                    listener.onPlaybackStateChanged(this@AutoPlayer.playbackState)
                 }
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
-                    if ((SongPlayer.isCrossfadeActive() || base != SongPlayer.exoPlayer) && !isPlaying) {
-                        return
-                    }
-                    listener.onIsPlayingChanged(isPlaying)
+                    if (base !== SongPlayer.exoPlayer) return
+                    listener.onIsPlayingChanged(this@AutoPlayer.isPlaying)
+                }
+
+                override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                    if (base !== SongPlayer.exoPlayer) return
+                    listener.onPlayWhenReadyChanged(this@AutoPlayer.playWhenReady, reason)
+                }
+
+                override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
+                    if (base !== SongPlayer.exoPlayer) return
+                    listener.onPlaybackSuppressionReasonChanged(playbackSuppressionReason)
                 }
 
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                    listener.onMediaItemTransition(mediaItem, reason)
+                    if (base === SongPlayer.exoPlayer) listener.onMediaItemTransition(mediaItem, reason)
                 }
 
                 override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
-                    listener.onMediaMetadataChanged(mediaMetadata)
+                    if (base === SongPlayer.exoPlayer) listener.onMediaMetadataChanged(this@AutoPlayer.mediaMetadata)
                 }
 
                 override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                    listener.onPlayerError(error)
+                    if (base === SongPlayer.exoPlayer && !SongPlayer.isCrossfadeActive()) {
+                        listener.onPlayerError(error)
+                    }
                 }
 
                 override fun onEvents(player: Player, events: Player.Events) {
-                    listener.onEvents(player, events)
+                    if (base === SongPlayer.exoPlayer) listener.onEvents(this@AutoPlayer, events)
                 }
             }
             listenerWrappers[listener] = wrapper
@@ -509,6 +555,22 @@ class PlaybackService : MediaLibraryService() {
         }
 
         /** Fuerza a la sesión (y por tanto a Android Auto) a releer los metadatos. */
+        fun dispatchPlaybackRefresh() {
+            val events = Player.Events(
+                androidx.media3.common.FlagSet.Builder()
+                    .add(Player.EVENT_PLAYBACK_STATE_CHANGED)
+                    .add(Player.EVENT_PLAY_WHEN_READY_CHANGED)
+                    .add(Player.EVENT_IS_PLAYING_CHANGED)
+                    .build()
+            )
+            sessionListeners.forEach { listener ->
+                listener.onPlaybackStateChanged(playbackState)
+                listener.onPlayWhenReadyChanged(playWhenReady, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
+                listener.onIsPlayingChanged(isPlaying)
+                listener.onEvents(this, events)
+            }
+        }
+
         fun dispatchMetadataRefresh() {
             val md = mediaMetadata
             val events = Player.Events(
@@ -790,9 +852,10 @@ class PlaybackService : MediaLibraryService() {
         ): ListenableFuture<SessionResult> {
             when (customCommand.customAction) {
                 "ACTION_CLOSE" -> {
-                    // exit the player and kill the process directly to terminate the app cleanly
-                    SongPlayer.pause()
-                    android.os.Process.killProcess(android.os.Process.myPid())
+                    // Never kill the whole Android process (it can corrupt ongoing
+                    // writes and bypass service/session cleanup).
+                    SongPlayer.stop()
+                    pauseAllPlayersAndStopSelf()
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                 }
 
@@ -1188,33 +1251,41 @@ class PlaybackService : MediaLibraryService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        super.onStartCommand(intent, flags, startId)
-        if (SongPlayer.isPlaying() || SongPlayer.isResolvingOrPlaying()) {
-            SongPlayer.acquireWakeLock(applicationContext, "spotui:playing", 12 * 60 * 60_000L)
-        }
-        return START_STICKY
+        // Let Media3 handle media-button intents and choose the service restart
+        // contract; overriding its return value can break system resumption.
+        return super.onStartCommand(intent, flags, startId)
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        android.util.Log.w("SpotuiTransition", "service onTaskRemoved, playbackOngoing=${isPlaybackOngoing()}")
+        // Media3 manages an already-foreground session correctly. Do not call
+        // super while a new track is resolving during a transition: its default
+        // implementation can stop an idle-looking player and tear the session down.
+        // Media3's foreground state is the authoritative signal. If there is
+        // no foreground playback, use its default safe stop behavior (Android
+        // will reject a background-only service kept alive indefinitely).
+        if (isPlaybackOngoing() || SongPlayer.isResolvingOrPlaying() || SongPlayer.isPreparingTrack() || SongPlayer.isCrossfadeActive()) return
         super.onTaskRemoved(rootIntent)
-        // Keep PlaybackService running in background / foreground like Spotify when app task is swiped away.
-        if (SongPlayer.isPlaying() || SongPlayer.isResolvingOrPlaying()) {
-            SongPlayer.acquireWakeLock(applicationContext, "spotui:playing", 12 * 60 * 60_000L)
-        }
     }
 
     override fun onDestroy() {
+        android.util.Log.w("SpotuiTransition", "PlaybackService onDestroy, " +
+            "state=${SongPlayer.exoPlayer?.playbackState} " +
+            "isPlaying=${SongPlayer.isPlaying()} crossfade=${SongPlayer.isCrossfadeActive()}")
         artworkRefreshJob?.cancel()
         serviceScope.cancel()
         runCatching { unregisterReceiver(mediaControlReceiver) }
         SongPlayer.exoPlayer?.removeListener(playerListener)
+        SongPlayer.onPlayerCreated = null
         SongPlayer.onPlayerSwapped = null
+        SongPlayer.onPlaybackIntentChanged = null
         SpotifyWebPlayer.onStateChanged = null
         webPlayer?.release()
         webPlayer = null
         searchCache.clear()
         mediaSession?.release()
         mediaSession = null
+        SongPlayer.release() // release AudioTrack, decoders and timers on service stop
         super.onDestroy()
     }
 }

@@ -13,6 +13,8 @@ import com.music.spotui.di.CurrentSongState
 import com.music.spotui.ui.repository.AppRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -48,31 +50,47 @@ class ShowViewModel @Inject constructor(
     }
 
     private var showKey: String? = null
+    private var showJob: Job? = null
+    private var episodeJob: Job? = null
+
+    fun retryShow(context: Context, showId: String, showName: String = "") {
+        showKey = null
+        loadShow(context, showId, showName)
+    }
 
     fun loadShow(context: Context, showId: String, showName: String = "") {
         _isSubscribed.value = SubscribedPodcastPref.isPodcastSubscribed(context, showId)
         if (showKey == showId) return
         showKey = showId
+        showJob?.cancel()
+        episodeJob?.cancel()
+        _episodes.value = Response.Loading()
         _visibleCount.value = 30
         if (showName.isNotBlank() && _show.value == null) {
             _show.value = PodcastModel(id = showId, name = showName, publisher = "", coverUri = "")
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            val loaded = repository.provideShow(showId)
+        showJob = viewModelScope.launch(Dispatchers.IO) {
+            val loaded = repository.provideShow(showId, showName)
             if (loaded != null) {
                 _show.value = loaded
                 _isSubscribed.value = SubscribedPodcastPref.isPodcastSubscribed(context, loaded.id)
             }
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            repository.provideShowEpisodes(showId, showName).collect { res ->
-                _episodes.value = res
-                if (res is Response.Success) {
-                    val count = res.data.size
-                    if (count > _visibleCount.value && _visibleCount.value <= 30) {
-                        _visibleCount.value = count
+        episodeJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                repository.provideShowEpisodes(showId, showName).collect { res ->
+                    _episodes.value = res
+                    if (res is Response.Success) {
+                        val count = res.data.size
+                        if (count > _visibleCount.value && _visibleCount.value <= 30) {
+                            _visibleCount.value = count
+                        }
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _episodes.value = Response.Error(e.message ?: "No se pudieron cargar los episodios")
             }
         }
     }
