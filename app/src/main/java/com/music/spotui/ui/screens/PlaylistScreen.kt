@@ -2,6 +2,7 @@ package com.music.spotui.ui.screens
 
 import android.content.Context
 import android.annotation.SuppressLint
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,6 +17,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,6 +39,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -56,9 +60,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -66,7 +76,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.TextStyle
@@ -83,8 +96,12 @@ import com.music.spotui.data.api.Response
 import com.music.spotui.data.entity.AlbumsModel
 import com.music.spotui.di.Palette
 import com.music.spotui.di.SongPlayer
-import com.music.spotui.ui.components.AppSearchBar
 import com.music.spotui.ui.components.Loader
+import com.music.spotui.ui.components.CollectionPullSearch
+import com.music.spotui.ui.components.CollectionSortRow
+import com.music.spotui.ui.components.CollectionSortSheet
+import com.music.spotui.ui.components.collectionSortLabel
+import com.music.spotui.ui.components.rememberCollectionSearchState
 import com.music.spotui.ui.components.Snackbar
 import com.music.spotui.ui.components.SwipeToPlayNextWrapper
 import com.music.spotui.ui.navigation.artistRoute
@@ -107,6 +124,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     val songsResp by playlistViewModel.songs.collectAsState()
     val playlistResp by playlistViewModel.playlist.collectAsState()
     val context = LocalContext.current
+    val tabletCollectionLayout = LocalConfiguration.current.smallestScreenWidthDp >= 600 &&
+        LocalConfiguration.current.screenWidthDp >= 840
 
     // Trigger dinámico para refrescar la UI automáticamente cuando una descarga termina
     var downloadRefreshTrigger by remember { mutableStateOf(0) }
@@ -159,6 +178,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     var currentSort by remember(playlistId) { mutableStateOf(getPlaylistSortOption(context, playlistId)) }
     var isDescending by remember(playlistId) { mutableStateOf(isPlaylistSortDescending(context, playlistId)) }
     var showSortSheet by remember { mutableStateOf(false) }
+    var showPlaylistActions by remember { mutableStateOf(false) }
 
     val filteredSongs = remember(songs, searchQuery, currentSort, isDescending) {
         val filtered = if (searchQuery.isBlank()) {
@@ -307,9 +327,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     }
 
     Surface(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(AppBackground.toArgb()))
+        color = Color.Transparent,
+        modifier = Modifier.fillMaxSize().background(Color(AppBackground.toArgb()))
     ) {
         if (songsResp is Response.Loading && playlistResp is Response.Loading) {
             Loader()
@@ -326,20 +345,36 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         }
 
         var dominentColor by remember { mutableStateOf(Color(AppBackground.toArgb())) }
-        Palette().extractSecondColorFromCoverUrl(context = context, playlist.coverUri) { color ->
-            dominentColor = color
+        LaunchedEffect(playlist.coverUri) {
+            Palette().extractSecondColorFromCoverUrl(context = context, playlist.coverUri) { color ->
+                dominentColor = color
+            }
         }
 
+        val playlistBackground = remember(dominentColor) {
+            Brush.verticalGradient(
+                colors = listOf(dominentColor, Color(AppBackground.toArgb()), Color(AppBackground.toArgb())),
+                startY = 0f, endY = 2100f
+            )
+        }
         Scaffold(
+            modifier = Modifier.fillMaxSize().background(playlistBackground),
+            containerColor = Color.Transparent,
             topBar = {
                 CenterAlignedTopAppBar(
-                    modifier = Modifier.padding(16.dp, 0.dp),
+                    modifier = Modifier
+                        .padding(horizontal = 12.dp),
                     navigationIcon = {
                         Icon(
-                            modifier = Modifier.clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) { navController.navigateUp() },
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(Color.Black.copy(alpha = 0.35f))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) { navController.navigateUp() }
+                                .padding(9.dp),
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "",
                             tint = Color.White
@@ -349,126 +384,133 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                         containerColor = Color.Transparent,
                         titleContentColor = Color.White,
                     ),
-                    title = { Text(text = "") }
+                    title = { Text(text = "") },
+                    actions = {
+                        androidx.compose.material3.IconButton(
+                            onClick = { showPlaylistActions = true },
+                            modifier = Modifier.clip(RoundedCornerShape(50))
+                                .background(Color.Black.copy(alpha = 0.35f))
+                        ) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Más opciones de la lista",
+                                tint = Color.White)
+                        }
+                    }
                 )
             }
-        ) {
+        ) { innerPadding ->
             val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-            Box(modifier = Modifier.fillMaxSize()) {
+            val searchReveal = rememberCollectionSearchState(listState, playlistId)
+            val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+            val keyboardController = LocalSoftwareKeyboardController.current
+            val focusManager = LocalFocusManager.current
+            LaunchedEffect(keyboardVisible) {
+                if (keyboardVisible) listState.scrollToItem(0)
+            }
+            // Keep the search field in place; collapse only the expensive artwork/
+            // metadata header while the IME is visible, leaving room for results.
+            searchReveal.onDismissByScroll = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
+                searchQuery = ""
+            }
+            Box(modifier = Modifier.fillMaxSize()
+                .padding(top = innerPadding.calculateTopPadding())) {
                 LazyColumn(
                     state = listState,
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 138.dp),
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color(AppBackground.toArgb()))
+                        .nestedScroll(searchReveal.nestedScrollConnection)
                 ) {
-                    item {
+                    item(key = "playlist_reveal_search") {
+                        CollectionPullSearch(
+                            state = searchReveal,
+                            query = searchQuery,
+                            onQueryChange = { searchQuery = it },
+                            placeholder = "Buscar en la lista"
+                        )
+                    }
+                    if (!keyboardVisible) {
+                    item(key = "playlist_header") {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(min = 440.dp)
-                                .padding(bottom = 8.dp)
-                                .background(
-                                    brush = Brush.verticalGradient(
-                                        colors = listOf(dominentColor, Color(AppBackground.toArgb())),
-                                        startY = -100f,
-                                    ),
-                                ),
+                                .heightIn(min = if (tabletCollectionLayout) 260.dp else 440.dp)
+                                .padding(bottom = 8.dp),
                             verticalArrangement = Arrangement.Center,
                         ) {
-                            Spacer(modifier = Modifier.padding(25.dp))
-
-                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            // Both handheld and tablet playlist headers share
+                            // Spotify's centered artwork, with metadata left-aligned
+                            // beneath it. The tablet's content pane is narrower when
+                            // the companion player is visible.
+                            Spacer(modifier = Modifier.height(if (tabletCollectionLayout) 14.dp else 24.dp))
+                            Box(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 GlideImage(
-                                    modifier = Modifier.size(230.dp),
+                                    modifier = Modifier
+                                        .size(if (tabletCollectionLayout) 212.dp else 230.dp)
+                                        .clip(RoundedCornerShape(5.dp)),
                                     model = playlist.coverUri,
+                                    contentScale = ContentScale.Crop,
                                     failure = placeholder(R.drawable.placeholder),
-                                    contentDescription = "",
+                                    contentDescription = "Carátula de ${playlist.name}",
                                 )
                             }
-                            Spacer(modifier = Modifier.padding(5.dp))
+                            Spacer(modifier = Modifier.height(17.dp))
                             val isLocalPlaylist = playlistId.startsWith("local_pl_")
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .padding(20.dp, 5.dp, 20.dp, 0.dp)
-                                    .then(
-                                        if (isLocalPlaylist) {
-                                            Modifier.clickable(
-                                                interactionSource = remember { MutableInteractionSource() },
-                                                indication = null
-                                            ) { showRenameDialog = true }
-                                        } else Modifier
-                                    )
+                                modifier = Modifier.padding(horizontal = 20.dp)
                             ) {
                                 Text(
                                     text = playlist.name.ifBlank { playlistName },
                                     color = Color.White,
-                                    fontSize = 23.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontSize = if (tabletCollectionLayout) 30.sp else 30.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 2,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
-                                if (isLocalPlaylist) {
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Icon(
-                                        imageVector = Icons.Default.Edit,
-                                        contentDescription = "Edit Playlist Name",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
                             }
-                            Text(
-                                modifier = Modifier.padding(20.dp, 4.dp, 20.dp, 0.dp),
-                                text = "${songs.size} songs" + if (playlist.time.isNotBlank()) " • ${playlist.time}" else "",
-                                color = Color.Gray,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
-                            )
+                            Spacer(modifier = Modifier.height(13.dp))
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(20.dp, 4.dp, 0.dp, 0.dp)
+                                modifier = Modifier.padding(horizontal = 20.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (playlistId.startsWith("local_pl_")) {
-                                    Icon(
-                                        imageVector = Icons.Default.PhoneAndroid,
-                                        contentDescription = "Local Playlist",
-                                        tint = Color(0xFF1ED760),
-                                        modifier = Modifier
-                                            .size(14.dp)
-                                            .padding(end = 4.dp)
-                                    )
-                                    Text(
-                                        text = "Local Playlist",
-                                        color = Color.White,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
+                                if (isLocalPlaylist) {
+                                    Icon(Icons.Default.PhoneAndroid, contentDescription = null,
+                                        tint = Color(0xFF1ED760), modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Text("Lista local", color = Color.White,
+                                        fontWeight = FontWeight.Medium, fontSize = 13.sp)
                                 } else if (playlist.artists.isNotBlank()) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = "Playlist • ",
-                                            color = Color.White,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                        Text(
-                                            text = playlist.artists,
-                                            color = Color.White,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            modifier = Modifier.clickable(
-                                                interactionSource = remember { MutableInteractionSource() },
-                                                indication = null,
-                                            ) {
-                                                if (playlistArtistList.size == 1) {
-                                                    navController.navigate(artistRoute(playlistArtistList[0]))
-                                                } else if (playlistArtistList.size > 1) {
-                                                    showArtistSheet = true
-                                                }
+                                    Text(
+                                        text = playlist.artists,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        modifier = Modifier.clickable {
+                                            if (playlistArtistList.size == 1) {
+                                                navController.navigate(artistRoute(playlistArtistList[0]))
+                                            } else if (playlistArtistList.size > 1) {
+                                                showArtistSheet = true
                                             }
-                                        )
-                                    }
+                                        }
+                                    )
                                 }
                             }
+                            Spacer(modifier = Modifier.height(7.dp))
+                            Text(
+                                modifier = Modifier.padding(horizontal = 20.dp),
+                                text = "${songs.size} canciones" +
+                                    if (playlist.time.isNotBlank()) " • ${playlist.time}" else "",
+                                color = Color(0xFFB3B3B3),
+                                fontSize = 12.sp,
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
 
                             Row(
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -570,20 +612,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                                     },
                                                 contentDescription = "Shuffle play",
                                             )
-                                            if (playlistId.startsWith("local_pl_")) {
-                                                Spacer(modifier = Modifier.width(18.dp))
-                                                Icon(
-                                                    imageVector = Icons.Default.Delete,
-                                                    contentDescription = "Delete Playlist",
-                                                    tint = Color.White,
-                                                    modifier = Modifier
-                                                        .size(24.dp)
-                                                        .clickable(
-                                                            interactionSource = remember { MutableInteractionSource() },
-                                                            indication = null,
-                                                        ) { showDeleteDialog = true }
-                                                )
-                                            }
+
                                         }
                                     }
                                 }
@@ -597,7 +626,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                         modifier = Modifier
                                             .size(52.dp)
                                             .clip(RoundedCornerShape(100.dp))
-                                            .background(Color.White)
+                                            .background(Color(0xFF1ED760))
                                             .clickable(
                                                 interactionSource = remember { MutableInteractionSource() },
                                                 indication = null
@@ -634,49 +663,48 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                         }
                     }
 
-                    // ── Search bar for playlist ──
-                    item {
-                        AppSearchBar(
-                            query = searchQuery,
-                            onQueryChange = { searchQuery = it },
-                            modifier = Modifier.padding(20.dp, 8.dp),
-                            placeholder = "Search in playlist",
-                        )
                     }
 
-                    // ── Sort action ──
-                    item {
-                        if (songs.isNotEmpty()) {
+                    if (playlistId.startsWith("local_pl_")) {
+                        item(key = "local_playlist_actions") {
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(20.dp, 0.dp, 20.dp, 8.dp),
-                                horizontalArrangement = Arrangement.Start
+                                modifier = Modifier.fillMaxWidth()
+                                    .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(50))
-                                        .background(Color(0xFF2A2A30))
-                                        .clickable { showSortSheet = true }
-                                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                                    modifier = Modifier.clip(RoundedCornerShape(24.dp))
+                                        .background(Color(0xFF292929))
+                                        .clickable { showRenameDialog = true }
+                                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = currentSort.getDescriptiveLabel(isDescending),
-                                        color = Color.White,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Icon(
-                                        imageVector = Icons.Default.KeyboardArrowDown,
-                                        contentDescription = "Sort Options",
-                                        tint = Color.White,
-                                        modifier = Modifier
-                                            .size(16.dp)
-                                            .padding(start = 4.dp)
-                                    )
+                                    Icon(Icons.Default.Edit, null, tint = Color.White, modifier = Modifier.size(17.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Editar", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                                Row(
+                                    modifier = Modifier.clip(RoundedCornerShape(24.dp))
+                                        .background(Color(0xFF292929))
+                                        .clickable { showSortSheet = true }
+                                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Menu, null, tint = Color.White, modifier = Modifier.size(17.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Ordenar", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                                 }
                             }
+                        }
+                    }
+
+                    item(key = "playlist_sort") {
+                        // Local playlists already have a visible Spotify-style 'Ordenar' pill.
+                        if (songs.isNotEmpty() && !playlistId.startsWith("local_pl_")) {
+                            CollectionSortRow(
+                                label = collectionSortLabel(currentSort.name, isDescending),
+                                onClick = { showSortSheet = true }
+                            )
                         }
                     }
 
@@ -734,7 +762,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                     contentScale = ContentScale.Crop,
                                     contentDescription = ""
                                 )
-                                Column(modifier = Modifier.padding(start = 12.dp).width(280.dp)) {
+                                Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         if (song.explicit) {
                                             com.music.spotui.ui.components.ExplicitBadge()
@@ -773,9 +801,18 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                             color = Color.Gray,
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Medium,
-                                            maxLines = 1
+                                            maxLines = 1,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                         )
                                     }
+                                }
+                                androidx.compose.material3.IconButton(
+                                    onClick = { menuSong = song },
+                                    modifier = Modifier.size(40.dp)
+                                ) {
+                                    Icon(Icons.Default.MoreVert,
+                                        contentDescription = "Opciones de ${song.title}",
+                                        tint = Color(0xFFB3B3B3))
                                 }
                             }
                         }
@@ -789,77 +826,79 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                 )
             }
         }
-        if (showSortSheet) {
+        if (showPlaylistActions) {
             ModalBottomSheet(
-                onDismissRequest = { showSortSheet = false },
-                containerColor = Color(0xFF1A1A1A)
+                onDismissRequest = { showPlaylistActions = false },
+                containerColor = Color(0xFF202020)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                ) {
-                    Text(
-                        text = "Sort by",
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(16.dp, 12.dp, 16.dp, 12.dp)
-                    )
-                    HorizontalDivider(color = Color(0xFF2A2A2A))
-                    Spacer(modifier = Modifier.height(4.dp))
-                    PlaylistSortOption.entries.forEach { option ->
-                        val isSelected = option == currentSort
-                        val icon = when (option) {
-                            PlaylistSortOption.DATE -> Icons.Default.DateRange
-                            PlaylistSortOption.TITLE -> Icons.AutoMirrored.Filled.List
-                            PlaylistSortOption.ARTIST -> Icons.Default.Person
-                            PlaylistSortOption.ALBUM -> Icons.Default.Menu
-                        }
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    val nextDesc = if (currentSort == option) {
-                                        !isDescending
-                                    } else {
-                                        option == PlaylistSortOption.DATE
-                                    }
-                                    currentSort = option
-                                    isDescending = nextDesc
-                                    setPlaylistSort(context, playlistId, option, nextDesc)
-                                    showSortSheet = false
-                                }
-                                .padding(16.dp, 14.dp),
+                Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding()) {
+                    Text("Opciones de la lista", color = Color.White,
+                        fontWeight = FontWeight.Bold, fontSize = 20.sp,
+                        modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 18.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            showPlaylistActions = false
+                            showSortSheet = true
+                        }.padding(horizontal = 24.dp, vertical = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Menu, contentDescription = null, tint = Color.White)
+                        Spacer(Modifier.width(20.dp))
+                        Text("Ordenar canciones", color = Color.White, fontSize = 16.sp)
+                    }
+                    if (filteredSongs.isNotEmpty()) {
+                        Row(modifier = Modifier.fillMaxWidth().clickable {
+                            showPlaylistActions = false
+                            playlistViewModel.addAllToQueue(filteredSongs)
+                        }.padding(horizontal = 24.dp, vertical = 16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = icon,
-                                contentDescription = null,
-                                tint = if (isSelected) Color(AppPalette.toArgb()) else Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
-                            Spacer(modifier = Modifier.width(18.dp))
-                            Text(
-                                text = if (isSelected) option.getDescriptiveLabel(isDescending) else option.getDescriptiveLabel(option == PlaylistSortOption.DATE),
-                                color = if (isSelected) Color(AppPalette.toArgb()) else Color.White,
-                                fontSize = 15.sp,
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = if (isDescending) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
-                                    contentDescription = null,
-                                    tint = Color(AppPalette.toArgb()),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color.White)
+                            Spacer(Modifier.width(20.dp))
+                            Text("Añadir canciones a la cola", color = Color.White, fontSize = 16.sp)
                         }
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
+                    if (playlistId.startsWith("local_pl_")) {
+                        Row(modifier = Modifier.fillMaxWidth().clickable {
+                            showPlaylistActions = false
+                            showRenameDialog = true
+                        }.padding(horizontal = 24.dp, vertical = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White)
+                            Spacer(Modifier.width(20.dp))
+                            Text("Cambiar nombre", color = Color.White, fontSize = 16.sp)
+                        }
+                        Row(modifier = Modifier.fillMaxWidth().clickable {
+                            showPlaylistActions = false
+                            showDeleteDialog = true
+                        }.padding(horizontal = 24.dp, vertical = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFFF7070))
+                            Spacer(Modifier.width(20.dp))
+                            Text("Eliminar lista", color = Color(0xFFFF7070), fontSize = 16.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(18.dp))
                 }
             }
+        }
+        if (showSortSheet) {
+            CollectionSortSheet(
+                selected = currentSort.name,
+                descending = isDescending,
+                onDismiss = { showSortSheet = false },
+                onSelected = { optionName ->
+                    val selectedOption = PlaylistSortOption.valueOf(optionName)
+                    val nextDescending = if (currentSort == selectedOption) !isDescending
+                        else selectedOption.name == "DATE"
+                    currentSort = selectedOption
+                    isDescending = nextDescending
+                    setPlaylistSort(context, playlistId, selectedOption, nextDescending)
+                    showSortSheet = false
+                }
+            )
         }
     }
 }

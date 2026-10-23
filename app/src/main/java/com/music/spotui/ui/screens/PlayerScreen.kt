@@ -147,10 +147,16 @@ private val artistIdCache = java.util.concurrent.ConcurrentHashMap<String, Strin
 
 @OptIn(
     ExperimentalGlideComposeApi::class,
-    androidx.compose.foundation.ExperimentalFoundationApi::class
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+    ExperimentalMaterial3Api::class
 )
 @Composable
-fun PlayerScreen(navController: NavController) {
+fun PlayerScreen(
+    navController: NavController,
+    embedded: Boolean = false,
+    onCollapse: () -> Unit = { navController.navigateUp() },
+    playerViewModel: PlayerViewModel = hiltViewModel()
+) {
     val density = LocalDensity.current
     val screenHeight = with(density) {
         val dpHeight = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
@@ -161,7 +167,7 @@ fun PlayerScreen(navController: NavController) {
     // offsetY represents the current translation offset of the player screen.
     // It starts at screenHeight (so the screen initially renders fully off-screen)
     // and animates up to 0f.
-    var offsetY by remember { mutableFloatStateOf(screenHeight) }
+    var offsetY by remember(embedded) { mutableFloatStateOf(if (embedded) 0f else screenHeight) }
     val animatable = remember { Animatable(screenHeight) }
 
     var animationJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
@@ -200,9 +206,13 @@ fun PlayerScreen(navController: NavController) {
 
     // ── Safety net: if offsetY ever reaches the bottom after the player has
     //    opened, dismiss regardless of how it got there. ──
-    LaunchedEffect(offsetY) {
-        if (hasAppeared && offsetY >= screenHeight - 1f) {
-            navController.navigateUp()
+    LaunchedEffect(embedded, screenHeight) {
+        // Observe the animation boundary without restarting a coroutine on every
+        // 60-Hz offset update (which caused avoidable UI-thread churn).
+        snapshotFlow {
+            !embedded && hasAppeared && offsetY >= screenHeight - 1f
+        }.collect { shouldClose ->
+            if (shouldClose) navController.navigateUp()
         }
     }
 
@@ -213,7 +223,7 @@ fun PlayerScreen(navController: NavController) {
     // LayoutParams onto the dialog window and resize the dialog's parent view
     // to fill the screen — see https://stackoverflow.com/a/75768025
     val view = androidx.compose.ui.platform.LocalView.current
-    androidx.compose.runtime.SideEffect {
+    if (!embedded) androidx.compose.runtime.SideEffect {
         // Walk up the view tree to find the dialog window.
         var dialogWindow: android.view.Window? = null
         var v: android.view.View? = view
@@ -273,19 +283,24 @@ fun PlayerScreen(navController: NavController) {
 
     // Animate the player sliding up when first opened
     LaunchedEffect(Unit) {
-        // Start closer to final position for a snappier entrance feel
-        offsetY = screenHeight * 0.85f
-        slideTo(0f)
+        if (embedded) {
+            offsetY = 0f
+            animatable.snapTo(0f)
+        } else {
+            // Full-screen dialog slides in; embedded tablet panel stays fixed.
+            offsetY = screenHeight * 0.85f
+            slideTo(0f)
+        }
         hasAppeared = true
     }
 
     // Function to handle sliding down the player and popping the backstack
     val dismissPlayer: () -> Unit = {
-        launchAnimation(screenHeight)
+        if (embedded) onCollapse() else launchAnimation(screenHeight)
     }
 
     // Intercept hardware system back press to slide player down smoothly
-    BackHandler {
+    BackHandler(enabled = true) {
         dismissPlayer()
     }
 
@@ -374,7 +389,6 @@ fun PlayerScreen(navController: NavController) {
         }
     }
 
-    val playerViewModel: PlayerViewModel = hiltViewModel()
     val songTitle by playerViewModel.currentSongTitle
     val songSinger by playerViewModel.currentSongSinger
     val songCoverUri by playerViewModel.currentSongCoverUri
@@ -460,8 +474,17 @@ fun PlayerScreen(navController: NavController) {
         mutableStateOf(Color(AppBackground.toArgb()))
     }
     var showDevicesSheet by remember { mutableStateOf(false) }
-    Palette().extractSecondColorFromCoverUrl(context = context, songCoverUri) { color ->
-        dominentColor = color
+    // Run artwork color extraction only when the cover changes, not after every
+    // progress tick / recomposition (especially important in the tablet pane).
+    LaunchedEffect(songCoverUri) {
+        if (songCoverUri.isNotBlank()) {
+            val targetCover = songCoverUri
+            Palette().extractSecondColorFromCoverUrl(context, targetCover) { color ->
+                if (playerViewModel.currentSongCoverUri.value == targetCover) {
+                    dominentColor = color
+                }
+            }
+        }
     }
 
     val songsResponse by playerViewModel.songs.collectAsState()
@@ -578,17 +601,63 @@ fun PlayerScreen(navController: NavController) {
     }
 
 
-    val canvasUrl = playerViewModel.canvasUrl.value
+    val currentEpisode = queueSongs.firstOrNull { it.id == songId }
+        ?.takeIf { it.url.startsWith("yt_ep:") }
+    val podcastVideoId = remember(currentEpisode?.url) {
+        currentEpisode?.url?.removePrefix("yt_ep:")?.substringBefore('|')
+            ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
+    }
+    // Video mode is owned by the playback session, never by this composition.
+    // Minimize, tablet -> full-screen, or back navigation must not reset it.
+    val showPodcastVideo = PodcastVideoSession.isActive(podcastVideoId)
+    val togglePodcastVideo: () -> Unit = {
+        podcastVideoId?.let { id ->
+            PodcastVideoSession.setEnabled(context, id, !PodcastVideoSession.isActive(id))
+        }
+    }
+    val podcastChapters = remember(currentEpisode?.description) {
+        parsePodcastChapters(currentEpisode?.description.orEmpty())
+    }
+    var showPodcastChapters by remember(podcastVideoId) { mutableStateOf(false) }
+    if (showPodcastChapters && podcastChapters.isNotEmpty()) {
+        ModalBottomSheet(
+            onDismissRequest = { showPodcastChapters = false },
+            containerColor = Color(0xFF202020)
+        ) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
+                Text("Capítulos", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp)
+                ) {
+                    items(podcastChapters.size) { index ->
+                        val chapter = podcastChapters[index]
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                SongPlayer.seekTo(chapter.timeMs)
+                                showPodcastChapters = false
+                            }.padding(vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(chapter.timeFormatted, color = Color(0xFF1ED760),
+                                fontSize = 13.sp, modifier = Modifier.width(76.dp))
+                            Text(chapter.title, color = Color.White, fontSize = 14.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    val canvasUrl = playerViewModel.canvasUrl.value.takeIf { currentEpisode == null }
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .nestedScroll(nestedScrollConnection)
-            .pointerInput(Unit) {
+            .then(if (embedded) Modifier else Modifier.nestedScroll(nestedScrollConnection))
+            .pointerInput(embedded) {
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
                         val anyPressed = event.changes.any { it.pressed }
-                        if (anyPressed) {
+                        if (anyPressed && !embedded) {
                             if (animationJob != null) {
                                 cancelRunningAnimation()
                             }
@@ -597,15 +666,16 @@ fun PlayerScreen(navController: NavController) {
                 }
             }
             .graphicsLayer {
-                translationY = offsetY
-                alpha = (1f - (offsetY / screenHeight)).coerceIn(0f, 1f)
+                translationY = if (embedded) 0f else offsetY
+                alpha = if (embedded) 1f else (1f - (offsetY / screenHeight)).coerceIn(0f, 1f)
             }
             .background(
                 Brush.verticalGradient(
                     colors = listOf(dominentColor, Color.Black),
                     startY = 100f
                 )
-            )
+            ),
+        contentAlignment = Alignment.TopCenter
     ) {
         if (canvasUrl != null) {
             // Spotify Canvas: the looping video fills the whole now-playing screen
@@ -632,10 +702,14 @@ fun PlayerScreen(navController: NavController) {
             )
         }
         val configuration = androidx.compose.ui.platform.LocalConfiguration.current
-        val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val isLandscape = !embedded && configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
         androidx.compose.foundation.lazy.LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            // Limit control spread on wide tablets while leaving immersive
+            // artwork / video filling the entire background.
+            modifier = Modifier
+                .widthIn(max = 1180.dp)
+                .fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             item {
@@ -657,13 +731,23 @@ fun PlayerScreen(navController: NavController) {
                                 .fillMaxHeight()
                                 .padding(12.dp)
                         ) {
-                            if (queueSongs.isEmpty()) {
+                            if (showPodcastVideo && podcastVideoId != null) {
+                                PodcastVideoFrame(
+                                    videoId = podcastVideoId,
+                                    modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                                        .clip(RoundedCornerShape(10.dp)),
+                                    onUseAudio = { PodcastVideoSession.stop() },
+                                    surfacePriority = if (embedded) 1 else 2
+                                )
+                            } else if (queueSongs.isEmpty()) {
                                 GlideImage(
                                     modifier = Modifier
                                         .aspectRatio(1f)
                                         .clip(RoundedCornerShape(10.dp))
                                         .alpha(1f),
-                                    model = songCoverUri,
+                                    model = queueSongs.firstOrNull { it.id == songId }?.let {
+                                        com.music.spotui.ui.notification.PodcastCover.preferredUri(context, it)
+                                    } ?: songCoverUri,
                                     contentScale = ContentScale.Crop,
                                     contentDescription = ""
                                 )
@@ -677,7 +761,9 @@ fun PlayerScreen(navController: NavController) {
                                             .fillMaxSize()
                                             .clip(RoundedCornerShape(10.dp))
                                             .alpha(1f),
-                                        model = queueSongs.getOrNull(page)?.coverUri ?: songCoverUri,
+                                        model = queueSongs.getOrNull(page)?.let {
+                                            com.music.spotui.ui.notification.PodcastCover.preferredUri(context, it)
+                                        } ?: songCoverUri,
                                         contentScale = ContentScale.Crop,
                                         contentDescription = ""
                                     )
@@ -698,7 +784,12 @@ fun PlayerScreen(navController: NavController) {
                                 navController = navController,
                                 onMenuClick = { showMenu = true },
                                 contextName = playerViewModel.currentSongAlbum.value,
-                                onBackClick = { dismissPlayer() }
+                                onBackClick = { dismissPlayer() },
+                                onFullscreenClick = if (embedded) { { navController.navigate(com.music.spotui.ui.navigation.Routes.Player.route) } } else null,
+                                podcastVideoEnabled = showPodcastVideo,
+                                onPodcastVideoToggle = if (podcastVideoId != null) {
+                                    togglePodcastVideo
+                                } else null,
                             )
 
                             PlayerInfo(
@@ -808,15 +899,16 @@ fun PlayerScreen(navController: NavController) {
                         modifier = Modifier
                             .fillParentMaxHeight()
                             .fillMaxWidth()
-                            .navigationBarsPadding(),
+                            .then(if (embedded) Modifier else Modifier.navigationBarsPadding()),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Spacer(modifier = Modifier.statusBarsPadding())
+                        if (!embedded) Spacer(modifier = Modifier.statusBarsPadding())
                         PlayerTopBar(
                             navController = navController,
                             onMenuClick = { showMenu = true },
                             contextName = playerViewModel.currentSongAlbum.value,
-                            onBackClick = { dismissPlayer() }
+                            onBackClick = { dismissPlayer() },
+                            onFullscreenClick = if (embedded) { { navController.navigate(com.music.spotui.ui.navigation.Routes.Player.route) } } else null,
                         )
                         Box(
                             contentAlignment = Alignment.Center,
@@ -824,7 +916,15 @@ fun PlayerScreen(navController: NavController) {
                                 .weight(1f)
                                 .fillMaxWidth()
                         ) {
-                            if (queueSongs.isEmpty()) {
+                            if (showPodcastVideo && podcastVideoId != null) {
+                                PodcastVideoFrame(
+                                    videoId = podcastVideoId,
+                                    modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                                        .clip(RoundedCornerShape(10.dp)),
+                                    onUseAudio = { PodcastVideoSession.stop() },
+                                    surfacePriority = if (embedded) 1 else 2
+                                )
+                            } else if (queueSongs.isEmpty()) {
                                 GlideImage(
                                     modifier = Modifier
                                         .sizeIn(maxWidth = 385.dp, maxHeight = 385.dp)
@@ -832,7 +932,9 @@ fun PlayerScreen(navController: NavController) {
                                         .padding(20.dp)
                                         .clip(RoundedCornerShape(10.dp))
                                         .alpha(if (canvasUrl != null) 0f else 1f),
-                                    model = songCoverUri,
+                                    model = queueSongs.firstOrNull { it.id == songId }?.let {
+                                        com.music.spotui.ui.notification.PodcastCover.preferredUri(context, it)
+                                    } ?: songCoverUri,
                                     contentScale = ContentScale.Crop,
                                     contentDescription = ""
                                 )
@@ -849,7 +951,9 @@ fun PlayerScreen(navController: NavController) {
                                             .padding(20.dp)
                                             .clip(RoundedCornerShape(10.dp))
                                             .alpha(if (canvasUrl != null) 0f else 1f),
-                                        model = queueSongs.getOrNull(page)?.coverUri ?: songCoverUri,
+                                        model = queueSongs.getOrNull(page)?.let {
+                                            com.music.spotui.ui.notification.PodcastCover.preferredUri(context, it)
+                                        } ?: songCoverUri,
                                         contentScale = ContentScale.Crop,
                                         contentDescription = ""
                                     )
@@ -857,6 +961,47 @@ fun PlayerScreen(navController: NavController) {
                             }
                         }
 
+                        if (podcastVideoId != null) {
+                            // One aligned control group for audio/video and chapters, matching
+                            // the same podcast actions on phone and tablet.
+                            Row(
+                                modifier = Modifier.fillMaxWidth()
+                                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                androidx.compose.material3.Surface(
+                                    onClick = togglePodcastVideo,
+                                    color = Color.Black.copy(alpha = 0.42f),
+                                    shape = RoundedCornerShape(24.dp)
+                                ) {
+                                    Text(
+                                        text = if (showPodcastVideo) "Cambiar a audio" else "Cambiar a vídeo",
+                                        color = Color.White, fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                                    )
+                                }
+                                if (podcastChapters.isNotEmpty()) {
+                                    androidx.compose.material3.Surface(
+                                        onClick = { showPodcastChapters = true },
+                                        color = Color.Black.copy(alpha = 0.42f),
+                                        shape = RoundedCornerShape(24.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.AutoMirrored.Filled.List, contentDescription = null,
+                                                tint = Color.White, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Capítulos", color = Color.White, fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1013,6 +1158,9 @@ fun PlayerTopBar(
     onMenuClick: () -> Unit,
     contextName: String = "",
     onBackClick: () -> Unit,
+    onFullscreenClick: (() -> Unit)? = null,
+    podcastVideoEnabled: Boolean = false,
+    onPodcastVideoToggle: (() -> Unit)? = null,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -1020,18 +1168,30 @@ fun PlayerTopBar(
             .fillMaxWidth()
             .padding(16.dp)
     ) {
-        Icon(
-            modifier = Modifier
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) {
-                    onBackClick()
-                },
-            painter = painterResource(id = R.drawable.ic_down),
-            tint = Color.White,
-            contentDescription = ""
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (onFullscreenClick != null) {
+                androidx.compose.material3.IconButton(onClick = onFullscreenClick) {
+                    // The launcher icon is an adaptive-icon XML drawable on Android 8+.
+                    // painterResource cannot decode adaptive icons; let Android render it.
+                    androidx.compose.ui.viewinterop.AndroidView(
+                        factory = { iconContext ->
+                            android.widget.ImageView(iconContext).apply {
+                                setImageDrawable(
+                                    iconContext.applicationInfo.loadIcon(iconContext.packageManager)
+                                )
+                                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                                contentDescription = "Abrir reproductor a pantalla completa"
+                            }
+                        },
+                        modifier = Modifier.size(25.dp)
+                    )
+                }
+            }
+            androidx.compose.material3.IconButton(onClick = onBackClick) {
+                Icon(painter = painterResource(id = R.drawable.ic_down),
+                    tint = Color.White, contentDescription = "Minimizar reproductor")
+            }
+        }
 
         // Spotify shows the source context here (album/playlist), not a generic label.
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1048,10 +1208,24 @@ fun PlayerTopBar(
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 200.dp),
+                modifier = Modifier.widthIn(max = if (onPodcastVideoToggle != null) 135.dp else 200.dp),
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
+            if (onPodcastVideoToggle != null) {
+                Text(
+                    text = if (podcastVideoEnabled) "Audio" else "Vídeo",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color.Black.copy(alpha = 0.35f))
+                        .clickable(onClick = onPodcastVideoToggle)
+                        .padding(horizontal = 11.dp, vertical = 7.dp),
+                )
+                Spacer(Modifier.width(7.dp))
+            }
             Icon(
                 imageVector = Icons.Default.MoreVert,
                 tint = Color.White,
@@ -1481,6 +1655,8 @@ fun PlayerFull(
 ) {
 
 
+    val podcastEpisode = queueSongs.firstOrNull { it.id == playerViewModel.currentSongId.value }
+        ?.url?.startsWith("yt_ep:") == true
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1488,6 +1664,16 @@ fun PlayerFull(
             .fillMaxWidth()
             .padding(20.dp)
     ) {
+        if (podcastEpisode) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_player_back),
+                tint = Color.White,
+                contentDescription = "Episodio anterior",
+                modifier = Modifier.size(25.dp).clickable {
+                    playerViewModel.playPreviousSong(queueSongs, context)
+                }
+            )
+        } else {
         Icon(
             modifier = Modifier
                 .size(25.dp)
@@ -1510,6 +1696,18 @@ fun PlayerFull(
             painter = painterResource(id = R.drawable.ic_player_shuffle),
             contentDescription = ""
         )
+        }
+        if (podcastEpisode) {
+            androidx.compose.material3.Text(
+                text = "↶15",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                modifier = Modifier.clickable {
+                    SongPlayer.seekTo((SongPlayer.getCurrentPosition() - 15_000L).coerceAtLeast(0L))
+                },
+            )
+        } else {
         Icon(
             modifier = Modifier
                 .size(35.dp)
@@ -1527,6 +1725,7 @@ fun PlayerFull(
             painter = painterResource(id = R.drawable.ic_player_back),
             contentDescription = ""
         )
+        }
         androidx.compose.foundation.layout.Box(
             modifier = Modifier
                 // requiredSize forces an exact 64×64 square even if the parent Column
@@ -1583,6 +1782,19 @@ fun PlayerFull(
             }
         }
 
+        if (podcastEpisode) {
+            androidx.compose.material3.Text(
+                text = "15↷",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                modifier = Modifier.clickable {
+                    val duration = SongPlayer.getDuration()
+                    val target = SongPlayer.getCurrentPosition() + 15_000L
+                    SongPlayer.seekTo(if (duration > 0L) target.coerceAtMost(duration) else target)
+                },
+            )
+        } else {
         Icon(
             modifier = Modifier
                 .size(35.dp)
@@ -1599,6 +1811,17 @@ fun PlayerFull(
             painter = painterResource(id = R.drawable.ic_player_skip),
             contentDescription = ""
         )
+        }
+        if (podcastEpisode) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_player_skip),
+                tint = Color.White,
+                contentDescription = "Episodio siguiente",
+                modifier = Modifier.size(25.dp).clickable {
+                    playerViewModel.playNextSongs(queueSongs, context)
+                }
+            )
+        } else {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
@@ -1650,7 +1873,8 @@ modifier = Modifier
             } else {
                 Spacer(modifier = Modifier.height(6.dp))
             }
-        }
+        }        }
+
     }
 }
 

@@ -15,11 +15,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -33,7 +36,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Person
-import com.music.spotui.ui.components.AppSearchBar
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -61,6 +63,9 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.TextStyle
@@ -80,6 +85,11 @@ import com.music.spotui.data.preferences.isLikedSongsSortDescending
 import com.music.spotui.data.preferences.setLikedSongsSortOption
 import com.music.spotui.di.SongPlayer
 import com.music.spotui.ui.components.Loader
+import com.music.spotui.ui.components.CollectionPullSearch
+import com.music.spotui.ui.components.CollectionSortRow
+import com.music.spotui.ui.components.CollectionSortSheet
+import com.music.spotui.ui.components.collectionSortLabel
+import com.music.spotui.ui.components.rememberCollectionSearchState
 import com.music.spotui.ui.components.Snackbar
 import com.music.spotui.ui.components.SwipeToPlayNextWrapper
 import com.music.spotui.ui.theme.AppBackground
@@ -155,25 +165,38 @@ fun LikedSongsScreen(navController: NavController) {
     val likedColor = Color(0xFF5038A0)
 
     Surface(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(AppBackground.toArgb()))
+        color = Color.Transparent,
+        modifier = Modifier.fillMaxSize().background(Color(AppBackground.toArgb()))
     ) {
         if (songsResp is Response.Loading) {
             Loader()
             return@Surface
         }
 
+        val likedBackground = remember(likedColor) {
+            Brush.verticalGradient(
+                colors = listOf(likedColor, Color(AppBackground.toArgb()), Color(AppBackground.toArgb())),
+                startY = 0f, endY = 2100f
+            )
+        }
         Scaffold(
+            modifier = Modifier.fillMaxSize().background(likedBackground),
+            containerColor = Color.Transparent,
             topBar = {
                 CenterAlignedTopAppBar(
-                    modifier = Modifier.padding(16.dp, 0.dp),
+                    modifier = Modifier
+                        .padding(horizontal = 12.dp),
                     navigationIcon = {
                         Icon(
-                            modifier = Modifier.clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) { navController.navigateUp() },
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(Color.Black.copy(alpha = 0.35f))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) { navController.navigateUp() }
+                                .padding(9.dp),
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "",
                             tint = Color.White
@@ -186,26 +209,45 @@ fun LikedSongsScreen(navController: NavController) {
                     title = { Text(text = "") }
                 )
             }
-        ) {
+        ) { innerPadding ->
             val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-            Box(modifier = Modifier.fillMaxSize()) {
+            val searchReveal = rememberCollectionSearchState(listState, "liked_songs")
+            val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+            val keyboardController = LocalSoftwareKeyboardController.current
+            val focusManager = LocalFocusManager.current
+            LaunchedEffect(keyboardVisible) {
+                if (keyboardVisible) listState.scrollToItem(0)
+            }
+            // Keep the search field in place; collapse only the expensive artwork/
+            // metadata header while the IME is visible, leaving room for results.
+            searchReveal.onDismissByScroll = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
+                searchQuery = ""
+            }
+            Box(modifier = Modifier.fillMaxSize()
+                .padding(top = innerPadding.calculateTopPadding())) {
                 LazyColumn(
                     state = listState,
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 138.dp),
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color(AppBackground.toArgb()))
+                        .nestedScroll(searchReveal.nestedScrollConnection)
                 ) {
-                    item {
+                    item(key = "liked_search_reveal") {
+                        CollectionPullSearch(
+                            state = searchReveal,
+                            query = searchQuery,
+                            onQueryChange = { searchQuery = it },
+                            placeholder = "Buscar en canciones que te gustan"
+                        )
+                    }
+                    if (!keyboardVisible) {
+                    item(key = "liked_header") {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(440.dp)
-                                .background(
-                                    brush = Brush.verticalGradient(
-                                        colors = listOf(likedColor, Color(AppBackground.toArgb())),
-                                        startY = -100f,
-                                    ),
-                                ),
+                                .height(440.dp),
                             verticalArrangement = Arrangement.Center,
                         ) {
                             Spacer(modifier = Modifier.padding(25.dp))
@@ -236,14 +278,14 @@ fun LikedSongsScreen(navController: NavController) {
                             Spacer(modifier = Modifier.padding(5.dp))
                             Text(
                                 modifier = Modifier.padding(20.dp, 5.dp, 0.dp, 0.dp),
-                                text = "Liked Songs",
+                                text = "Canciones que te gustan",
                                 color = Color.White,
                                 fontSize = 28.sp,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
                                 modifier = Modifier.padding(20.dp, 4.dp, 20.dp, 0.dp),
-                                text = "${songs.size} songs",
+                                text = "${songs.size} canciones",
                                 color = Color.Gray,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium
@@ -346,7 +388,7 @@ fun LikedSongsScreen(navController: NavController) {
                                         modifier = Modifier
                                             .size(52.dp)
                                             .clip(RoundedCornerShape(100.dp))
-                                            .background(Color.White)
+                                            .background(Color(0xFF1ED760))
                                             .clickable(
                                                 interactionSource = remember { MutableInteractionSource() },
                                                 indication = null
@@ -383,49 +425,14 @@ fun LikedSongsScreen(navController: NavController) {
                         }
                     }
 
-                    if (songs.isNotEmpty()) {
-                        // Search Bar
-                        item {
-                            AppSearchBar(
-                                query = searchQuery,
-                                onQueryChange = { searchQuery = it },
-                                modifier = Modifier.padding(20.dp, 8.dp),
-                                placeholder = "Search in liked songs",
-                            )
-                        }
+                    }
 
-                        // Sort action button
-                        item {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(20.dp, 0.dp, 20.dp, 8.dp),
-                                horizontalArrangement = Arrangement.Start
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(50))
-                                        .background(Color(0xFF2A2A30))
-                                        .clickable { showSortSheet = true }
-                                        .padding(horizontal = 14.dp, vertical = 8.dp)
-                                ) {
-                                    Text(
-                                        text = currentSort.getDescriptiveLabel(isDescending),
-                                        color = Color.White,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Icon(
-                                        imageVector = Icons.Default.KeyboardArrowDown,
-                                        contentDescription = "Sort Options",
-                                        tint = Color.White,
-                                        modifier = Modifier
-                                            .size(16.dp)
-                                            .padding(start = 4.dp)
-                                    )
-                                }
-                            }
+                    item(key = "liked_sort") {
+                        if (songs.isNotEmpty()) {
+                            CollectionSortRow(
+                                label = collectionSortLabel(currentSort.name, isDescending),
+                                onClick = { showSortSheet = true }
+                            )
                         }
                     }
 
@@ -530,77 +537,22 @@ fun LikedSongsScreen(navController: NavController) {
                     modifier = Modifier.align(Alignment.CenterEnd)
                 )
 
-                if (showSortSheet) {
-                    ModalBottomSheet(
-                        onDismissRequest = { showSortSheet = false },
-                        containerColor = Color(0xFF1A1A1A)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .navigationBarsPadding()
-                        ) {
-                            Text(
-                                text = "Sort by",
-                                color = Color.White,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(16.dp, 12.dp, 16.dp, 12.dp)
-                            )
-                            HorizontalDivider(color = Color(0xFF2A2A2A))
-                            Spacer(modifier = Modifier.height(4.dp))
-                            LikedSongsSortOption.entries.forEach { option ->
-                                val isSelected = option == currentSort
-                                val icon = when (option) {
-                                    LikedSongsSortOption.DATE -> Icons.Default.DateRange
-                                    LikedSongsSortOption.TITLE -> Icons.AutoMirrored.Filled.List
-                                    LikedSongsSortOption.ARTIST -> Icons.Default.Person
-                                    LikedSongsSortOption.ALBUM -> Icons.Default.Menu
-                                }
-
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            if (currentSort == option) {
-                                                isDescending = !isDescending
-                                            } else {
-                                                currentSort = option
-                                                isDescending = (option == LikedSongsSortOption.DATE)
-                                            }
-                                            setLikedSongsSortOption(context, currentSort, isDescending)
-                                            showSortSheet = false
-                                        }
-                                        .padding(16.dp, 14.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = icon,
-                                        contentDescription = null,
-                                        tint = if (isSelected) Color(AppPalette.toArgb()) else Color.White,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(18.dp))
-                                    Text(
-                                        text = if (isSelected) option.getDescriptiveLabel(isDescending) else option.getDescriptiveLabel(option == LikedSongsSortOption.DATE),
-                                        color = if (isSelected) Color(AppPalette.toArgb()) else Color.White,
-                                        fontSize = 15.sp,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    if (isSelected) {
-                                        Icon(
-                                            imageVector = if (isDescending) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
-                                            contentDescription = null,
-                                            tint = Color(AppPalette.toArgb()),
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(12.dp))
-                        }
-                    }
+if (showSortSheet) {
+            CollectionSortSheet(
+                selected = currentSort.name,
+                descending = isDescending,
+                onDismiss = { showSortSheet = false },
+                onSelected = { optionName ->
+                    val selectedOption = LikedSongsSortOption.valueOf(optionName)
+                    val nextDescending = if (currentSort == selectedOption) !isDescending
+                        else selectedOption.name == "DATE"
+                    currentSort = selectedOption
+                    isDescending = nextDescending
+                    setLikedSongsSortOption(context, selectedOption, nextDescending)
+                    showSortSheet = false
                 }
+            )
+        }
             }
         }
     }

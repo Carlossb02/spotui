@@ -71,6 +71,8 @@ import com.music.spotui.data.preferences.isSongLiked
 import com.music.spotui.data.preferences.removeLikedSongId
 import com.music.spotui.di.Palette
 import com.music.spotui.di.SongPlayer
+import com.music.spotui.ui.screens.PodcastVideoFrame
+import com.music.spotui.ui.screens.PodcastVideoSession
 import com.music.spotui.ui.navigation.Routes
 import com.music.spotui.ui.theme.AppBackground
 import com.music.spotui.ui.theme.GridBackground
@@ -122,7 +124,7 @@ fun ExplicitBadge(
 
 @OptIn(ExperimentalGlideComposeApi::class, ExperimentalFoundationApi::class)
 @Composable
-fun MiniPlayer(navController: NavHostController) {
+fun MiniPlayer(navController: NavHostController, onExpandPlayer: (() -> Unit)? = null) {
     val miniPlayerViewModel : PlayerViewModel = hiltViewModel()
     val songTitle by miniPlayerViewModel.currentSongTitle
     val songSinger by miniPlayerViewModel.currentSongSinger
@@ -149,28 +151,16 @@ fun MiniPlayer(navController: NavHostController) {
     }
 
     var songProgress by remember { mutableFloatStateOf(0f) }
-
-    songProgress = if (SongPlayer.getDuration() > 0) {
-        SongPlayer.getCurrentPosition().toFloat() / SongPlayer.getDuration().toFloat()
-    } else {
-        0f
-    }
-
-    val currentRoute = navController.currentBackStackEntry?.destination?.route
-
-
-
-    LaunchedEffect(key1  = songPlayingState) {
-            while (songPlayingState) {
-                songProgress = SongPlayer.getDuration().toFloat().let { dur ->
-                    if (dur > 0f) (SongPlayer.getCurrentPosition().toFloat() / dur).coerceIn(0f, 1f) else 0f
-                }
-                delay(300L) // update every .00 second
-
-                if (songProgress > 0f && songProgress >= 1f && currentRoute != Routes.Player.route) {
-                    navController.navigate(Routes.Player.route)
-                    miniPlayerViewModel.setPlaying(false)
-                }
+    // Poll the playback engine on a coroutine rather than writing Compose
+    // state during composition. This avoids redundant recompositions and
+    // keeps the mini-player responsive even when the song is paused.
+    LaunchedEffect(songId, songPlayingState) {
+        while (true) {
+            val duration = SongPlayer.getDuration().toFloat()
+            songProgress = if (duration > 0f) {
+                (SongPlayer.getCurrentPosition().toFloat() / duration).coerceIn(0f, 1f)
+            } else 0f
+            delay(if (songPlayingState) 600L else 1200L)
         }
     }
 
@@ -179,8 +169,10 @@ fun MiniPlayer(navController: NavHostController) {
     var darkVibrantColor by remember {
         mutableStateOf(Color(GridBackground.toArgb()))
     }
-    Palette().extractFirstColorFromImageUrl(context = context, songCoverUri){ color ->
-        darkVibrantColor = color
+    LaunchedEffect(songCoverUri) {
+        Palette().extractFirstColorFromImageUrl(context = context, songCoverUri) { color ->
+            darkVibrantColor = color
+        }
     }
 
     var isLiked by remember {
@@ -228,7 +220,7 @@ fun MiniPlayer(navController: NavHostController) {
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
                 ) {
-                    navController.navigate(Routes.Player.route)
+                    onExpandPlayer?.invoke() ?: navController.navigate(Routes.Player.route)
                 }
                 .pointerInput(Unit) {
                     var navigated = false
@@ -353,7 +345,7 @@ fun MiniPlayer(navController: NavHostController) {
                                 val velocityPxPerSec = if (dtMs > 5) dragAmount.y / dtMs * 1000f else 0f
                                 if (swipeOffsetY < -distThresholdY || velocityPxPerSec < -velThresholdY) {
                                     navigated = true
-                                    navController.navigate(Routes.Player.route)
+                                    onExpandPlayer?.invoke() ?: navController.navigate(Routes.Player.route)
                                 }
                             }
                         } else if (currentDirection == 1) {
@@ -375,18 +367,28 @@ fun MiniPlayer(navController: NavHostController) {
                         translationX = swipeOffsetX
                     }
             ) {
-                GlideImage(
-                    modifier = Modifier
-                        .padding(0.dp, 0.dp, 10.dp, 0.dp)
-                        .size(42.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                    ,
-                    model = songCoverUri,
-                    contentScale = ContentScale.Crop,
-                    failure = placeholder(R.drawable.placeholder),
-                    loading = placeholder(R.drawable.placeholder),
-                    contentDescription = ""
-                )
+                val podcastVideoId = currentTrack?.url?.takeIf { it.startsWith("yt_ep:") }
+                    ?.removePrefix("yt_ep:")?.substringBefore('|')
+                    ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
+                if (PodcastVideoSession.isActive(podcastVideoId)) {
+                    PodcastVideoFrame(
+                        videoId = podcastVideoId!!,
+                        compact = true,
+                        modifier = Modifier.padding(end = 10.dp).size(42.dp)
+                            .clip(RoundedCornerShape(6.dp)),
+                        onUseAudio = { PodcastVideoSession.stop() }
+                    )
+                } else {
+                    GlideImage(
+                        modifier = Modifier.padding(end = 10.dp).size(42.dp)
+                            .clip(RoundedCornerShape(6.dp)),
+                        model = songCoverUri,
+                        contentScale = ContentScale.Crop,
+                        failure = placeholder(R.drawable.placeholder),
+                        loading = placeholder(R.drawable.placeholder),
+                        contentDescription = ""
+                    )
+                }
                 Column(
                     modifier = Modifier
                         .widthIn(Dp.Unspecified, 200.dp)

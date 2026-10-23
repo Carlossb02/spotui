@@ -209,7 +209,11 @@ fun QueueContent(
                             modifier = Modifier.padding(16.dp, 18.dp, 16.dp, 6.dp)
                         )
                     }
-                    itemsIndexed(upcoming, key = { index, s -> "${s.id}_$index" }) { _, song ->
+                    // Use an occurrence identity independent of position. An index-based key
+                    // disposes the pointerInput coroutine on every swap, ending the drag.
+                    itemsIndexed(upcoming, key = { index, s ->
+                        "${s.id}:${upcoming.take(index).count { it.id == s.id }}"
+                    }) { _, song ->
                         val isDragging = draggingId == song.id
                         val dismissState = rememberSwipeToDismissBoxState(
                             confirmValueChange = { value ->
@@ -259,7 +263,8 @@ fun QueueContent(
                                     ) { change, dragAmount ->
                                         change.consume()
                                         dragOffset += dragAmount.y
-                                        // Crossed a full row height → swap with the neighbour.
+                                        // Keep the gesture alive when the row moves across
+                                        // several neighbours (keyed by identity, not position).
                                         val currentQueue = playerViewModel.queue.value
                                         val currentCurIdx = currentQueue.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
                                         val abs = currentQueue.indexOfFirst { it.id == song.id }
@@ -297,6 +302,7 @@ private fun QueueRow(
     onLongClick: () -> Unit = {},
     dragHandle: Modifier? = null,
 ) {
+    val context = LocalContext.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Start,
@@ -315,7 +321,7 @@ private fun QueueRow(
             modifier = Modifier
                 .size(48.dp)
                 .clip(RoundedCornerShape(4.dp)),
-            model = song.coverUri,
+            model = com.music.spotui.ui.notification.PodcastCover.preferredUri(context, song),
             contentScale = ContentScale.Crop,
             loading = placeholder(R.drawable.placeholder),
             failure = placeholder(R.drawable.placeholder),

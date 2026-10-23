@@ -3,7 +3,25 @@ package com.music.spotui
 import android.annotation.SuppressLint
 import android.os.Build
 import androidx.annotation.RequiresApi
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -17,6 +35,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.music.spotui.ui.navigation.MainBottomNavigation
+import com.music.spotui.ui.navigation.TabletNowPlayingPanel
 import com.music.spotui.ui.navigation.MyNavHost
 import com.music.spotui.ui.navigation.Routes
 
@@ -32,6 +51,26 @@ fun App() {
     val currentRoute = navBackStackEntry?.destination?.route
 
     val playerViewModel: com.music.spotui.ui.viewmodel.PlayerViewModel = hiltViewModel()
+    val currentSongId by playerViewModel.currentSongId
+    val currentQueue by playerViewModel.queue
+    val currentPodcastId = currentQueue.firstOrNull { it.id == currentSongId }
+        ?.url?.takeIf { it.startsWith("yt_ep:") }
+        ?.removePrefix("yt_ep:")?.substringBefore('|')
+        ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
+    val foregroundLifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(currentPodcastId) {
+        com.music.spotui.ui.screens.PodcastVideoSession.stopIfDifferent(currentPodcastId)
+    }
+    // One lightweight audio/video clock for the application, independent of any
+    // particular player layout. Does not write Compose state every frame.
+    LaunchedEffect(foregroundLifecycle) {
+        while (true) {
+            com.music.spotui.ui.screens.PodcastVideoSession.sync(
+                foregroundLifecycle.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+            )
+            kotlinx.coroutines.delay(600L)
+        }
+    }
     val playerState by playerViewModel.currentSongTitle
     var lastRoute by remember { mutableStateOf<String?>(null) }
     // Incremented each time the user re-taps the Search bottom-nav icon while
@@ -78,19 +117,72 @@ fun App() {
         }
     }
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        bottomBar = {
-            MainBottomNavigation(
-                navController = navController,
-                bottomBarState = bottomBarState,
-                bottomBarPlayerState,
-                onSearchReselected = { searchFocusTrigger++ }
-            )
+    var tabletPlayerExpanded by rememberSaveable { mutableStateOf(true) }
+    val isTabletDevice = androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp >= 600
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        // Spotify's 2026 adaptive tablet pattern: browse and playback side-by-side.
+        // A narrow portrait tablet keeps the familiar handset navigation instead
+        // of squeezing song rows into a permanent left rail.
+        val availableWidth = maxWidth
+        val isWideTablet = isTabletDevice && availableWidth >= 840.dp
+        val showTabletPlayerPanel = isWideTablet && currentRoute != Routes.Login.route &&
+            tabletPlayerExpanded && playerState.isNotBlank() && currentRoute != Routes.Player.route
+        if (isWideTablet && currentRoute != Routes.Login.route) {
+            val showPlayerPanel = showTabletPlayerPanel
+            Row(modifier = Modifier.fillMaxSize().background(Color(0xFF080808))) {
+                Box(modifier = Modifier.weight(1f).fillMaxSize()) {
+                    Scaffold(
+                        modifier = Modifier.fillMaxSize(),
+                        containerColor = Color(0xFF080808),
+                        bottomBar = {
+                            MainBottomNavigation(
+                                navController = navController,
+                                bottomBarState = bottomBarState,
+                                bottomBarPlayerState = bottomBarPlayerState,
+                                onSearchReselected = { searchFocusTrigger++ },
+                                tabletInlineMiniPlayer = !showPlayerPanel,
+                                showMiniPlayer = !showPlayerPanel,
+                                onExpandTabletPlayer = if (!showPlayerPanel && playerState.isNotBlank()) {
+                                    { tabletPlayerExpanded = true }
+                                } else null
+                            )
+                        }
+                    ) { _ ->
+                        MyNavHost(
+                            navHostController = navController,
+                            searchFocusTrigger = searchFocusTrigger
+                        )
+                    }
+
+                }
+                if (showPlayerPanel) {
+                    val panelWidth = (availableWidth * 0.38f).coerceIn(312.dp, 440.dp)
+                    TabletNowPlayingPanel(
+                        navController = navController,
+                        modifier = Modifier.width(panelWidth).fillMaxHeight(),
+                        onCollapse = { tabletPlayerExpanded = false },
+                        playerViewModel = playerViewModel
+                    )
+                }
+            }
+            BackHandler(enabled = showTabletPlayerPanel) {
+                tabletPlayerExpanded = false
+            }
+        } else {
+            Scaffold(
+                modifier = Modifier.fillMaxSize(),
+                bottomBar = {
+                    MainBottomNavigation(
+                        navController = navController,
+                        bottomBarState = bottomBarState,
+                        bottomBarPlayerState,
+                        onSearchReselected = { searchFocusTrigger++ },
+                        tabletInlineMiniPlayer = isTabletDevice
+                    )
+                }
+            ) {
+                MyNavHost(navHostController = navController, searchFocusTrigger = searchFocusTrigger)
+            }
         }
-    ) {
-        MyNavHost(navHostController = navController, searchFocusTrigger = searchFocusTrigger)
     }
 }
-
-

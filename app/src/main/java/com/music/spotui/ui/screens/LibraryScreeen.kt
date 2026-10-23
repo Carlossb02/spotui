@@ -967,7 +967,8 @@ fun LibraryGridScreen(
         return
     }
     LazyVerticalGrid(
-        columns = GridCells.Fixed(3),
+        columns = if (androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp >= 600)
+            GridCells.Adaptive(minSize = 154.dp) else GridCells.Fixed(3),
         modifier = Modifier
             .fillMaxSize()
             .padding(padding)

@@ -25,6 +25,7 @@ object OfflineCollectionsPref {
         put("coverUri", coverUri)
         put("url", url)
         put("spotifyTrackId", spotifyTrackId)
+        put("isLocalSpotifyTrack", isLocalSpotifyTrack)
         put("explicit", explicit)
         put("durationMs", durationMs)
         put("artistIds", artistIds)
@@ -39,6 +40,7 @@ object OfflineCollectionsPref {
             coverUri = o.optString("coverUri"),
             url = o.getString("url"),
             spotifyTrackId = o.optString("spotifyTrackId"),
+            isLocalSpotifyTrack = o.optBoolean("isLocalSpotifyTrack", false),
             explicit = o.optBoolean("explicit", false),
             durationMs = o.optInt("durationMs", 0),
             artistIds = o.optString("artistIds", ""),

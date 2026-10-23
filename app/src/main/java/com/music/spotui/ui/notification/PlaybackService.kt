@@ -16,6 +16,7 @@ import androidx.media3.common.Player
 import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.LibraryResult
+import androidx.media3.session.MediaConstants
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionCommand
@@ -40,6 +41,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -72,6 +74,8 @@ class PlaybackService : MediaLibraryService() {
     // Android Auto browse cache: mediaId → track, and mediaId → the list it was
     // browsed from (so playing a track queues its whole playlist/album).
     private val trackById = java.util.concurrent.ConcurrentHashMap<String, SongsModel>()
+    private val folderById = java.util.concurrent.ConcurrentHashMap<String, MediaItem>()
+    private val podcastById = java.util.concurrent.ConcurrentHashMap<String, com.music.spotui.data.entity.PodcastModel>()
     private val queueByTrackId = java.util.concurrent.ConcurrentHashMap<String, List<SongsModel>>()
     private val searchCache = java.util.concurrent.ConcurrentHashMap<String, List<SongsModel>>()
     private var webPlayer: WebMediaPlayer? = null
@@ -225,7 +229,7 @@ class PlaybackService : MediaLibraryService() {
         // Order notification buttons: [repeat | prev | play/pause | next | close]
         val notificationProvider = object : DefaultMediaNotificationProvider(this) {
             init {
-                setSmallIcon(R.drawable.ic_spotui_notification)
+                setSmallIcon(R.drawable.ic_spotui_notification_monochrome)
             }
 
             override fun getMediaButtons(
@@ -720,6 +724,12 @@ class PlaybackService : MediaLibraryService() {
 
     private companion object {
         const val ROOT = "root"
+        const val NODE_HOME = "auto_home"
+        const val NODE_RECENTS = "auto_recents"
+        const val NODE_BROWSE = "auto_browse"
+        const val NODE_LIBRARY = "auto_library"
+        const val NODE_PODCASTS = "auto_podcasts"
+        const val NODE_LOCAL = "auto_local"
         const val NODE_LIKED = "liked"
         const val NODE_DOWNLOADS = "downloads"
         const val NODE_PLAYLISTS = "playlists"
@@ -900,7 +910,16 @@ class PlaybackService : MediaLibraryService() {
             pageSize: Int,
             params: LibraryParams?,
         ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = future {
-            LibraryResult.ofItemList(ImmutableList.copyOf(childrenOf(parentId)), params)
+            val children = childrenOf(parentId)
+            // Automotive clients are allowed to request small pages (including 1).
+            // Returning the complete library regardless of page could make UI freeze.
+            val from = page.toLong().coerceAtLeast(0) * pageSize.coerceAtLeast(1)
+            val pageItems = if (page < 0 || pageSize <= 0 || from >= children.size) {
+                emptyList()
+            } else {
+                children.drop(from.toInt()).take(pageSize)
+            }
+            LibraryResult.ofItemList(ImmutableList.copyOf(pageItems), params)
         }
 
         override fun onGetItem(
@@ -909,6 +928,7 @@ class PlaybackService : MediaLibraryService() {
             mediaId: String,
         ): ListenableFuture<LibraryResult<MediaItem>> = Futures.immediateFuture(
             trackById[mediaId]?.let { LibraryResult.ofItem(playable(it), null) }
+                ?: folderById[mediaId]?.let { LibraryResult.ofItem(it, null) }
                 ?: LibraryResult.ofError(androidx.media3.session.SessionError.ERROR_BAD_VALUE),
         )
 
@@ -952,22 +972,36 @@ class PlaybackService : MediaLibraryService() {
             controller: MediaSession.ControllerInfo,
             isForPlayback: Boolean,
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
-            val currentQueue = currentSongState.queue.value
+            val persisted = com.music.spotui.data.preferences
+                .loadLastPlayback(applicationContext)
+            val currentQueue = currentSongState.queue.value.ifEmpty {
+                com.music.spotui.data.preferences.loadLastQueue(applicationContext)
+                    .ifEmpty { persisted?.let { listOf(it.first) }.orEmpty() }
+            }
             if (currentQueue.isNotEmpty()) {
                 val curId = currentSongState.songId.value
+                    .takeIf { it != 0 } ?: persisted?.first?.id
                 val idx = currentQueue.indexOfFirst { it.id == curId }.coerceAtLeast(0)
                 val items = currentQueue.map { playable(it) }
                 val song = currentQueue[idx]
+                val position = if (currentSongState.queue.value.isNotEmpty())
+                    SongPlayer.getCurrentPosition().coerceAtLeast(0L)
+                else persisted?.second?.coerceAtLeast(0L) ?: 0L
+
+                if (currentSongState.queue.value.isEmpty()) {
+                    currentSongState.updateQueue(currentQueue)
+                    currentSongState.updateSongState(
+                        song.coverUri, song.title, song.singer,
+                        false, song.id, idx, song.album
+                    )
+                }
                 if (isForPlayback) {
                     ensureCurrentArtwork()
+                    if (position > 0L) SongPlayer.setRestorePoint(song.url, position)
                     SongPlayer.playSong(song.url, applicationContext, "song/${song.id}")
                 }
                 return Futures.immediateFuture(
-                    MediaSession.MediaItemsWithStartPosition(
-                        items,
-                        idx,
-                        SongPlayer.getCurrentPosition().coerceAtLeast(0L)
-                    )
+                    MediaSession.MediaItemsWithStartPosition(items, idx, position)
                 )
             }
             return super.onPlaybackResumption(mediaSession, controller, isForPlayback)
@@ -1001,7 +1035,13 @@ class PlaybackService : MediaLibraryService() {
             params: LibraryParams?,
         ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
             val songs = searchCache[query].orEmpty()
-            val items = songs.map { playable(it) }
+            val all = songs.map { playable(it) }
+            val from = page.toLong().coerceAtLeast(0) * pageSize.coerceAtLeast(1)
+            val items = if (page < 0 || pageSize <= 0 || from >= all.size) {
+                emptyList()
+            } else {
+                all.drop(from.toInt()).take(pageSize)
+            }
             return Futures.immediateFuture(
                 LibraryResult.ofItemList(ImmutableList.copyOf(items), params)
             )
@@ -1012,38 +1052,94 @@ class PlaybackService : MediaLibraryService() {
         // Enforce a strict fallback timeout for Android Auto responsiveness
         kotlinx.coroutines.withTimeoutOrNull(8000) {
             when {
+                // Four tabs maximum is widely supported by Android Auto.
                 parentId == ROOT -> listOf(
-                    folder(
-                        NODE_LIKED,
-                        "Liked Songs",
-                        mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS
-                    ),
-                    folder(
-                        NODE_DOWNLOADS,
-                        "Downloads",
-                        mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS
-                    ),
-                    folder(
-                        NODE_PLAYLISTS,
-                        "Playlists",
-                        mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS
-                    ),
-                    folder(
-                        NODE_ALBUMS,
-                        "Albums",
-                        mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_ALBUMS
-                    ),
-                    folder(
-                        NODE_ARTISTS,
-                        "Artists",
-                        mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_ARTISTS
-                    ),
-                    folder(
-                        NODE_SONGS,
-                        "All Songs",
-                        mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_MIXED
-                    ),
+                    folder(NODE_HOME, "Inicio"),
+                    folder(NODE_RECENTS, "Recientes"),
+                    folder(NODE_BROWSE, "Explorar"),
+                    folder(NODE_LIBRARY, "Tu biblioteca")
                 )
+
+                parentId == NODE_HOME -> listOf(
+                    folder(NODE_RECENTS, "Escuchado recientemente"),
+                    folder(NODE_LIKED, "Canciones que te gustan"),
+                    folder(NODE_PLAYLISTS, "Tus playlists"),
+                    folder(NODE_DOWNLOADS, "Descargas"),
+                    folder(NODE_PODCASTS, "Podcasts", mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_PODCASTS)
+                )
+
+                parentId == NODE_BROWSE -> listOf(
+                    folder(NODE_PLAYLISTS, "Playlists"),
+                    folder(NODE_ALBUMS, "Álbumes", mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_ALBUMS),
+                    folder(NODE_ARTISTS, "Artistas", mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_ARTISTS),
+                    folder(NODE_PODCASTS, "Podcasts y programas", mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_PODCASTS),
+                    folder(NODE_SONGS, "Toda la música")
+                )
+
+                parentId == NODE_LIBRARY -> listOf(
+                    folder(NODE_LIKED, "Canciones que te gustan"),
+                    folder(NODE_PLAYLISTS, "Playlists"),
+                    folder(NODE_ALBUMS, "Álbumes", mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_ALBUMS),
+                    folder(NODE_ARTISTS, "Artistas", mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_ARTISTS),
+                    folder(NODE_PODCASTS, "Podcasts que sigues", mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_PODCASTS),
+                    folder(NODE_DOWNLOADS, "Descargas"),
+                    folder(NODE_LOCAL, "Archivos locales"),
+                    folder(NODE_SONGS, "Todas las canciones")
+                )
+
+                parentId == NODE_RECENTS -> {
+                    val recent = com.music.spotui.data.preferences.getListeningHistory(applicationContext)
+                        .take(75)
+                        .filter { it.url.isNotBlank() }
+                        .distinctBy { it.songId }
+                        .map { entry ->
+                            SongsModel(
+                                id = entry.songId,
+                                title = entry.title,
+                                singer = entry.singer,
+                                album = entry.album,
+                                coverUri = entry.image,
+                                url = entry.url
+                            )
+                        }
+                    registerTracks(NODE_RECENTS, recent)
+                }
+
+                parentId == NODE_LOCAL -> registerTracks(
+                    NODE_LOCAL,
+                    com.music.spotui.data.preferences.getLocalSongs(applicationContext)
+                )
+
+                parentId == NODE_PODCASTS ->
+                    com.music.spotui.data.preferences.SubscribedPodcastPref
+                        .getSubscribedPodcasts(applicationContext)
+                        .filter { it.id.isNotBlank() && !it.id.startsWith("itunes:") }
+                        .map { show ->
+                            val safeId = android.net.Uri.encode(show.id)
+                            podcastById[safeId] = show
+                            folder(
+                                "podcast/$safeId",
+                                show.name,
+                                show.coverUri,
+                                mediaType = MediaMetadata.MEDIA_TYPE_PODCAST
+                            )
+                        }
+
+                parentId.startsWith("podcast/") -> {
+                    val id = parentId.removePrefix("podcast/")
+                    val show = podcastById[id]
+                    if (show == null) emptyList()
+                    else {
+                        // Return the first YouTube page quickly. Do not wait for all
+                        // podcast continuations while the driver is browsing.
+                        val episodes = kotlinx.coroutines.withTimeoutOrNull(7_000L) {
+                            com.music.spotui.providers.PodcastProvider
+                                .getShowEpisodesFlow(show.id, show.name)
+                                .first()
+                        }.orEmpty()
+                        registerTracks(parentId, episodes)
+                    }
+                }
 
                 parentId == NODE_LIKED ->
                     registerTracks(
@@ -1070,7 +1166,7 @@ class PlaybackService : MediaLibraryService() {
                     }
 
                 parentId == NODE_ALBUMS ->
-                    libraryEntries().filter { !it.isPlaylist }.map {
+                    libraryEntries().filter { !it.isPlaylist && !it.isPodcast }.map {
                         folder(
                             "album/${android.net.Uri.encode(it.name)}/${android.net.Uri.encode(it.artists)}",
                             it.name,
@@ -1190,6 +1286,11 @@ class PlaybackService : MediaLibraryService() {
         songs.forEach { song ->
             trackById["song/${song.id}"] = song
             queueByTrackId["song/${song.id}"] = songs
+        }
+        // Do not queue artwork network requests for the entire library at once:
+        // Android Auto renders only a window of visible rows. Keep background
+        // cover prefetch bounded; never hold browse callbacks waiting for it.
+        songs.take(36).forEach { song ->
             com.music.spotui.util.ArtworkHelper.ensureDownloadedCover(applicationContext, song)
         }
         return songs.map { playable(it) }
@@ -1206,7 +1307,22 @@ class PlaybackService : MediaLibraryService() {
             .setIsBrowsable(true)
             .setIsPlayable(false)
             .setMediaType(mediaType)
-        if (coverUri.isNotBlank()) {
+        // Android Auto controls the final layout. These are presentation hints
+        // understood by compatible head units (grid for albums, list for tracks).
+        val styles = Bundle().apply {
+            putInt(
+                MediaConstants.EXTRAS_KEY_CONTENT_STYLE_BROWSABLE,
+                MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_GRID_ITEM
+            )
+            putInt(
+                MediaConstants.EXTRAS_KEY_CONTENT_STYLE_PLAYABLE,
+                MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_LIST_ITEM
+            )
+        }
+        builder.setExtras(styles)
+        if (coverUri.startsWith("android.resource://")) {
+            builder.setArtworkUri(android.net.Uri.parse(coverUri))
+        } else if (coverUri.isNotBlank()) {
             com.music.spotui.util.ArtworkHelper.ensureDownloadedCover(this, id, coverUri)
             com.music.spotui.util.ArtworkHelper.attachArtwork(
                 builder, this, coverUri, id.removePrefix("song/").removePrefix("playlist/").removePrefix("album/").removePrefix("artist/")
@@ -1215,7 +1331,7 @@ class PlaybackService : MediaLibraryService() {
         return MediaItem.Builder()
             .setMediaId(id)
             .setMediaMetadata(builder.build())
-            .build()
+            .build().also { folderById[id] = it }
     }
 
     private fun playable(song: SongsModel): MediaItem {
@@ -1225,7 +1341,11 @@ class PlaybackService : MediaLibraryService() {
             .setAlbumTitle(song.album)
             .setIsBrowsable(false)
             .setIsPlayable(true)
-            .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
+            .setMediaType(
+                if (song.url.startsWith("yt_ep:") || song.url.startsWith("episode:"))
+                    MediaMetadata.MEDIA_TYPE_PODCAST_EPISODE
+                else MediaMetadata.MEDIA_TYPE_MUSIC
+            )
         com.music.spotui.util.ArtworkHelper.attachArtwork(
             builder, this, song.coverUri, song.id.toString(), song.url
         )
@@ -1283,6 +1403,8 @@ class PlaybackService : MediaLibraryService() {
         webPlayer?.release()
         webPlayer = null
         searchCache.clear()
+        folderById.clear()
+        podcastById.clear()
         mediaSession?.release()
         mediaSession = null
         SongPlayer.release() // release AudioTrack, decoders and timers on service stop

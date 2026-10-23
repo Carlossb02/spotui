@@ -20,7 +20,6 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
@@ -111,7 +110,13 @@ fun SongOptionsSheet(
         return
     }
 
-    if (showEditDialog) {
+    // Local origin survives title/artist edits; a Spotify track never becomes
+    // editable just because its artist metadata happens to be "Unknown Artist".
+    val editableLocalTrack = remember(song, context) {
+        com.music.spotui.data.preferences.isUserEditableLocalTrack(context, song)
+    }
+
+    if (showEditDialog && editableLocalTrack) {
         var editTitle by remember { mutableStateOf(song.title) }
         var editArtist by remember { mutableStateOf(song.singer) }
         var editAlbum by remember { mutableStateOf(song.album) }
@@ -234,7 +239,7 @@ fun SongOptionsSheet(
             }
             HorizontalDivider(color = Color(0xFF2A2A2A))
 
-            if (song.singer.equals("unknown artist", ignoreCase = true)) {
+            if (editableLocalTrack) {
                 SongMenuRow(
                     icon = Icons.Default.Edit,
                     label = "Edit metadata",

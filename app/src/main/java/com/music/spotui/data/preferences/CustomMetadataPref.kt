@@ -11,6 +11,25 @@ import org.json.JSONObject
 object CustomMetadataPref {
     private const val PREF = "CustomMetadata"
     private const val KEY = "overrides_json"
+    private const val LOCAL_EDITED_KEYS = "verified_local_edits"
+
+    /** Records are added only after an explicit local-origin check by the editor. */
+    fun markVerifiedLocalEdit(context: Context, song: SongsModel) {
+        val keys = getSongKeys(song)
+        if (keys.isEmpty()) return
+        val values = prefs(context).getStringSet(LOCAL_EDITED_KEYS, emptySet()).orEmpty().toMutableSet()
+        values.addAll(keys)
+        prefs(context).edit().putStringSet(LOCAL_EDITED_KEYS, values).apply()
+    }
+
+    fun wasVerifiedLocalEdit(context: Context, song: SongsModel): Boolean {
+        val keys = prefs(context).getStringSet(LOCAL_EDITED_KEYS, emptySet()).orEmpty()
+        return getSongKeys(song).any { it in keys }
+    }
+
+    /** Migration for edits saved by older versions of the app. */
+    fun hasExistingEdit(context: Context, song: SongsModel): Boolean =
+        getOverride(context, song) != null
 
     data class TrackMetadataOverride(
         val title: String,

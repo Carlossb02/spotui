@@ -24,6 +24,9 @@ data class SongsModel(
     val description : String = "",
     // Podcast episode release/upload date string (e.g. "12 oct 2025" or "Hace 2 días")
     val releaseDate : String = "",
+    // Source provenance: Spotify LOCAL library item, not an official Spotify catalogue track.
+    // Never infer this flag from artist/title or edited metadata.
+    val isLocalSpotifyTrack: Boolean = false,
 ){
     constructor() : this(-1 ,"" ,"" ,"" ,"" ,"", "", description = "", releaseDate = "")
 }

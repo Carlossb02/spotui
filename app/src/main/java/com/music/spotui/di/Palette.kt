@@ -31,6 +31,7 @@ class Palette {
         Glide.with(context)
             .asBitmap()
             .load(imageUrl)
+            .override(64, 64)
             .into(object : CustomTarget<Bitmap>() {
                 override fun onResourceReady(resource: Bitmap, transition: Transition<in Bitmap>?) {
                     Palette.from(resource).generate { palette ->
@@ -52,13 +53,12 @@ class Palette {
         Glide.with(context)
             .asBitmap()
             .load(imageUrl)
+            .override(64, 64)
             .into(object : CustomTarget<Bitmap>() {
                 override fun onResourceReady(resource: Bitmap, transition: Transition<in Bitmap>?) {
-                    // Create a scaled down version of the bitmap
-                    val scaledBitmap = Bitmap.createScaledBitmap(resource, 50, 50, true)
-
+                    // Glide decodes at 64x64; avoid a second bitmap allocation.
                     Palette
-                        .from(scaledBitmap)
+                        .from(resource)
                         .generate { palette ->
                         val lightVibrantColor = palette?.mutedSwatch?.rgb
                         lightVibrantColor?.let {

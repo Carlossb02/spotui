@@ -1116,8 +1116,25 @@ private fun HomePodcastsFeedContent(
     val feed = (podcastFeedResult as? Response.Success)?.data
     val sections = feed?.sections.orEmpty()
 
-    val subscribedPodcasts = remember(isFollowingOnly) {
-        if (isFollowingOnly) com.music.spotui.data.preferences.SubscribedPodcastPref.getSubscribedPodcasts(context) else emptyList()
+    val followRevision by com.music.spotui.data.preferences.SubscribedPodcastPref.revision.collectAsState()
+    val subscribedPodcasts = remember(isFollowingOnly, followRevision) {
+        if (isFollowingOnly) com.music.spotui.data.preferences.SubscribedPodcastPref.getSubscribedPodcasts(context)
+        else emptyList()
+    }
+
+    // If a followed podcast has no durable cover, query the original YouTube show
+    // again (off the UI thread). Updates to preferences automatically redraw this list.
+    // Each lookup is time-limited and the repository bounds concurrency/backoff.
+    LaunchedEffect(isFollowingOnly, subscribedPodcasts.map { it.id }) {
+        if (isFollowingOnly) {
+            subscribedPodcasts.forEach { podcast ->
+                launch(kotlinx.coroutines.Dispatchers.IO) {
+                    com.music.spotui.data.preferences.SubscribedPodcastPref.recoverMissingCover(
+                        context.applicationContext, podcast
+                    )
+                }
+            }
+        }
     }
 
     LazyColumn(
@@ -1197,8 +1214,25 @@ private fun HomePodcastsFeedContent(
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(subscribedPodcasts.size) { i ->
+                        items(subscribedPodcasts.size, key = { index -> subscribedPodcasts[index].id }) { i ->
                             val show = subscribedPodcasts[i]
+                            var imageRevision by remember(show.id) { mutableStateOf(0) }
+                            LaunchedEffect(show.id, show.coverUri) {
+                                if (!com.music.spotui.ui.notification.PodcastCover.hasSavedShowCover(context, show.id) &&
+                                    show.coverUri.isNotBlank()
+                                ) {
+                                    com.music.spotui.ui.notification.PlaybackArtwork.ensure(
+                                        context.applicationContext,
+                                        com.music.spotui.ui.notification.PodcastCover.showArtworkKey(show.id),
+                                        show.coverUri
+                                    ) { imageRevision++ }
+                                }
+                            }
+                            val imageUri = remember(show.id, show.coverUri, imageRevision) {
+                                com.music.spotui.ui.notification.PodcastCover.preferredShowUri(
+                                    context, show.id, show.coverUri
+                                )
+                            }
                             Column(
                                 modifier = Modifier
                                     .width(140.dp)
@@ -1207,7 +1241,7 @@ private fun HomePodcastsFeedContent(
                                     }
                             ) {
                                 GlideImage(
-                                    model = show.coverUri,
+                                    model = imageUri,
                                     contentDescription = show.name,
                                     contentScale = ContentScale.Crop,
                                     loading = placeholder(R.drawable.placeholder),
@@ -1265,9 +1299,9 @@ private fun HomePodcastsFeedContent(
                 }
             }
 
-            items(displaySections.size) { idx ->
+            items(displaySections.size, key = { idx -> displaySections[idx].title }) { idx ->
                 val sec = displaySections[idx]
-                Column(modifier = Modifier.padding(bottom = 20.dp)) {
+                Column(modifier = Modifier.padding(bottom = 24.dp)) {
                     Text(
                         text = sec.title,
                         color = Color.White,
@@ -1281,24 +1315,25 @@ private fun HomePodcastsFeedContent(
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
                             horizontalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
-                            items(sec.shows.size) { i ->
+                            items(sec.shows.size, key = { i -> "${sec.shows[i].id}:${sec.shows.take(i).count { it.id == sec.shows[i].id }}" }) { i ->
                                 val show = sec.shows[i]
                                 Column(
                                     modifier = Modifier
-                                        .width(140.dp)
-                                        .clickable {
-                                            navController.navigate(showRoute(show.id, show.name))
-                                        }
+                                        .width(152.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Color(0xFF202026))
+                                        .clickable { navController.navigate(showRoute(show.id, show.name)) }
+                                        .padding(7.dp)
                                 ) {
                                     GlideImage(
-                                        model = show.coverUri,
+                                        model = com.music.spotui.ui.notification.PodcastCover.preferredShowUri(context, show.id, show.coverUri),
                                         contentDescription = show.name,
                                         contentScale = ContentScale.Crop,
                                         loading = placeholder(R.drawable.placeholder),
                                         failure = placeholder(R.drawable.placeholder),
                                         modifier = Modifier
-                                            .size(140.dp)
-                                            .clip(RoundedCornerShape(12.dp))
+                                            .size(138.dp)
+                                            .clip(RoundedCornerShape(10.dp))
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
@@ -1328,8 +1363,8 @@ private fun HomePodcastsFeedContent(
                                 Column(modifier = Modifier.width(140.dp)) {
                                     Box(
                                         modifier = Modifier
-                                            .size(140.dp)
-                                            .clip(RoundedCornerShape(12.dp))
+                                            .size(138.dp)
+                                            .clip(RoundedCornerShape(10.dp))
                                             .background(Color(0xFF282828))
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
@@ -1348,7 +1383,7 @@ private fun HomePodcastsFeedContent(
             }
         }
 
-        item { Spacer(modifier = Modifier.height(160.dp)) }
+        item { Spacer(modifier = Modifier.height(210.dp)) }
     }
 }
 

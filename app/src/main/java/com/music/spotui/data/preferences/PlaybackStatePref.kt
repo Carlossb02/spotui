@@ -24,6 +24,7 @@ private fun songToJson(song: SongsModel): JSONObject {
         put("coverUri", song.coverUri)
         put("url", song.url)
         put("spotifyTrackId", song.spotifyTrackId)
+        put("isLocalSpotifyTrack", song.isLocalSpotifyTrack)
         put("explicit", song.explicit)
         put("durationMs", song.durationMs)
     }
@@ -38,6 +39,7 @@ private fun jsonToSong(o: JSONObject): SongsModel {
         coverUri = o.optString("coverUri"),
         url = o.optString("url"),
         spotifyTrackId = o.optString("spotifyTrackId"),
+        isLocalSpotifyTrack = o.optBoolean("isLocalSpotifyTrack", false),
         explicit = o.optBoolean("explicit", false),
         durationMs = o.optInt("durationMs", 0),
     )

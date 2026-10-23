@@ -36,6 +36,9 @@ object PlaybackArtwork {
     }
     private val inflight = ConcurrentHashMap.newKeySet<String>()
     private val failedAt = ConcurrentHashMap<String, Long>()
+    private val failedSource = ConcurrentHashMap<String, String>()
+    private val loadingSource = ConcurrentHashMap<String, String>()
+    private val pendingSource = ConcurrentHashMap<String, Pair<String, () -> Unit>>()
     private val executor = Executors.newFixedThreadPool(2)
     private val main = Handler(Looper.getMainLooper())
 
@@ -46,34 +49,64 @@ object PlaybackArtwork {
      * principal solo si hubo que cargarla (si ya estaba en caché no se llama).
      */
     fun ensure(context: Context, id: String, coverUri: String, onReady: () -> Unit = {}) {
-        if (coverUri.isBlank() || cache.get(id) != null) return
-        val failed = failedAt[id]
-        if (failed != null && System.currentTimeMillis() - failed < RETRY_AFTER_MS) return
-        if (!inflight.add(id)) return
         val appContext = context.applicationContext
+        val cleanId = id.removePrefix("song/").removePrefix("playlist/").removePrefix("album/").removePrefix("artist/").trim()
+        val coverFile = File(File(appContext.filesDir, "downloads"), "${cleanId}_cover.jpg")
+        val stored = coverFile.isFile && coverFile.length() > 0L
+        if (stored && cache.get(id) != null) return
+        if (!stored && coverUri.isBlank()) return
+        val failed = failedAt[id]
+        if (failed != null && System.currentTimeMillis() - failed < RETRY_AFTER_MS &&
+            failedSource[id] == coverUri
+        ) return
+        if (!inflight.add(id)) {
+            // If YouTube supplied a refreshed URL while the old one was failing,
+            // fetch the new source after the in-flight attempt finishes.
+            if (coverUri.isNotBlank() && loadingSource[id] != coverUri) {
+                pendingSource[id] = coverUri to onReady
+            }
+            return
+        }
+        loadingSource[id] = coverUri
         executor.execute {
             try {
-                val bytes = load(appContext, coverUri)
+                val bytes = cache.get(id)
+                    ?: if (stored) load(appContext, Uri.fromFile(coverFile).toString())
+                    else load(appContext, coverUri)
                 if (bytes != null) {
                     cache.put(id, bytes)
-                    val cleanId = id.removePrefix("song/").removePrefix("playlist/").removePrefix("album/").removePrefix("artist/").trim()
-                    if (cleanId.isNotBlank()) {
-                        val dir = File(appContext.filesDir, "downloads").apply { mkdirs() }
-                        val coverFile = File(dir, "${cleanId}_cover.jpg")
-                        if (!coverFile.exists() || coverFile.length() == 0L) {
-                            runCatching { coverFile.writeBytes(bytes) }
+                    if (cleanId.isNotBlank() && !stored) {
+                        // Safe persistent copy: downloading bytes belong to user library,
+                        // not the evictable stream cache. Avoid partial JPEG files.
+                        runCatching {
+                            coverFile.parentFile?.mkdirs()
+                            val tmp = File(coverFile.parentFile, "${coverFile.name}.part")
+                            tmp.writeBytes(bytes)
+                            if (!tmp.renameTo(coverFile)) {
+                                tmp.copyTo(coverFile, overwrite = true)
+                                tmp.delete()
+                            }
                         }
                     }
                     failedAt.remove(id)
+                    failedSource.remove(id)
                     main.post(onReady)
                 } else {
                     failedAt[id] = System.currentTimeMillis()
+                    failedSource[id] = coverUri
                 }
-            } catch (e: Throwable) {
+            } catch (e: Exception) {
                 android.util.Log.w("PlaybackArtwork", "No se pudo cargar carátula de $id", e)
                 failedAt[id] = System.currentTimeMillis()
+                failedSource[id] = coverUri
             } finally {
+                loadingSource.remove(id)
                 inflight.remove(id)
+                pendingSource.remove(id)?.let { (nextUri, callback) ->
+                    if (!coverFile.isFile || coverFile.length() == 0L) {
+                        ensure(appContext, id, nextUri, callback)
+                    }
+                }
             }
         }
     }

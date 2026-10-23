@@ -48,6 +48,9 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
 
     /** Insert a track right after the one currently playing ("Play next"). */
     fun playNext(song: SongsModel) {
+        com.music.spotui.ui.notification.PodcastCover.preserve(
+            com.music.spotui.MyApplication.instance, song
+        )
         val q = currentSongState.queue.value.toMutableList()
         val curIdx = q.indexOfFirst { it.id == currentSongId.value }
         val insertAt = (if (curIdx >= 0) curIdx + 1 else 0).coerceAtMost(q.size)
@@ -60,6 +63,9 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
 
     /** Append a track to "Next Up" in the queue ("Add to queue"). */
     fun addToQueue(song: SongsModel) {
+        com.music.spotui.ui.notification.PodcastCover.preserve(
+            com.music.spotui.MyApplication.instance, song
+        )
         val q = currentSongState.queue.value.toMutableList()
         val curIdx = q.indexOfFirst { it.id == currentSongId.value }
         val insertAt = if (curIdx >= 0) (curIdx + 1).coerceAtMost(q.size) else q.size
@@ -73,6 +79,10 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
     /** Append multiple tracks to "Next Up" in the queue. */
     fun addAllToQueue(songs: List<SongsModel>) {
         if (songs.isEmpty()) return
+        // Avoid hundreds of simultaneous artwork downloads for huge episode lists.
+        songs.take(8).forEach { com.music.spotui.ui.notification.PodcastCover.preserve(
+            com.music.spotui.MyApplication.instance, it
+        ) }
         val q = currentSongState.queue.value.toMutableList()
         val curIdx = q.indexOfFirst { it.id == currentSongId.value }
         val insertAt = if (curIdx >= 0) (curIdx + 1).coerceAtMost(q.size) else q.size
@@ -105,13 +115,20 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
 
 
     private val _songs : MutableStateFlow<Response<List<SongsModel>>> = MutableStateFlow(Response.Loading())
-    val songs : StateFlow<Response<List<SongsModel>>> = _songs
+    // Queue, podcast and context-menu screens need playback state, not the
+    // entire Spotify catalog. Start the expensive fetch only when a screen
+    // actually observes `songs` (currently the full-screen player).
+    private var songsFetchStarted = false
+    val songs: StateFlow<Response<List<SongsModel>>>
+        get() {
+            if (!songsFetchStarted) {
+                songsFetchStarted = true
+                fetchSongs()
+            }
+            return _songs
+        }
 
     val playingArtist by mutableStateOf(currentSongSinger.value)
-
-    init {
-        fetchSongs()
-    }
 
 
     //val songsResponse = (songs.value as Response.Success).data

@@ -65,7 +65,7 @@ class ShowViewModel @Inject constructor(
         showJob?.cancel()
         episodeJob?.cancel()
         _episodes.value = Response.Loading()
-        _visibleCount.value = 30
+        _visibleCount.value = 15
         if (showName.isNotBlank() && _show.value == null) {
             _show.value = PodcastModel(id = showId, name = showName, publisher = "", coverUri = "")
         }
@@ -74,18 +74,23 @@ class ShowViewModel @Inject constructor(
             if (loaded != null) {
                 _show.value = loaded
                 _isSubscribed.value = SubscribedPodcastPref.isPodcastSubscribed(context, loaded.id)
+                // A user could have followed the provisional card before artwork
+                // arrived. Repair that stored record as soon as details load.
+                if (_isSubscribed.value && loaded.coverUri.isNotBlank()) {
+                    val saved = SubscribedPodcastPref.getSubscribedPodcasts(context)
+                        .firstOrNull { it.id == loaded.id }
+                    if (saved != null && saved.coverUri.isBlank()) {
+                        SubscribedPodcastPref.addSubscribedPodcast(context, loaded)
+                    }
+                }
             }
         }
         episodeJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 repository.provideShowEpisodes(showId, showName).collect { res ->
                     _episodes.value = res
-                    if (res is Response.Success) {
-                        val count = res.data.size
-                        if (count > _visibleCount.value && _visibleCount.value <= 30) {
-                            _visibleCount.value = count
-                        }
-                    }
+                    // Keep pagination incremental: rendering every episode at once
+                    // makes initial layout and image decoding needlessly expensive.
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -97,7 +102,12 @@ class ShowViewModel @Inject constructor(
 
     fun toggleSubscription(context: Context) {
         val currentShow = _show.value ?: return
-        val newState = SubscribedPodcastPref.toggleSubscribedPodcast(context, currentShow)
+        val episodeCover = (_episodes.value as? Response.Success)?.data
+            ?.firstOrNull { it.coverUri.isNotBlank() }?.coverUri.orEmpty()
+        val completeShow = if (currentShow.coverUri.isBlank() && episodeCover.isNotBlank()) {
+            currentShow.copy(coverUri = episodeCover)
+        } else currentShow
+        val newState = SubscribedPodcastPref.toggleSubscribedPodcast(context, completeShow)
         _isSubscribed.value = newState
         Api.HomeCache.library = null
     }

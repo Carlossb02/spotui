@@ -62,6 +62,56 @@ fun getLocalTracks(context: Context): List<LocalTrack> {
     }.getOrDefault(emptyList())
 }
 
+/**
+ * Ownership check for the metadata editor.
+ * Spotify local-library records may have no regular Spotify track ID: the
+ * importer stores spotify:local:... or a local_ fallback in spotifyTrackId.
+ * These identities remain unchanged when the displayed artist/title changes.
+ * A real Spotify catalogue track is NEVER editable merely because it had an
+ * "Unknown Artist" value or a user-provided metadata override.
+ */
+fun isUserEditableLocalTrack(context: Context, song: SongsModel): Boolean {
+    val spotifyId = song.spotifyTrackId.trim()
+    val url = song.url.trim()
+
+    // A genuine Spotify track ID is exactly 22 base-62 characters. Editing its
+    // metadata in Spotui must remain impossible even if it says "Unknown Artist".
+    val catalogId = spotifyId
+        .removePrefix("spotify:track:")
+        .removePrefix("track:")
+    val isCatalogTrack = Regex("^[A-Za-z0-9]{22}$").matches(catalogId) ||
+        Regex("""^spotify:track:[A-Za-z0-9]{22}(?:\||$)""").containsMatchIn(url)
+    // The first edit was only authorized after checking the original local
+    // source. Retain that authorization across versions where the track loses
+    // its local flag or Spotify reserializes the URI after changing the artist.
+    val previouslyVerifiedLocal = CustomMetadataPref.wasVerifiedLocalEdit(context, song)
+    if (isCatalogTrack && !previouslyVerifiedLocal) return false
+
+    val spotifyLocal = song.isLocalSpotifyTrack ||
+        spotifyId.startsWith("spotify:local:", ignoreCase = true) ||
+        spotifyId.startsWith("local_", ignoreCase = true) ||
+        url.startsWith("spotify:local:", ignoreCase = true) ||
+        url.startsWith("spotify:track:local_", ignoreCase = true)
+
+    if (spotifyLocal) return true
+
+    // An earlier, verified local edit is retained across changes to the artist,
+    // title, image or search query.
+    if (previouslyVerifiedLocal) return true
+
+    // Backward compatibility: previous versions stored a metadata override but
+    // did not save provenance. Never migrate an official Spotify catalogue ID.
+    if (!isCatalogTrack && CustomMetadataPref.hasExistingEdit(context, song)) return true
+
+    if (spotifyId.isNotBlank()) return false
+    val fileBased = url.startsWith("content://") ||
+        url.startsWith("file://") || url.startsWith("/")
+    if (!fileBased) return false
+    return getLocalTracks(context).any { track ->
+        track.uri == url || (track.id == song.id && track.uri.isNotBlank())
+    }
+}
+
 /** Add tracks, de-duplicating by URI (keeps insertion order, new ones appended). */
 fun addLocalTracks(context: Context, tracks: List<LocalTrack>) {
     if (tracks.isEmpty()) return
@@ -83,7 +133,27 @@ fun updateLocalTrackMetadata(
     newAlbum: String,
     newCoverUri: String
 ) {
+    // Defensive second check. UI controls alone are not a permission boundary.
+    if (!isUserEditableLocalTrack(context, song)) return
+    CustomMetadataPref.markVerifiedLocalEdit(context, song)
     CustomMetadataPref.saveOverride(context, song, newTitle, newArtist, newAlbum, newCoverUri)
+
+    // An edited Spotify-local track's playback search string includes the
+    // editable title/artist. Save the *post-edit* alias as well as the original
+    // stable ID so the menu remains editable even for old queue snapshots.
+    val editedSong = song.copy(
+        title = newTitle, singer = newArtist, album = newAlbum, coverUri = newCoverUri
+    )
+    val editedQuery = if (song.url.startsWith("spotify:track:") && song.spotifyTrackId.isNotBlank()) {
+        com.music.spotui.di.SongPlayer.buildSpotifyPlayQuery(
+            song.spotifyTrackId, newTitle, newArtist
+        )
+    } else song.url
+    val updatedIdentity = editedSong.copy(url = editedQuery)
+    CustomMetadataPref.markVerifiedLocalEdit(context, updatedIdentity)
+    CustomMetadataPref.saveOverride(
+        context, updatedIdentity, newTitle, newArtist, newAlbum, newCoverUri
+    )
 
     val tracks = getLocalTracks(context)
     val songUri = song.url

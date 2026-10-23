@@ -118,6 +118,10 @@ class Api @Inject constructor(
             explicit = explicit,
             durationMs = durationMs,
             artistIds = artists.joinToString(",") { it.id.orEmpty() },
+            isLocalSpotifyTrack = isLocal ||
+                uri?.startsWith("spotify:local:", ignoreCase = true) == true ||
+                trackId.startsWith("local_", ignoreCase = true) ||
+                trackId.startsWith("spotify:local:", ignoreCase = true),
         )
         val overridden = com.music.spotui.data.preferences.CustomMetadataPref.applyOverride(context, baseSong)
         if (overridden.title != baseSong.title || overridden.singer != baseSong.singer) {
@@ -828,7 +832,9 @@ class Api @Inject constructor(
                 spotifyId = pod.id,
                 name = pod.name,
                 subtitle = "Podcast" + (if (pod.publisher.isNotBlank()) " • ${pod.publisher}" else ""),
-                coverUri = pod.coverUri,
+                coverUri = com.music.spotui.ui.notification.PodcastCover.preferredShowUri(
+                    context, pod.id, pod.coverUri
+                ),
                 isPlaylist = false,
                 artists = pod.publisher,
                 isPodcast = true,

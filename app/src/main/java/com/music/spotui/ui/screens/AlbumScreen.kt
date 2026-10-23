@@ -65,6 +65,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -103,6 +104,9 @@ import kotlinx.coroutines.delay
 
 @Composable
 fun AlbumScreen(navController: NavController, albumName: String, artist: String = "") {
+    val tabletCollectionLayout = LocalConfiguration.current.smallestScreenWidthDp >= 600 &&
+        LocalConfiguration.current.screenWidthDp >= 840
+
 
 
     val albumViewModel : AlbumViewModel = hiltViewModel()
@@ -160,6 +164,8 @@ fun SumUpAlbumScreen(
     context: Context,
     artist: String = ""
 ) {
+    val tabletCollectionLayout = LocalConfiguration.current.smallestScreenWidthDp >= 600 &&
+        LocalConfiguration.current.screenWidthDp >= 840
     val playerViewModel: PlayerViewModel = hiltViewModel()
     // `songs` is already this album's track list (loaded by AlbumViewModel).
     val albumSongs: List<SongsModel> = songs
@@ -308,7 +314,7 @@ fun SumUpAlbumScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(460.dp)
+                    .height(if (tabletCollectionLayout) 300.dp else 460.dp)
                     .background(
                         brush = Brush.verticalGradient(
                             colors = listOf(dominentColor, Color(AppBackground.toArgb())),
@@ -321,6 +327,60 @@ fun SumUpAlbumScreen(
                 verticalArrangement = Arrangement.Center,
                // horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                if (tabletCollectionLayout) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(22.dp)
+                    ) {
+                        GlideImage(
+                            modifier = Modifier.size(182.dp).clip(RoundedCornerShape(6.dp)),
+                            model = album[0].coverUri,
+                            contentScale = ContentScale.Crop,
+                            failure = placeholder(R.drawable.placeholder),
+                            contentDescription = "Carátula del álbum"
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("ÁLBUM", fontSize = 11.sp, color = Color(0xFFDDDDDD),
+                                fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(8.dp))
+                Text(modifier = Modifier
+                    .padding(20.dp, 5.dp, 0.dp, 0.dp),
+                    text = albumName,
+                    color = Color.White,
+                    fontSize = 23.sp,
+                    fontWeight = FontWeight.Bold)
+                if (albumArtists.isNotBlank()) {
+                    Text(
+                        modifier = Modifier
+                            .padding(20.dp, 0.dp, 0.dp, 0.dp)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) {
+                                if (albumArtistList.size == 1) {
+                                    navController.navigate(artistRoute(albumArtistList[0]))
+                                } else if (albumArtistList.size > 1) {
+                                    showArtistSheet = true
+                                }
+                            },
+                        text = albumArtists,
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                Text(modifier = Modifier
+                    .padding(20.dp, 0.dp, 0.dp, 0.dp),
+                    text = "Album : ${album[0].time}",
+                    color = Color.Gray,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
+
+                        }
+                    }
+                } else {
                 Spacer(modifier = Modifier.padding(25.dp))
 
                 Box(
@@ -371,6 +431,7 @@ fun SumUpAlbumScreen(
                     fontWeight = FontWeight.Medium
                 )
 
+                }
                 Row(horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier

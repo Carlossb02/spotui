@@ -2,6 +2,10 @@
 <resources>
 
     <style name="Theme.Spotui" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- Only an Android Auto styling hint; the car OS owns the playback UI. -->
+    <style name="Theme.Spotui.Car" parent="Theme.Spotui">
+        <item name="android:colorAccent">#1ED760</item>
+    </style>
     <style name="splashScreenTheme" parent="Theme.SplashScreen">
         <!-- Same disco-ball artwork as the launcher icon, so the splash flash
              matches the icon the user tapped (not the old equalizer logo). -->

@@ -186,7 +186,11 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         ?: ""
 
                     GlideImage(
-                        model = resolvedCover,
+                        model = show?.let {
+                            com.music.spotui.ui.notification.PodcastCover.preferredShowUri(
+                                context, it.id, resolvedCover.orEmpty()
+                            )
+                        } ?: resolvedCover,
                         contentScale = ContentScale.Crop,
                         failure = placeholder(R.drawable.placeholder),
                         modifier = Modifier
@@ -315,6 +319,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                             val firstEp = filteredEpisodes.firstOrNull() ?: return@clickable
                                             vm.updateQueue(filteredEpisodes)
                                             vm.updateSongState(firstEp.coverUri, firstEp.title, firstEp.singer, true, firstEp.id, 0, firstEp.album)
+                                            com.music.spotui.ui.notification.PodcastCover.preserve(context, firstEp)
                                             SongPlayer.playSong(firstEp.url, context, "song/${firstEp.id}")
                                         },
                                     contentAlignment = Alignment.Center
@@ -431,7 +436,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                 }
             } else {
                 // Render batch of displayed episodes
-                items(displayedEpisodes.size) { i ->
+                items(displayedEpisodes.size, key = { i -> displayedEpisodes[i].url }) { i ->
                     val ep = displayedEpisodes[i]
                     val chapters = remember(ep.description) { parsePodcastChapters(ep.description) }
                     // No renderizar descripciones erróneamente almacenadas como fecha.
@@ -461,6 +466,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                     onClick = {
                                         vm.updateQueue(filteredEpisodes)
                                         vm.updateSongState(ep.coverUri, ep.title, ep.singer, true, ep.id, i, ep.album)
+                                        com.music.spotui.ui.notification.PodcastCover.preserve(context, ep)
                                         SongPlayer.playSong(ep.url, context, "song/${ep.id}")
                                     },
                                 )
@@ -472,7 +478,8 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                             ) {
                                 // Episode Thumbnail
                                 GlideImage(
-                                    model = ep.coverUri.ifBlank { show?.coverUri },
+                                    model = com.music.spotui.ui.notification.PodcastCover.preferredUri(context, ep)
+                                        .ifBlank { show?.coverUri.orEmpty() },
                                     contentScale = ContentScale.Crop,
                                     failure = placeholder(R.drawable.placeholder),
                                     modifier = Modifier
@@ -565,7 +572,8 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                                 .clickable {
                                                     vm.updateQueue(filteredEpisodes)
                                                     vm.updateSongState(ep.coverUri, ep.title, ep.singer, true, ep.id, i, ep.album)
-                                                    SongPlayer.playSong(ep.url, context, "song/${ep.id}")
+                                                    com.music.spotui.ui.notification.PodcastCover.preserve(context, ep)
+                                        SongPlayer.playSong(ep.url, context, "song/${ep.id}")
                                                 },
                                             contentAlignment = Alignment.Center
                                         ) {
@@ -627,7 +635,8 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                                     SongPlayer.seekTo(chapter.timeMs)
                                                 } else {
                                                     SongPlayer.setRestorePoint(ep.url, chapter.timeMs)
-                                                    SongPlayer.playSong(ep.url, context, "song/${ep.id}")
+                                                    com.music.spotui.ui.notification.PodcastCover.preserve(context, ep)
+                                        SongPlayer.playSong(ep.url, context, "song/${ep.id}")
                                                 }
                                                 android.widget.Toast.makeText(
                                                     context,
@@ -688,7 +697,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 20.dp),
+                                .padding(top = 20.dp, bottom = 42.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Surface(
@@ -698,7 +707,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                     .clickable { vm.loadMoreEpisodes() }
                             ) {
                                 Text(
-                                    text = "Cargar más",
+                                    text = "Cargar más episodios",
                                     color = Color.Black,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold,
@@ -710,7 +719,8 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                 }
             }
 
-            item { Spacer(Modifier.height(130.dp)) }
+            // Reserve room for the mini-player, system navigation and large font scales.
+            item { Spacer(Modifier.height(230.dp)) }
         }
 
         // Sort Options Modal Bottom Sheet
@@ -787,7 +797,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
     }
 }
 
-private data class PodcastChapter(
+internal data class PodcastChapter(
     val title: String,
     val timeMs: Long,
     val timeFormatted: String
@@ -802,7 +812,7 @@ private fun parseTimeToMs(time: String): Long {
     }
 }
 
-private fun parsePodcastChapters(description: String): List<PodcastChapter> {
+internal fun parsePodcastChapters(description: String): List<PodcastChapter> {
     if (description.isBlank()) return emptyList()
     val regex = Regex("(\\[?\\d{1,2}:\\d{2}(?::\\d{2})?\\]?)[-:\\s]+(.*)")
     val chapters = mutableListOf<PodcastChapter>()
