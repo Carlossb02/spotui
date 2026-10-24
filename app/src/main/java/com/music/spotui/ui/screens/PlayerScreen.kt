@@ -106,6 +106,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -451,21 +452,11 @@ fun PlayerScreen(
             )
         )
     }
-    var songDurationText by remember { mutableStateOf("0") }
-    var songProgressText by remember { mutableStateOf("") }
-
-    songDurationText = if (SongPlayer.getDuration() < 0) {
-        "0:00"
-    } else {
-        playerViewModel.formatDuration(SongPlayer.getDuration())
-    }
-    songProgressText = if (SongPlayer.getCurrentPosition() < 0) {
-        "0:00"
-    } else {
-        playerViewModel.formatDuration(SongPlayer.getCurrentPosition())
-    }
-
-    Log.d("checkplayer", songTitle)
+    // State is updated by the playback ticker below. Do not write to
+    // mutableStateOf during composition: that forces another recomposition and
+    // can make the tablet panel visibly stutter.
+    var songDurationText by remember(songId) { mutableStateOf("0:00") }
+    var songProgressText by remember(songId) { mutableStateOf("0:00") }
 
     //playerViewModel.updateSongState(songCoverUri, songTitle, songSinger, songPlayingState)
 
@@ -677,7 +668,7 @@ fun PlayerScreen(
             ),
         contentAlignment = Alignment.TopCenter
     ) {
-        if (canvasUrl != null) {
+        if (canvasUrl != null && com.music.spotui.ui.visibility.UiVisibility.isVisible) {
             // Spotify Canvas: the looping video fills the whole now-playing screen
             // edge-to-edge behind the controls (the "immersive" treatment), with a
             // scrim on top so the title, slider and buttons stay readable.
@@ -1171,20 +1162,32 @@ fun PlayerTopBar(
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (onFullscreenClick != null) {
                 androidx.compose.material3.IconButton(onClick = onFullscreenClick) {
-                    // The launcher icon is an adaptive-icon XML drawable on Android 8+.
-                    // painterResource cannot decode adaptive icons; let Android render it.
-                    androidx.compose.ui.viewinterop.AndroidView(
-                        factory = { iconContext ->
-                            android.widget.ImageView(iconContext).apply {
-                                setImageDrawable(
-                                    iconContext.applicationInfo.loadIcon(iconContext.packageManager)
-                                )
-                                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
-                                contentDescription = "Abrir reproductor a pantalla completa"
-                            }
-                        },
-                        modifier = Modifier.size(25.dp)
-                    )
+                    // Spotify-style expand-pane control: an outlined screen with
+                    // a side bar and chevron, not the application's launcher logo.
+                    androidx.compose.foundation.Canvas(modifier = Modifier.size(26.dp)) {
+                        val stroke = 2.dp.toPx()
+                        val w = size.width
+                        val h = size.height
+                        drawRoundRect(
+                            color = Color.White,
+                            topLeft = androidx.compose.ui.geometry.Offset(stroke, stroke),
+                            size = androidx.compose.ui.geometry.Size(w - 2f * stroke, h - 2f * stroke),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx()),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke)
+                        )
+                        drawLine(Color.White,
+                            start = androidx.compose.ui.geometry.Offset(w * .35f, stroke),
+                            end = androidx.compose.ui.geometry.Offset(w * .35f, h - stroke),
+                            strokeWidth = stroke)
+                        drawLine(Color.White,
+                            start = androidx.compose.ui.geometry.Offset(w * .72f, h * .30f),
+                            end = androidx.compose.ui.geometry.Offset(w * .53f, h * .50f),
+                            strokeWidth = stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                        drawLine(Color.White,
+                            start = androidx.compose.ui.geometry.Offset(w * .53f, h * .50f),
+                            end = androidx.compose.ui.geometry.Offset(w * .72f, h * .70f),
+                            strokeWidth = stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                    }
                 }
             }
             androidx.compose.material3.IconButton(onClick = onBackClick) {
@@ -2995,40 +2998,82 @@ fun PlayerMenuRow(
 @Composable
 private fun CanvasVideo(url: String, modifier: Modifier = Modifier, onError: (() -> Unit)? = null) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val currentOnError by androidx.compose.runtime.rememberUpdatedState(onError)
+
+    // Canvas is decorative; decoding an additional Opus/AAC audio track at volume
+    // zero still allocates a codec and buffer queues. Disable audio at the track
+    // selector instead, leaving SongPlayer as the only audio renderer.
     val exo = remember(url) {
-        androidx.media3.exoplayer.ExoPlayer.Builder(context).build().apply {
-            setMediaItem(androidx.media3.common.MediaItem.fromUri(url))
-            repeatMode = androidx.media3.common.Player.REPEAT_MODE_ALL
-            volume = 0f
-            playWhenReady = true
-            prepare()
+        val selector = androidx.media3.exoplayer.trackselection.DefaultTrackSelector(context).apply {
+            parameters = buildUponParameters()
+                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, true)
+                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, true)
+                .build()
+        }
+        androidx.media3.exoplayer.ExoPlayer.Builder(context.applicationContext)
+            .setTrackSelector(selector)
+            .build()
+            .apply {
+                setAudioAttributes(androidx.media3.common.AudioAttributes.DEFAULT, false)
+                setMediaItem(androidx.media3.common.MediaItem.fromUri(url))
+                repeatMode = androidx.media3.common.Player.REPEAT_MODE_ONE
+                volume = 0f
+                playWhenReady = true
+                prepare()
+            }
+    }
+    val playerView = remember(exo) {
+        androidx.media3.ui.PlayerView(context).apply {
+            player = exo
+            useController = false
+            controllerAutoShow = false
+            setShowBuffering(androidx.media3.ui.PlayerView.SHOW_BUFFERING_NEVER)
+            setArtworkDisplayMode(androidx.media3.ui.PlayerView.ARTWORK_DISPLAY_MODE_OFF)
+            setDefaultArtwork(null)
+            hideController()
+            resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
         }
     }
-    androidx.compose.runtime.DisposableEffect(url) {
+    DisposableEffect(exo, lifecycleOwner) {
+        var released = false
         val listener = object : androidx.media3.common.Player.Listener {
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                onError?.invoke()
+                currentOnError?.invoke()
             }
         }
-        exo.addListener(listener)
-        onDispose { exo.removeListener(listener); exo.release() }
-    }
-    androidx.compose.ui.viewinterop.AndroidView(
-        modifier = modifier,
-        factory = { ctx ->
-            androidx.media3.ui.PlayerView(ctx).apply {
-                player = exo
-                // Strip ALL chrome: no controller, no buffering spinner, and no
-                // artwork/placeholder icon (that "play icon" overlay) — just video.
-                useController = false
-                controllerAutoShow = false
-                setShowBuffering(androidx.media3.ui.PlayerView.SHOW_BUFFERING_NEVER)
-                setArtworkDisplayMode(androidx.media3.ui.PlayerView.ARTWORK_DISPLAY_MODE_OFF)
-                setDefaultArtwork(null)
-                hideController()
-                resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (released) return@LifecycleEventObserver
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE,
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
+                    // Disconnect the compositor before the Activity SurfaceView
+                    // disappears. The media decoder should not race Surface teardown.
+                    exo.pause()
+                    playerView.player = null
+                }
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
+                    // ON_RESUME may be dispatched before MainActivity updates
+                    // UiVisibility; restore the surface based on lifecycle itself.
+                    playerView.player = exo
+                    exo.play()
+                }
+                else -> Unit
             }
-        },
-    )
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        exo.addListener(listener)
+        onDispose {
+            released = true
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            exo.removeListener(listener)
+            exo.pause()
+            // Detach BEFORE terminating its playback looper/MediaCodec.
+            playerView.player = null
+            exo.stop()
+            exo.release()
+        }
+    }
+    androidx.compose.ui.viewinterop.AndroidView(modifier = modifier, factory = { playerView })
 }

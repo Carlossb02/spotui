@@ -104,11 +104,6 @@ import kotlinx.coroutines.delay
 
 @Composable
 fun AlbumScreen(navController: NavController, albumName: String, artist: String = "") {
-    val tabletCollectionLayout = LocalConfiguration.current.smallestScreenWidthDp >= 600 &&
-        LocalConfiguration.current.screenWidthDp >= 840
-
-
-
     val albumViewModel : AlbumViewModel = hiltViewModel()
     val songs by albumViewModel.songs.collectAsState()
     val albums by albumViewModel.albums.collectAsState()
@@ -737,14 +732,14 @@ fun SumUpAlbumScreen(
                                         indication = null,
                                         onLongClick = { menuSong = targetSong },
                                         onClick = {
-                                            albumViewModel.updateQueue(filteredSongs)
+                                            albumViewModel.updateQueue(filteredSongs.drop(songIdx))
                                             albumViewModel.updateSongState(
                                                 targetSong.coverUri,
                                                 targetSong.title,
                                                 targetSong.singer,
                                                 true,
                                                 targetSong.id,
-                                                songIdx,
+                                                0,
                                                 albumName
                                             )
                                             SongPlayer.playSong(targetSong.url, context, "song/${targetSong.id}")

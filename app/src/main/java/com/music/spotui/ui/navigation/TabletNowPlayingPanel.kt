@@ -2,6 +2,10 @@ package com.music.spotui.ui.navigation
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.navigation.NavHostController
 import com.music.spotui.ui.screens.PlayerScreen
 import com.music.spotui.ui.viewmodel.PlayerViewModel
@@ -18,7 +22,10 @@ fun TabletNowPlayingPanel(
     onCollapse: () -> Unit,
     playerViewModel: PlayerViewModel,
 ) {
-    androidx.compose.foundation.layout.Box(modifier) {
-        PlayerScreen(navController, embedded = true, onCollapse = onCollapse, playerViewModel = playerViewModel)
+    androidx.compose.foundation.layout.Box(
+        modifier.clipToBounds().background(Color.Black)
+    ) {
+        PlayerScreen(navController, embedded = true, onCollapse = onCollapse,
+            playerViewModel = playerViewModel)
     }
 }

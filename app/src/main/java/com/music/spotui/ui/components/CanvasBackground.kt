@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
@@ -51,8 +53,12 @@ fun VideoCanvasBackground(
     modifier: Modifier = Modifier,
     scrimAlpha: Float = 0.16f,
 ) {
+    // Background artwork must never keep a dedicated video decoder alive while
+    // the user is using another app. This player is purely decorative.
+    if (!com.music.spotui.ui.visibility.UiVisibility.isVisible) return
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val currentShouldPlay by rememberUpdatedState(shouldPlay)
 
     val textureView = remember {
         TextureView(context).apply {
@@ -96,14 +102,25 @@ fun VideoCanvasBackground(
     DisposableEffect(player, lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_RESUME -> if (shouldPlay) player.play()
-                Lifecycle.Event.ON_PAUSE -> player.pause()
+                Lifecycle.Event.ON_RESUME -> {
+                    // Lifecycle resume can arrive just before UiVisibility is
+                    // updated by the Activity. Reattach on the lifecycle event.
+                    player.setVideoTextureView(textureView)
+                    if (currentShouldPlay) player.play()
+                }
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                    player.pause()
+                    player.clearVideoTextureView(textureView)
+                }
                 else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+            player.pause()
+            player.clearVideoTextureView(textureView)
+            player.stop()
             player.release()
         }
     }

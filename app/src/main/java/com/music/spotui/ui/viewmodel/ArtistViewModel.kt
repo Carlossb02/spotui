@@ -32,7 +32,7 @@ class ArtistViewModel @Inject constructor(private val repository: AppRepository,
     private val _overview : MutableStateFlow<Response<ArtistOverviewModel>> = MutableStateFlow(Response.Loading())
     val overview : StateFlow<Response<ArtistOverviewModel>> = _overview
 
-    fun updateQueue(songs: List<SongsModel>) = currentSongState.updateQueue(songs)
+    fun updateQueue(songs: List<SongsModel>) = currentSongState.updateQueue(songs, isManualEdit = true)
 
     fun updateSongState(coverUri: String, title: String, singer: String, playingState: Boolean, songId :Int, songIndex : Int = 0, album : String = "") {
         currentSongState.updateSongState(coverUri, title, singer, playingState, songId, songIndex, album)

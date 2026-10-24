@@ -27,7 +27,7 @@ class LikedSongsViewModel @Inject constructor(
     val currentSongId: State<Int> get() = currentSongState.songId
 
     val queue: State<List<SongsModel>> get() = currentSongState.queue
-    fun updateQueue(songs: List<SongsModel>) = currentSongState.updateQueue(songs)
+    fun updateQueue(songs: List<SongsModel>) = currentSongState.updateQueue(songs, isManualEdit = true)
 
     fun startShuffled(songs: List<SongsModel>) = currentSongState.startShuffled(songs)
 

@@ -1,6 +1,13 @@
 package com.music.spotui.ui.notification
 
 import android.app.PendingIntent
+import android.app.NotificationManager
+import android.app.NotificationChannel
+import android.os.Build
+import android.content.pm.ServiceInfo
+import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import androidx.media3.session.MediaStyleNotificationHelper
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -70,6 +77,174 @@ class PlaybackService : MediaLibraryService() {
 
     private var mediaSession: MediaLibrarySession? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var notificationRefreshJob: kotlinx.coroutines.Job? = null
+    private var taskRemovalCheckJob: kotlinx.coroutines.Job? = null
+    private var ownsPlaybackForeground = false
+
+    companion object {
+        // Media3's default notification ID, so Android never shows two media cards.
+        private const val PLAYBACK_NOTIFICATION_ID = 1001
+        private const val PLAYBACK_NOTIFICATION_CHANNEL = "spotui_media_playback"
+        private const val ACTION_NOTIFICATION_TOGGLE = "com.music.spotui.action.NOTIFICATION_TOGGLE"
+        private const val ACTION_NOTIFICATION_PREVIOUS = "com.music.spotui.action.NOTIFICATION_PREVIOUS"
+        private const val ACTION_NOTIFICATION_NEXT = "com.music.spotui.action.NOTIFICATION_NEXT"
+        private const val ACTION_NOTIFICATION_CLOSE = "com.music.spotui.action.NOTIFICATION_CLOSE"
+
+        // Android Auto browse tree nodes
+        private const val ROOT = "root"
+        private const val NODE_HOME = "auto_home"
+        private const val NODE_RECENTS = "auto_recents"
+        private const val NODE_BROWSE = "auto_browse"
+        private const val NODE_LIBRARY = "auto_library"
+        private const val NODE_PODCASTS = "auto_podcasts"
+        private const val NODE_LOCAL = "auto_local"
+        private const val NODE_LIKED = "liked"
+        private const val NODE_DOWNLOADS = "downloads"
+        private const val NODE_PLAYLISTS = "playlists"
+        private const val NODE_ALBUMS = "albums"
+        private const val NODE_ARTISTS = "artists"
+        private const val NODE_SONGS = "songs"
+    }
+
+    /**
+     * An ExoPlayer's MediaItem may arrive several seconds after the user presses Play,
+     * because Spotui resolves remote streams lazily. Media3's automatic notification
+     * refuses an empty timeline, so it cannot protect the service during that window.
+     * The service owns ONE real MediaStyle notification for the Media3 session instead.
+     * This is a real foreground MEDIA_PLAYBACK service, not a second player or a dummy
+     * high-priority notification.
+     */
+    private fun playbackShouldOwnForeground(): Boolean =
+        SongPlayer.isResolvingOrPlaying() || SongPlayer.isPreparingTrack() ||
+            SongPlayer.isCrossfadeActive() || SpotifyWebPlayer.isPlaying ||
+            (SongPlayer.exoPlayer?.playWhenReady == true &&
+                SongPlayer.exoPlayer?.playbackState != Player.STATE_ENDED)
+
+    private fun createPlaybackNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(
+                NotificationChannel(
+                    PLAYBACK_NOTIFICATION_CHANNEL,
+                    "Reproducción de Spotui",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description = "Controles de música y podcasts en reproducción"
+                    setShowBadge(false)
+                    lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+                }
+            )
+        }
+    }
+
+    private fun mediaAction(action: String, requestCode: Int): PendingIntent =
+        PendingIntent.getService(
+            this, requestCode,
+            Intent(this, PlaybackService::class.java).setAction(action),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+    private fun buildPlaybackNotification(session: MediaSession, foreground: Boolean): android.app.Notification {
+        val isActive = SongPlayer.isResolvingOrPlaying() || SpotifyWebPlayer.isPlaying
+        val title = currentSongState.title.value.ifBlank { "Spotui" }
+        val artist = currentSongState.singer.value.ifBlank { "Música y podcasts" }
+        val openApp = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        return NotificationCompat.Builder(this, PLAYBACK_NOTIFICATION_CHANNEL)
+            .setSmallIcon(R.drawable.ic_spotui_notification_monochrome)
+            .setContentTitle(title)
+            .setContentText(artist)
+            .setContentIntent(openApp)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOnlyAlertOnce(true)
+            .setOngoing(foreground)
+            .setShowWhen(false)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .addAction(android.R.drawable.ic_media_previous, "Anterior",
+                mediaAction(ACTION_NOTIFICATION_PREVIOUS, 110))
+            .addAction(
+                if (isActive) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
+                if (isActive) "Pausar" else "Reproducir",
+                mediaAction(ACTION_NOTIFICATION_TOGGLE, 111)
+            )
+            .addAction(android.R.drawable.ic_media_next, "Siguiente",
+                mediaAction(ACTION_NOTIFICATION_NEXT, 112))
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cerrar",
+                mediaAction(ACTION_NOTIFICATION_CLOSE, 113))
+            // MediaStyle with Media3's platform token is essential on Android 13+:
+            // SystemUI builds the media controls from the live MediaSession.
+            .setStyle(
+                MediaStyleNotificationHelper.MediaStyle(session)
+                    .setShowActionsInCompactView(0, 1, 2)
+            )
+            .build()
+    }
+
+    private fun scheduleMediaNotificationRefresh() {
+        notificationRefreshJob?.cancel()
+        notificationRefreshJob = serviceScope.launch {
+            // Do not postpone notifications repeatedly during buffering/crossfade.
+            kotlinx.coroutines.delay(70L)
+            mediaSession?.let { session ->
+                runCatching { updateOwnedPlaybackNotification(session) }
+                    .onFailure { android.util.Log.e("SpotuiLifecycle", "media_notification_error", it) }
+            }
+        }
+    }
+
+    private fun updateOwnedPlaybackNotification(session: MediaSession) {
+        val active = playbackShouldOwnForeground()
+        val hasTrack = currentSongState.songUrl.value.isNotBlank() ||
+            currentSongState.queue.value.isNotEmpty() || SpotifyWebPlayer.isPlaying
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (!active && !hasTrack) {
+            if (ownsPlaybackForeground) {
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                ownsPlaybackForeground = false
+            }
+            manager.cancel(PLAYBACK_NOTIFICATION_ID)
+            return
+        }
+        val notification = buildPlaybackNotification(session, foreground = active)
+        if (active) {
+            try {
+                // Bind-only services may be demoted when the Activity goes away.
+                // Explicit promotion keeps playback perceptible to Android's LMK.
+                ServiceCompat.startForeground(
+                    this, PLAYBACK_NOTIFICATION_ID, notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                )
+                if (!ownsPlaybackForeground) {
+                    android.util.Log.i("SpotuiLifecycle", "media_fgs_active=true")
+                }
+                ownsPlaybackForeground = true
+            } catch (error: Exception) {
+                // Background starts may be restricted by the OS. Preserve playback
+                // and report the real exception rather than crashing our process.
+                android.util.Log.e("SpotuiLifecycle", "media_fgs_promotion_failed", error)
+                runCatching { manager.notify(PLAYBACK_NOTIFICATION_ID, notification) }
+            }
+        } else {
+            if (ownsPlaybackForeground) {
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
+                ownsPlaybackForeground = false
+            }
+            // A paused player remains visible but is no longer kept alive as an FGS.
+            runCatching { manager.notify(PLAYBACK_NOTIFICATION_ID, notification) }
+        }
+    }
+
+    override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
+        // Intentionally take ownership of this single notification, as allowed by
+        // MediaSessionService. Calling super here would allow Media3 to demote it
+        // while a YouTube URL is still resolving or a crossfade swaps players.
+        runCatching { updateOwnedPlaybackNotification(session) }
+            .onFailure { android.util.Log.e("SpotuiLifecycle", "onUpdateNotification failed", it) }
+    }
 
     // Android Auto browse cache: mediaId → track, and mediaId → the list it was
     // browsed from (so playing a track queues its whole playlist/album).
@@ -93,6 +268,7 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
+            scheduleMediaNotificationRefresh()
             currentSongState.updateBufferingState(playbackState == Player.STATE_BUFFERING)
             // ExoPlayer's WAKE_MODE_LOCAL is responsible for the CPU wake lock.
             // No 12-hour application-held wake locks are needed here.
@@ -156,6 +332,7 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            scheduleMediaNotificationRefresh()
             android.util.Log.w("SpotuiTransition", "session underlying playWhenReady=$playWhenReady reason=$reason " +
                 "state=${SongPlayer.exoPlayer?.playbackState}, crossfade=${SongPlayer.isCrossfadeActive()}")
         }
@@ -166,6 +343,7 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            scheduleMediaNotificationRefresh()
             android.util.Log.i("SpotuiTransition", "session underlying isPlaying=$isPlaying " +
                 "state=${SongPlayer.exoPlayer?.playbackState}, crossfade=${SongPlayer.isCrossfadeActive()}")
             // Mirror ExoPlayer's real play/pause state into the in-app UI so the
@@ -174,10 +352,23 @@ class PlaybackService : MediaLibraryService() {
             if (SongPlayer.isCrossfadeActive()) return
             if (!isPlaying && SongPlayer.isPreparingTrack()) return
             // Do not leak a manual wake lock across an entire playback session.
+            if (!isPlaying) {
+                PlaybackLifecycleDiagnostics.record(applicationContext,
+                    "player_not_playing state=${SongPlayer.exoPlayer?.playbackState} " +
+                    "ready=${SongPlayer.exoPlayer?.playWhenReady}")
+            }
             if (!showingWeb) currentSongState.updatePlayingState(isPlaying)
         }
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            // Video is optional. The MediaSession must not skip an episode simply
+            // because the selected YouTube video stream is unavailable/expired.
+            if (com.music.spotui.ui.screens.PodcastVideoSession.player === SongPlayer.exoPlayer &&
+                com.music.spotui.ui.screens.PodcastVideoSession.activeVideoId != null) {
+                android.util.Log.w("PlaybackService", "A/V source failed; falling back to podcast audio", error)
+                com.music.spotui.ui.screens.PodcastVideoSession.stop()
+                return
+            }
             if (SongPlayer.isCrossfadeActive()) {
                 android.util.Log.w("PlaybackService", "Outgoing player failed during crossfade; checking incoming player", error)
                 // If the incoming player is READY, its promotion is queued on the
@@ -224,6 +415,8 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onCreate() {
         super.onCreate()
+        PlaybackLifecycleDiagnostics.reportPreviousExit(this)
+        PlaybackLifecycleDiagnostics.record(this, "service_created")
         SongPlayer.ensureCreated(this)
 
         // Order notification buttons: [repeat | prev | play/pause | next | close]
@@ -240,20 +433,6 @@ class PlaybackService : MediaLibraryService() {
             ): ImmutableList<CommandButton> {
                 val base =
                     super.getMediaButtons(session, playerCommands, customLayout, showPauseButton)
-                android.util.Log.d(
-                    "PlaybackService",
-                    "getMediaButtons: playerCommands=$playerCommands"
-                )
-                android.util.Log.d(
-                    "PlaybackService",
-                    "getMediaButtons: baseButtons size=${base.size}"
-                )
-                for (b in base) {
-                    android.util.Log.d(
-                        "PlaybackService",
-                        "getMediaButtons: button displayName=${b.displayName}, customAction=${b.sessionCommand?.customAction}, playerCommand=${b.playerCommand}"
-                    )
-                }
                 val repeatBtn = base.find { it.sessionCommand?.customAction == "ACTION_REPEAT" }
                 val closeBtn = base.find { it.sessionCommand?.customAction == "ACTION_CLOSE" }
                 val transport = base.filter {
@@ -269,6 +448,13 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         setMediaNotificationProvider(notificationProvider)
+        createPlaybackNotificationChannel()
+        // Diagnostics only: notification visibility can also be disabled in
+        // Android app settings, independently from Media3 foreground handling.
+        val notificationsEnabled =
+            (getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager)
+                .areNotificationsEnabled()
+        android.util.Log.i("SpotuiLifecycle", "system_notifications_enabled=$notificationsEnabled")
 
         // Let the player advance the in-app queue itself during a crossfade.
         SongPlayer.bindState(currentSongState)
@@ -303,13 +489,14 @@ class PlaybackService : MediaLibraryService() {
         mediaSession = MediaLibrarySession.Builder(this, wrap(base), LibraryCallback())
             .setSessionActivity(sessionActivity)
             .build()
-
+        scheduleMediaNotificationRefresh()
 
         // The session must see a buffering/play-intent event while the current
         // stream URL is being resolved. Otherwise Media3 may demote the service
         // when the outgoing player pauses, especially under battery restrictions.
         SongPlayer.onPlaybackIntentChanged = {
             activeForwardingPlayer?.dispatchPlaybackRefresh()
+            scheduleMediaNotificationRefresh()
         }
 
         // When a crossfade promotes a new ExoPlayer instance, re-bind the session to it
@@ -317,6 +504,7 @@ class PlaybackService : MediaLibraryService() {
         SongPlayer.onPlayerCreated = { newPlayer ->
             if (!showingWeb) mediaSession?.player = wrap(newPlayer)
             newPlayer.addListener(playerListener)
+            scheduleMediaNotificationRefresh()
         }
         SongPlayer.onPlayerSwapped = { oldPlayer, newPlayer ->
             android.util.Log.i("SpotuiTransition", "media session swap: " +
@@ -334,6 +522,7 @@ class PlaybackService : MediaLibraryService() {
             playerListener.onIsPlayingChanged(newPlayer.isPlaying)
             // Media3 will hold its own playback wake lock after player swap.
             currentSongState.updatePlayingState(newPlayer.isPlaying || newPlayer.playWhenReady)
+            scheduleMediaNotificationRefresh()
         }
 
         // Keep the notification's repeat icon in sync whenever the repeat mode
@@ -367,6 +556,7 @@ class PlaybackService : MediaLibraryService() {
         // the session between the web player (during web playback) and the ExoPlayer.
         SpotifyWebPlayer.onStateChanged = {
             syncSessionPlayer()
+            scheduleMediaNotificationRefresh()
             if (showingWeb) {
                 webPlayer?.refresh()
                 // Reflect the web player's real play/pause state into the in-app UI
@@ -721,22 +911,6 @@ class PlaybackService : MediaLibraryService() {
         mediaSession
 
     // ── Android Auto browse tree ──────────────────────────────────────────
-
-    private companion object {
-        const val ROOT = "root"
-        const val NODE_HOME = "auto_home"
-        const val NODE_RECENTS = "auto_recents"
-        const val NODE_BROWSE = "auto_browse"
-        const val NODE_LIBRARY = "auto_library"
-        const val NODE_PODCASTS = "auto_podcasts"
-        const val NODE_LOCAL = "auto_local"
-        const val NODE_LIKED = "liked"
-        const val NODE_DOWNLOADS = "downloads"
-        const val NODE_PLAYLISTS = "playlists"
-        const val NODE_ALBUMS = "albums"
-        const val NODE_ARTISTS = "artists"
-        const val NODE_SONGS = "songs"
-    }
 
     /**
      * Builds the notification custom layout: [repeat button | close button].
@@ -1371,28 +1545,126 @@ class PlaybackService : MediaLibraryService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Let Media3 handle media-button intents and choose the service restart
-        // contract; overriding its return value can break system resumption.
+        PlaybackLifecycleDiagnostics.record(this, "service_start action=${intent?.action} flags=$flags")
+        // Buttons are explicit PendingIntents to this existing service, not implicit
+        // media broadcasts which HyperOS may defer when the UI is backgrounded.
+        when (intent?.action) {
+            ACTION_NOTIFICATION_TOGGLE -> {
+                SongPlayer.togglePlay()
+                scheduleMediaNotificationRefresh()
+                return START_STICKY
+            }
+            ACTION_NOTIFICATION_PREVIOUS -> {
+                SongPlayer.previous(applicationContext)
+                scheduleMediaNotificationRefresh()
+                return START_STICKY
+            }
+            ACTION_NOTIFICATION_NEXT -> {
+                SongPlayer.next(applicationContext)
+                scheduleMediaNotificationRefresh()
+                return START_STICKY
+            }
+            ACTION_NOTIFICATION_CLOSE -> {
+                taskRemovalCheckJob?.cancel()
+                SpotifyWebPlayer.pause()
+                SongPlayer.stop()
+                currentSongState.updatePlayingState(false)
+                (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                    .cancel(PLAYBACK_NOTIFICATION_ID)
+                pauseAllPlayersAndStopSelf()
+                return START_NOT_STICKY
+            }
+        }
         return super.onStartCommand(intent, flags, startId)
     }
 
+    override fun onTrimMemory(level: Int) {
+        // Log memory pressure without touching the audio player or its media
+        // session: an Activity stop must never dispose the playback engine.
+        PlaybackLifecycleDiagnostics.record(this, "service_trim_memory level=$level " +
+            "playing=${SongPlayer.isPlaying()} preparing=${SongPlayer.isPreparingTrack()}")
+        // Search results and decoded artwork can be rebuilt; active song/player
+        // and its queue must never be evicted when another app needs RAM.
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            searchCache.clear()
+            PlaybackArtwork.releaseMemoryCache()
+        }
+        super.onTrimMemory(level)
+    }
+
+    /**
+     * HyperOS can invoke onTaskRemoved during Recents reparenting while Spotui's
+     * Activity still exists. An immediate SongPlayer.stop() here previously killed
+     * audio just by opening Google. Only act once Android's OWN task list confirms
+     * that the Spotui task has actually disappeared, twice, after a grace period.
+     * If the query is unavailable/ambiguous, favor uninterrupted playback.
+     */
+    private fun hasSpotuiTaskInRecents(): Boolean? = runCatching {
+        val manager = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        manager.appTasks.any { task ->
+            val info = task.taskInfo
+            info?.baseActivity?.packageName == packageName ||
+                info?.topActivity?.packageName == packageName ||
+                info?.baseIntent?.component?.packageName == packageName
+        }
+    }.onFailure {
+        android.util.Log.w("SpotuiLifecycle", "Unable to inspect app tasks", it)
+    }.getOrNull()
+
     override fun onTaskRemoved(rootIntent: Intent?) {
-        android.util.Log.w("SpotuiTransition", "service onTaskRemoved, playbackOngoing=${isPlaybackOngoing()}")
-        // Media3 manages an already-foreground session correctly. Do not call
-        // super while a new track is resolving during a transition: its default
-        // implementation can stop an idle-looking player and tear the session down.
-        // Media3's foreground state is the authoritative signal. If there is
-        // no foreground playback, use its default safe stop behavior (Android
-        // will reject a background-only service kept alive indefinitely).
-        if (isPlaybackOngoing() || SongPlayer.isResolvingOrPlaying() || SongPlayer.isPreparingTrack() || SongPlayer.isCrossfadeActive()) return
-        super.onTaskRemoved(rootIntent)
+        val playingOrPreparing = isPlaybackOngoing() ||
+            SongPlayer.isResolvingOrPlaying() || SongPlayer.isPreparingTrack() ||
+            SpotifyWebPlayer.isPlaying
+        PlaybackLifecycleDiagnostics.record(this,
+            "task_removed_candidate active=$playingOrPreparing taskPresent=${hasSpotuiTaskInRecents()}")
+
+        if (!playingOrPreparing) {
+            // Official Media3 behavior for genuinely idle playback.
+            super.onTaskRemoved(rootIntent)
+            return
+        }
+
+        taskRemovalCheckJob?.cancel()
+        taskRemovalCheckJob = serviceScope.launch {
+            kotlinx.coroutines.delay(1_500L)
+            val firstCheck = hasSpotuiTaskInRecents()
+            if (firstCheck != false) {
+                PlaybackLifecycleDiagnostics.record(this@PlaybackService,
+                    "task_removal_ignored firstCheck=$firstCheck")
+                return@launch
+            }
+            kotlinx.coroutines.delay(1_500L)
+            val secondCheck = hasSpotuiTaskInRecents()
+            if (secondCheck != false) {
+                PlaybackLifecycleDiagnostics.record(this@PlaybackService,
+                    "task_removal_ignored secondCheck=$secondCheck")
+                return@launch
+            }
+            PlaybackLifecycleDiagnostics.record(this@PlaybackService,
+                "task_removal_confirmed stopping_player")
+            SpotifyWebPlayer.pause()
+            SongPlayer.stop()
+            currentSongState.updatePlayingState(false)
+            pauseAllPlayersAndStopSelf()
+        }
     }
 
     override fun onDestroy() {
+        PlaybackLifecycleDiagnostics.record(this, "service_destroy " +
+            "fgs=${isPlaybackOngoing()} playing=${SongPlayer.isPlaying()} " +
+            "preparing=${SongPlayer.isPreparingTrack()} crossfade=${SongPlayer.isCrossfadeActive()}")
         android.util.Log.w("SpotuiTransition", "PlaybackService onDestroy, " +
             "state=${SongPlayer.exoPlayer?.playbackState} " +
             "isPlaying=${SongPlayer.isPlaying()} crossfade=${SongPlayer.isCrossfadeActive()}")
         artworkRefreshJob?.cancel()
+        notificationRefreshJob?.cancel()
+        taskRemovalCheckJob?.cancel()
+        if (ownsPlaybackForeground) {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            ownsPlaybackForeground = false
+        }
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .cancel(PLAYBACK_NOTIFICATION_ID)
         serviceScope.cancel()
         runCatching { unregisterReceiver(mediaControlReceiver) }
         SongPlayer.exoPlayer?.removeListener(playerListener)

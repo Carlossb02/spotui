@@ -44,6 +44,11 @@ object PlaybackArtwork {
 
     fun get(id: String): ByteArray? = cache.get(id)
 
+    /** Drop only decoded/presentation artwork under memory pressure, never disk art. */
+    fun releaseMemoryCache() {
+        cache.evictAll()
+    }
+
     /**
      * Garantiza que la carátula de [id] esté en caché. [onReady] se invoca en el hilo
      * principal solo si hubo que cargarla (si ya estaba en caché no se llama).

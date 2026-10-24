@@ -654,8 +654,10 @@ private fun HomeMusicFeedContent(
                     HomeSongRow(
                         song = song,
                         onPlay = {
-                            playerViewModel.updateQueue(topList)
-                            playerViewModel.playSongAt(topList, i, context)
+                            playerViewModel.updateQueue(topList.drop(i), isManualEdit = true)
+                            playerViewModel.updateSongState(song.coverUri, song.title, song.singer,
+                                true, song.id, 0, song.album)
+                            SongPlayer.playSong(song.url, context, "song/${song.id}")
                         },
                         onLongClick = {
                             onTrackOptions(song)

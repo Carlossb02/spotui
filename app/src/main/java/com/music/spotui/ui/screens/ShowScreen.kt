@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -51,6 +52,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -74,7 +81,8 @@ import com.music.spotui.data.preferences.getShowSortOption
 import com.music.spotui.data.preferences.isShowSortDescending
 import com.music.spotui.data.preferences.setShowSortOption
 import com.music.spotui.di.SongPlayer
-import com.music.spotui.ui.components.AppSearchBar
+import com.music.spotui.ui.components.CollectionPullSearch
+import com.music.spotui.ui.components.rememberCollectionSearchState
 import com.music.spotui.ui.components.Loader
 import com.music.spotui.ui.components.SongOptionsSheet
 import com.music.spotui.ui.components.SwipeToPlayNextWrapper
@@ -134,11 +142,26 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
     val displayedEpisodes = remember(filteredEpisodes, visibleCount) {
         filteredEpisodes.take(visibleCount)
     }
+    val listState = rememberLazyListState()
+    val searchReveal = rememberCollectionSearchState(listState, showId)
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    searchReveal.onDismissByScroll = {
+        searchQuery = ""
+        focusManager.clearFocus()
+        keyboard?.hide()
+    }
+    LaunchedEffect(keyboardVisible) {
+        if (keyboardVisible) listState.scrollToItem(0)
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                .nestedScroll(searchReveal.nestedScrollConnection)
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
@@ -150,6 +173,16 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                 )
                 .statusBarsPadding(),
         ) {
+            if (episodes.isNotEmpty()) {
+                item(key = "podcast_pull_search") {
+                    CollectionPullSearch(
+                        state = searchReveal,
+                        query = searchQuery,
+                        onQueryChange = { searchQuery = it },
+                        placeholder = "Buscar en episodios"
+                    )
+                }
+            }
             // Back Button
             item {
                 Icon(
@@ -166,8 +199,8 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                 )
             }
 
-            // Spotify Header Section
-            item {
+            // Hide the show header while typing so search results remain visible.
+            if (!keyboardVisible) item {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
@@ -365,16 +398,6 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
             }
 
             if (episodes.isNotEmpty()) {
-                // Search Bar inside Episodes
-                item {
-                    AppSearchBar(
-                        query = searchQuery,
-                        onQueryChange = { searchQuery = it },
-                        modifier = Modifier.padding(20.dp, 8.dp),
-                        placeholder = "Buscar en episodios",
-                    )
-                }
-
                 // Sort Action Bar
                 item {
                     Row(

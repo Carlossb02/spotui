@@ -49,14 +49,10 @@ class MainActivity : ComponentActivity() {
             PodcastVideoSession.activeVideoId != null &&
             PodcastVideoSession.player != null
 
-    private fun refreshPodcastPipParams() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
-            !packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return
-        // Automatic background PiP only when playing; the explicit PiP control
-        // also works while paused, showing the last decoded video frame.
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun buildPipParams(): PictureInPictureParams {
         val canEnter = canEnterPodcastPip() && SongPlayer.isPlaying()
         val size = PodcastVideoSession.player?.videoSize?.let { it.width to it.height }
-        if (canEnter == pipAutoEnterEnabled && size == lastPipVideoSize) return
         val w = size?.first ?: 16
         val h = size?.second ?: 9
         val ratio = (if (w > 0 && h > 0) w.toFloat() / h else 16f / 9f)
@@ -67,7 +63,19 @@ class MainActivity : ComponentActivity() {
             builder.setAutoEnterEnabled(canEnter)
             builder.setSeamlessResizeEnabled(true)
         }
-        runCatching { setPictureInPictureParams(builder.build()) }
+        return builder.build()
+    }
+
+    private fun refreshPodcastPipParams() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+            !packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return
+        // Automatic background PiP only when playing; the explicit PiP control
+        // also works while paused, showing the last decoded video frame.
+        val canEnter = canEnterPodcastPip() && SongPlayer.isPlaying()
+        val size = PodcastVideoSession.player?.videoSize?.let { it.width to it.height }
+        if (canEnter == pipAutoEnterEnabled && size == lastPipVideoSize) return
+        val params = buildPipParams()
+        runCatching { setPictureInPictureParams(params) }
             .onSuccess {
                 pipAutoEnterEnabled = canEnter
                 lastPipVideoSize = size
@@ -77,10 +85,16 @@ class MainActivity : ComponentActivity() {
 
     /** Also exposed as a control in the video overlay. Never starts a second player. */
     fun enterPodcastPictureInPicture() {
-        if (!canEnterPodcastPip()) return
+        if (!canEnterPodcastPip() || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            PodcastVideoSession.finishPipHandoff()
+            return
+        }
         refreshPodcastPipParams()
-        runCatching { enterPictureInPictureMode() }
+        val params = buildPipParams()
+        val entered = runCatching { enterPictureInPictureMode(params) }
             .onFailure { android.util.Log.w("SpotuiPiP", "Unable to enter PiP", it) }
+            .getOrDefault(false)
+        if (!entered) PodcastVideoSession.finishPipHandoff()
     }
 
     override fun onUserLeaveHint() {
@@ -95,6 +109,7 @@ class MainActivity : ComponentActivity() {
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         PodcastVideoPipState.isInPictureInPicture = isInPictureInPictureMode
+        PodcastVideoSession.finishPipHandoff()
         if (!isInPictureInPictureMode) refreshPodcastPipParams()
     }
 
@@ -159,10 +174,10 @@ class MainActivity : ComponentActivity() {
                     refreshPodcastPipParams()
                 }
                 // Poll only for play/video state changes, not video frames.
-                LaunchedEffect(Unit) {
-                    while (true) {
+                LaunchedEffect(PodcastVideoSession.activeVideoId) {
+                    while (PodcastVideoSession.activeVideoId != null) {
                         refreshPodcastPipParams()
-                        delay(800L)
+                        delay(1_500L)
                     }
                 }
 
@@ -203,6 +218,34 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         com.music.spotui.util.DeepLinkHandler.handleIntent(intent)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        com.music.spotui.ui.visibility.UiVisibility.update(true)
+        com.music.spotui.ui.notification.PlaybackLifecycleDiagnostics.reportPreviousExit(this)
+        com.music.spotui.ui.notification.PlaybackLifecycleDiagnostics.record(this, "activity_started")
+    }
+
+    override fun onPause() {
+        // Suspend purely decorative playback BEFORE Android detaches the Activity
+        // surfaces. Podcast PiP and the MediaSession audio player are independent
+        // of this UI-only flag and must remain intact.
+        com.music.spotui.ui.visibility.UiVisibility.update(false)
+        super.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        com.music.spotui.ui.visibility.UiVisibility.update(true)
+    }
+
+    override fun onStop() {
+        // Free optional UI-only video decoders while Google or another app is
+        // foreground. The audio ExoPlayer belongs to PlaybackService and stays alive.
+        com.music.spotui.ui.visibility.UiVisibility.update(false)
+        com.music.spotui.ui.notification.PlaybackLifecycleDiagnostics.record(this, "activity_stopped")
+        super.onStop()
     }
 
     override fun onDestroy() {

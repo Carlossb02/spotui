@@ -1,5 +1,13 @@
 package com.music.spotui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+
 import android.annotation.SuppressLint
 import android.os.Build
 import androidx.annotation.RequiresApi
@@ -68,7 +76,9 @@ fun App() {
             com.music.spotui.ui.screens.PodcastVideoSession.sync(
                 foregroundLifecycle.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
             )
-            kotlinx.coroutines.delay(600L)
+            kotlinx.coroutines.delay(
+                if (com.music.spotui.ui.screens.PodcastVideoSession.activeVideoId != null) 750L else 1500L
+            )
         }
     }
     val playerState by playerViewModel.currentSongTitle
@@ -140,7 +150,7 @@ fun App() {
                                 bottomBarState = bottomBarState,
                                 bottomBarPlayerState = bottomBarPlayerState,
                                 onSearchReselected = { searchFocusTrigger++ },
-                                tabletInlineMiniPlayer = !showPlayerPanel,
+                                tabletInlineMiniPlayer = true,
                                 showMiniPlayer = !showPlayerPanel,
                                 onExpandTabletPlayer = if (!showPlayerPanel && playerState.isNotBlank()) {
                                     { tabletPlayerExpanded = true }
@@ -155,8 +165,18 @@ fun App() {
                     }
 
                 }
-                if (showPlayerPanel) {
-                    val panelWidth = (availableWidth * 0.38f).coerceIn(312.dp, 440.dp)
+                val panelWidth = (availableWidth * 0.38f).coerceIn(312.dp, 440.dp)
+                AnimatedVisibility(
+                    visible = showPlayerPanel,
+                    enter = expandHorizontally(
+                        expandFrom = Alignment.End,
+                        animationSpec = tween(350, easing = FastOutSlowInEasing)
+                    ) + fadeIn(tween(240)),
+                    exit = shrinkHorizontally(
+                        shrinkTowards = Alignment.End,
+                        animationSpec = tween(320, easing = FastOutSlowInEasing)
+                    ) + fadeOut(tween(250))
+                ) {
                     TabletNowPlayingPanel(
                         navController = navController,
                         modifier = Modifier.width(panelWidth).fillMaxHeight(),

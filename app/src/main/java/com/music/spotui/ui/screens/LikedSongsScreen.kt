@@ -478,14 +478,14 @@ fun LikedSongsScreen(navController: NavController) {
                                             indication = null,
                                             onLongClick = { menuSong = song },
                                             onClick = {
-                                                likedSongsViewModel.updateQueue(filteredSongs)
+                                                likedSongsViewModel.updateQueue(filteredSongs.drop(index))
                                                 likedSongsViewModel.updateSongState(
                                                     song.coverUri,
                                                     song.title,
                                                     song.singer,
                                                     true,
                                                     song.id,
-                                                    index,
+                                                    0,
                                                     "Liked Songs"
                                                 )
                                                 SongPlayer.playSong(song.url, context, "song/${song.id}")

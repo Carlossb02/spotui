@@ -71,6 +71,11 @@ object SongPlayer {
     private fun onAudioFocusChanged(change: Int) {
         // Android dispatches this callback on the main looper (see PlaybackAudioFocus).
         Log.i("SpotuiTransition", "session audio focus change=$change crossfade=$isCrossfading")
+        appCtx?.let {
+            com.music.spotui.ui.notification.PlaybackLifecycleDiagnostics.record(it,
+                "audio_focus change=$change playing=${player?.isPlaying} " +
+                "playWhenReady=${player?.playWhenReady} resolving=$playbackResolving")
+        }
         when (change) {
             android.media.AudioManager.AUDIOFOCUS_GAIN -> {
                 focusDucked = false
@@ -794,6 +799,15 @@ object SongPlayer {
                 }
                 player?.setMediaItem(buildMediaItem(localUri.toString(), streamMimeType(localUri.toString()), song))
                 player?.prepare()
+                // Downloads must honor the saved resume position too; otherwise
+                // a restored local track always restarts from 0:00.
+                if (song == restoreQuery && restorePositionMs > 0L) {
+                    player?.seekTo(restorePositionMs)
+                }
+                if (song == restoreQuery) {
+                    restoreQuery = null
+                    restorePositionMs = 0L
+                }
                 if (ensurePlaybackFocus(appContext)) {
                     player?.play()
                 } else {
@@ -3074,6 +3088,95 @@ object SongPlayer {
         }
     }
 
+    // Podcast audio and video are rendered by the SAME Media3 player and clock.
+    // Only a podcast currently loaded by SongPlayer may enter audiovisual mode.
+    private var podcastOriginalAudioItem: androidx.media3.common.MediaItem? = null
+    private var podcastAvPlayer: ExoPlayer? = null
+    private var podcastAvQuery: String? = null
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    fun enablePodcastVideo(
+        context: Context, videoUrl: String, videoMime: String, isMuxed: Boolean
+    ): Boolean {
+        if (Looper.myLooper() != Looper.getMainLooper()) return false
+        val p = player ?: return false
+        if (loadedQuery?.startsWith("yt_ep:") != true) return false
+        val original = if (podcastAvPlayer === p) podcastOriginalAudioItem
+            else p.currentMediaItem
+        if (original?.localConfiguration == null) return false
+        val wasPlaying = p.playWhenReady
+        val at = p.currentPosition.coerceAtLeast(0L)
+        return runCatching {
+            val dataSource = com.music.spotui.deezer.DeezerAwareDataSourceFactory(
+                createResilientDataSourceFactory(context.applicationContext)
+            )
+            val factory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSource)
+            val videoItem = androidx.media3.common.MediaItem.Builder()
+                .setUri(videoUrl).setMimeType(videoMime)
+                .setMediaId(original.mediaId).setMediaMetadata(original.mediaMetadata).build()
+            val source = if (isMuxed) factory.createMediaSource(videoItem)
+                else androidx.media3.exoplayer.source.MergingMediaSource(
+                    true, factory.createMediaSource(original), factory.createMediaSource(videoItem)
+                )
+            podcastOriginalAudioItem = original
+            podcastAvPlayer = p
+            podcastAvQuery = loadedQuery
+            p.setMediaSource(source, at)
+            p.prepare()
+            p.playWhenReady = wasPlaying
+            true
+        }.getOrElse {
+            android.util.Log.e(TAG, "Cannot enable merged podcast A/V; restoring audio", it)
+            podcastOriginalAudioItem = null
+            podcastAvPlayer = null
+            podcastAvQuery = null
+            runCatching {
+                p.setMediaItem(original, at)
+                p.prepare()
+                p.playWhenReady = wasPlaying
+            }
+            false
+        }
+    }
+
+    /** Without a visible video surface ExoPlayer won't select/download video tracks. */
+    fun enablePodcastVideoTrack(enabled: Boolean) {
+        onPlayerThread {
+            val p = player ?: return@onPlayerThread
+            if (podcastAvPlayer !== p) return@onPlayerThread
+            val updated = p.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, !enabled)
+                .build()
+            if (updated != p.trackSelectionParameters) p.trackSelectionParameters = updated
+        }
+    }
+
+    fun disablePodcastVideo() {
+        onPlayerThread {
+            val original = podcastOriginalAudioItem
+            val oldPlayer = podcastAvPlayer
+            val originalQuery = podcastAvQuery
+            podcastOriginalAudioItem = null
+            podcastAvPlayer = null
+            podcastAvQuery = null
+            if (original != null && oldPlayer === player && originalQuery == loadedQuery &&
+                (player?.currentMediaItem?.mediaId == original.mediaId ||
+                 player?.currentMediaItem == null)) {
+                val p = player ?: return@onPlayerThread
+                val at = p.currentPosition.coerceAtLeast(0L)
+                val wasPlaying = p.playWhenReady
+                runCatching {
+                    p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                        .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
+                        .build()
+                    p.setMediaItem(original, at)
+                    p.prepare()
+                    p.playWhenReady = wasPlaying
+                }.onFailure { android.util.Log.w(TAG, "Failed restoring audio-only podcast", it) }
+            }
+        }
+    }
+
     val exoPlayer: ExoPlayer? get() = player
 
     fun setPreferredAudioDevice(deviceInfo: android.media.AudioDeviceInfo?) {
@@ -3155,21 +3258,72 @@ object SongPlayer {
             return
         }
         if (webPlaybackActive()) { SpotifyWebPlayer.resume(); return }
-        val ctx = appCtx ?: return
+
+        val ctx = appCtx ?: com.music.spotui.MyApplication.instance.applicationContext.also {
+            appCtx = it
+        }
+        // A Play tap while YouTube is still resolving must not start a second
+        // resolution request. It only changes the desired playback state, and
+        // still requests audio focus before allowing the stream to start.
+        if (playbackResolving) {
+            if (!ensurePlaybackFocus(ctx)) {
+                boundState?.updatePlayingState(false)
+                return
+            }
+            playWhenResolved = true
+            publishPlaybackIntent()
+            return
+        }
+
+        val active = player
+        // Closing Spotui from Recents stops/releases ExoPlayer, but its singleton
+        // CurrentSongState can survive with the track still shown in the UI.
+        // A Media3 player with no item (or STOPPED/ENDED) cannot play by just
+        // calling play(): rebuild the source for the track the user sees.
+        if (active == null || active.mediaItemCount == 0 ||
+            active.playbackState == ExoPlayer.STATE_IDLE ||
+            active.playbackState == ExoPlayer.STATE_ENDED) {
+            val state = boundState
+            val currentId = state?.songId?.value
+            val displayedUrl = state?.songUrl?.value.orEmpty()
+            val queuedSong = state?.queue?.value?.firstOrNull {
+                currentId != null && currentId != 0 && it.id == currentId
+            } ?: state?.queue?.value?.firstOrNull {
+                displayedUrl.isNotBlank() && it.url == displayedUrl
+            }
+            val persisted = com.music.spotui.data.preferences.loadLastPlayback(ctx)
+            val songUrl = queuedSong?.url?.takeIf { it.isNotBlank() }
+                ?: displayedUrl.takeIf { it.isNotBlank() }
+                ?: restoreQuery?.takeIf { it.isNotBlank() }
+                ?: persisted?.first?.url?.takeIf { it.isNotBlank() }
+            if (songUrl != null) {
+                // Prefer an explicit seek/restore point; otherwise use the
+                // persisted position only when it belongs to this exact track.
+                val seekMs = when {
+                    restoreQuery == songUrl -> restorePositionMs
+                    persisted?.first?.url == songUrl -> persisted.second
+                    else -> 0L
+                }
+                if (seekMs > 0L) setRestorePoint(songUrl, seekMs)
+                val songId = queuedSong?.id ?: persisted?.first?.takeIf { it.url == songUrl }?.id
+                android.util.Log.i("SpotuiLifecycle", "resume_unprepared_player restoring=${songId ?: "unknown"}")
+                playSong(songUrl, ctx, songId?.takeIf { it != 0 }?.let { "song/$it" })
+                return
+            }
+            android.util.Log.w("SpotuiLifecycle", "resume_unprepared_player no_track_to_restore")
+            boundState?.updatePlayingState(false)
+            return
+        }
+
         if (!ensurePlaybackFocus(ctx)) {
             boundState?.updatePlayingState(false)
             return
         }
         playWhenResolved = true
-        if (currentRequest.isNotBlank() && currentRequest != loadedQuery) {
-            return
-        }
-        if ((player?.mediaItemCount ?: 0) == 0) {
-            val q = restoreQuery
-            val ctx = appCtx
-            if (q != null && ctx != null) { playSong(q, ctx); return }
-        }
-        player?.play()
+        // When an existing track is switching sources, its resolver will start
+        // playback when ready; never resume the old ExoPlayer media item.
+        if (currentRequest.isNotBlank() && currentRequest != loadedQuery) return
+        active.play()
     }
 
     fun pause() {
@@ -3219,8 +3373,17 @@ object SongPlayer {
             if (SpotifyWebPlayer.isPlaying) pause() else play()
             return
         }
-        player?.let {
-            if (it.playWhenReady) pause() else play()
+        // After an explicit close, Media3 may retain playWhenReady=true but
+        // have no prepared media. Treat that as a new Play request, not Pause.
+        val active = player
+        if (active == null || active.mediaItemCount == 0 ||
+            active.playbackState == ExoPlayer.STATE_IDLE ||
+            active.playbackState == ExoPlayer.STATE_ENDED) {
+            play()
+        } else if (active.playWhenReady) {
+            pause()
+        } else {
+            play()
         }
     }
 

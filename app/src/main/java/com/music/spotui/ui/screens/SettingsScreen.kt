@@ -227,6 +227,13 @@ fun SettingsScreen(navController: NavController) {
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 200.dp)
         ) {
+            SettingsGroupHeader("Idioma y apariencia", "Preferencias generales")
+            Column(
+                modifier = Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xFF19191C))
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
+            ) {
             SectionTitle(stringResource(R.string.language))
             Row(
                 modifier = Modifier
@@ -296,6 +303,15 @@ fun SettingsScreen(navController: NavController) {
 
             Spacer(Modifier.height(16.dp))
 
+            }
+
+            SettingsGroupHeader("Reproducción", "Audio y comportamiento en segundo plano")
+            Column(
+                modifier = Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xFF19191C))
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
+            ) {
             SectionTitle(stringResource(R.string.background_playback))
             Row(
                 modifier = Modifier
@@ -368,6 +384,15 @@ fun SettingsScreen(navController: NavController) {
                 }
             }
 
+            }
+
+            SettingsGroupHeader("Calidad y descargas", "Uso de datos, almacenamiento y sonido")
+            Column(
+                modifier = Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xFF19191C))
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
+            ) {
             SectionTitle(stringResource(R.string.audio_quality))
             QualityPicker(
                 title = stringResource(R.string.streaming_wifi),
@@ -417,7 +442,10 @@ fun SettingsScreen(navController: NavController) {
                     .padding(vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                com.music.spotui.data.preferences.NormalizationMode.values().forEach { mode ->
+                for (mode in listOf(
+                    com.music.spotui.data.preferences.NormalizationMode.OFF,
+                    com.music.spotui.data.preferences.NormalizationMode.SUAVE
+                )) {
                     val isSel = mode == normalizationMode
                     val (modeTitle, modeDesc) = when (mode) {
                         com.music.spotui.data.preferences.NormalizationMode.OFF ->
@@ -598,6 +626,15 @@ fun SettingsScreen(navController: NavController) {
                 ),
             )
             Spacer(Modifier.height(12.dp))
+            }
+
+            SettingsGroupHeader("Datos y aplicación", "Actualizaciones, copias y mantenimiento")
+            Column(
+                modifier = Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xFF19191C))
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
+            ) {
             SectionTitle(stringResource(R.string.updates))
             Text(
                 stringResource(R.string.update_repo),
@@ -826,6 +863,8 @@ fun SettingsScreen(navController: NavController) {
                     }
                     .padding(vertical = 14.dp)
             )
+            Spacer(Modifier.height(16.dp))
+            } // Datos y aplicación
             Spacer(Modifier.height(40.dp))
         }
 
@@ -849,13 +888,22 @@ fun SettingsScreen(navController: NavController) {
 }
 
 @Composable
+private fun SettingsGroupHeader(title: String, subtitle: String) {
+    Column(Modifier.fillMaxWidth().padding(top = 28.dp, bottom = 4.dp)) {
+        Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 21.sp)
+        Text(subtitle, color = Color(0xFF999999), fontSize = 12.sp)
+        Spacer(Modifier.height(6.dp))
+    }
+}
+
+@Composable
 private fun SectionTitle(text: String) {
     Text(
         text = text,
-        color = AppPalette,
-        fontSize = 13.sp,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
+        color = Color(0xFFBDBDBD),
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(top = 12.dp, bottom = 8.dp)
     )
 }
 

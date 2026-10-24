@@ -53,7 +53,7 @@ class SearchViewModel @Inject constructor(private val repository: AppRepository,
      * if the user has since started something else.
      */
     fun startRadioFromSong(song: SongsModel) {
-        currentSongState.updateQueue(listOf(song))
+        currentSongState.updateQueue(listOf(song), isManualEdit = true)
         val seed = song.spotifyTrackId
         if (seed.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {

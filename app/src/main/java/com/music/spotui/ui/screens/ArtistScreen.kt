@@ -139,9 +139,9 @@ private fun ArtistOverviewContent(
     fun playTrackAt(index: Int) {
         if (index !in tracks.indices) return
         val songs = tracks.map { it.song }
-        artistViewModel.updateQueue(songs)
+        artistViewModel.updateQueue(songs.drop(index))
         val s = songs[index]
-        artistViewModel.updateSongState(s.coverUri, s.title, s.singer, true, s.id, index)
+        artistViewModel.updateSongState(s.coverUri, s.title, s.singer, true, s.id, 0)
         SongPlayer.playSong(s.url, context, "song/${s.id}")
     }
 

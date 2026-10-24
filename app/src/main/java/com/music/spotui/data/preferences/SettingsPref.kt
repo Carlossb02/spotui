@@ -231,16 +231,20 @@ enum class NormalizationMode(val id: String) {
 fun getAudioNormalizationMode(c: Context): NormalizationMode {
     val raw = prefs(c).getString(KEY_AUDIO_NORMALIZATION_MODE, null)
     if (raw != null) {
-        return NormalizationMode.values().firstOrNull { it.id == raw } ?: NormalizationMode.OFF
+        return when (raw) {
+            NormalizationMode.SUAVE.id, NormalizationMode.BALANCED_BETA.id -> NormalizationMode.SUAVE
+            else -> NormalizationMode.OFF
+        }
     }
     val legacyEnabled = prefs(c).getBoolean(KEY_AUDIO_NORMALIZATION, false)
     return if (legacyEnabled) NormalizationMode.SUAVE else NormalizationMode.OFF
 }
 
 fun setAudioNormalizationMode(c: Context, mode: NormalizationMode) {
+    val supportedMode = if (mode == NormalizationMode.BALANCED_BETA) NormalizationMode.SUAVE else mode
     prefs(c).edit()
-        .putString(KEY_AUDIO_NORMALIZATION_MODE, mode.id)
-        .putBoolean(KEY_AUDIO_NORMALIZATION, mode != NormalizationMode.OFF)
+        .putString(KEY_AUDIO_NORMALIZATION_MODE, supportedMode.id)
+        .putBoolean(KEY_AUDIO_NORMALIZATION, supportedMode != NormalizationMode.OFF)
         .apply()
     com.music.spotui.di.SongPlayer.onNormalizationSettingChanged(c)
 }

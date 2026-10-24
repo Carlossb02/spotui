@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.Icons
@@ -78,33 +79,33 @@ fun MainBottomNavigation(
             )
         ) {
             if (tabletInlineMiniPlayer) {
-                Row(
+                androidx.compose.foundation.layout.BoxWithConstraints(
                     modifier = Modifier.fillMaxWidth().navigationBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    NavigationTabs(
-                        navController = navController,
-                        modifier = Modifier.weight(1f).height(74.dp)
-                            .background(Color(0xFF202020), androidx.compose.foundation.shape.RoundedCornerShape(14.dp)),
-                        onSearchReselected = onSearchReselected,
-                    )
-                    AnimatedVisibility(visible = bottomBarPlayerState.value && showMiniPlayer) {
-                        Row(verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            if (onExpandTabletPlayer != null) {
-                                IconButton(
-                                    onClick = onExpandTabletPlayer,
-                                    modifier = Modifier.background(Color(0xFF202020),
-                                        androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
-                                ) {
-                                    Icon(Icons.Default.KeyboardArrowLeft,
-                                        contentDescription = "Mostrar reproductor lateral", tint = Color.White)
-                                }
-                            }
-                            Box(modifier = Modifier.width(330.dp)) {
-                                MiniPlayer(navController)
+                    val miniVisible = bottomBarPlayerState.value && showMiniPlayer
+                    val gap = 8.dp
+                    val usableWidth = maxWidth
+                    val miniWidth = minOf(338.dp, usableWidth * 0.44f)
+                    val navWidth = if (miniVisible) {
+                        minOf(430.dp, (usableWidth - miniWidth - gap).coerceAtLeast(180.dp))
+                    } else minOf(430.dp, usableWidth)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(gap)
+                    ) {
+                        NavigationTabs(
+                            navController = navController,
+                            modifier = Modifier.width(navWidth).height(62.dp)
+                                .background(Color(0xFF202020), androidx.compose.foundation.shape.RoundedCornerShape(14.dp)),
+                            onSearchReselected = onSearchReselected
+                        )
+                        AnimatedVisibility(visible = miniVisible) {
+                            Box(Modifier.width(miniWidth)) {
+                                // The dock and miniplayer are a single centered group.
+                                MiniPlayer(navController, onExpandPlayer = onExpandTabletPlayer,
+                                    tabletLayout = true)
                             }
                         }
                     }
@@ -150,7 +151,8 @@ private fun NavigationTabs(
             NavigationBarItem(
                 selected = currentTab == item.route,
                 icon = {
-                    Icon(painter = painterResource(item.icon), contentDescription = item.label)
+                    Icon(painter = painterResource(item.icon), contentDescription = item.label,
+                        modifier = Modifier.height(21.dp))
                 },
                 label = {
                     val labelText = when (item.route) {

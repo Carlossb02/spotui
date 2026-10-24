@@ -397,10 +397,10 @@ fun DownloadsScreen(navController: NavController) {
                                         indication = null,
                                         onLongClick = { menuSong = song },
                                         onClick = {
-                                            playerViewModel.updateQueue(displayedSongs)
+                                            playerViewModel.updateQueue(displayedSongs.drop(index), isManualEdit = true)
                                             playerViewModel.updateSongState(
                                                 song.coverUri, song.title, song.singer,
-                                                true, song.id, index, "Downloaded"
+                                                true, song.id, 0, "Downloaded"
                                             )
                                             SongPlayer.playSong(song.url, context, "song/${song.id}")
                                         },

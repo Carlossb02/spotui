@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -21,6 +22,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.AddCircleOutline
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -124,7 +128,11 @@ fun ExplicitBadge(
 
 @OptIn(ExperimentalGlideComposeApi::class, ExperimentalFoundationApi::class)
 @Composable
-fun MiniPlayer(navController: NavHostController, onExpandPlayer: (() -> Unit)? = null) {
+fun MiniPlayer(
+    navController: NavHostController,
+    onExpandPlayer: (() -> Unit)? = null,
+    tabletLayout: Boolean = false,
+) {
     val miniPlayerViewModel : PlayerViewModel = hiltViewModel()
     val songTitle by miniPlayerViewModel.currentSongTitle
     val songSinger by miniPlayerViewModel.currentSongSinger
@@ -196,6 +204,77 @@ fun MiniPlayer(navController: NavHostController, onExpandPlayer: (() -> Unit)? =
         )
     }
 
+
+    if (tabletLayout) {
+        val podcastVideoId = currentTrack?.url?.takeIf { it.startsWith("yt_ep:") }
+            ?.removePrefix("yt_ep:")?.substringBefore('|')
+            ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
+        val videoActive = PodcastVideoSession.isActive(podcastVideoId)
+        Column(
+            Modifier.fillMaxWidth().height(64.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0xFF212121))
+        ) {
+            Row(
+                Modifier.weight(1f).fillMaxWidth()
+                    .clickable { onExpandPlayer?.invoke() ?: navController.navigate(Routes.Player.route) },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Spotify tablet: a true 16:9 video preview, edge to edge,
+                // rather than the phone's square album thumbnail.
+                if (videoActive && podcastVideoId != null) {
+                    PodcastVideoFrame(
+                        videoId = podcastVideoId,
+                        compact = true,
+                        modifier = Modifier.width(100.dp).fillMaxHeight()
+                            .clip(RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp)),
+                        onUseAudio = { PodcastVideoSession.stop() }
+                    )
+                } else {
+                    GlideImage(
+                        model = songCoverUri,
+                        contentDescription = "Carátula de reproducción",
+                        contentScale = ContentScale.Crop,
+                        failure = placeholder(R.drawable.placeholder),
+                        loading = placeholder(R.drawable.placeholder),
+                        modifier = (if (podcastVideoId != null) {
+                            Modifier.width(100.dp).fillMaxHeight().clip(
+                                RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp))
+                        } else Modifier.size(53.dp).clip(RoundedCornerShape(8.dp)))
+                    )
+                }
+                Column(Modifier.weight(1f).padding(start = 11.dp, end = 6.dp)) {
+                    Text(songTitle, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                        maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        color = Color.White)
+                    Text(songSinger, fontSize = 12.sp, color = Color.LightGray,
+                        maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                }
+                // Separate, bounded hit targets: never overlap the title or play.
+                androidx.compose.material3.IconButton(
+                    onClick = { showSavedIn = true }, modifier = Modifier.size(42.dp)
+                ) {
+                    Icon(if (isLiked) Icons.Default.CheckCircle else Icons.Default.AddCircleOutline,
+                        contentDescription = "Guardar canción", tint = if (isLiked) Color(0xFF1ED760) else Color.White,
+                        modifier = Modifier.size(23.dp))
+                }
+                androidx.compose.material3.IconButton(
+                    onClick = { if (songPlayingState) SongPlayer.pause() else SongPlayer.play() },
+                    modifier = Modifier.size(43.dp)
+                ) {
+                    Icon(if (songPlayingState) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (songPlayingState) "Pausar" else "Reproducir",
+                        tint = Color.White, modifier = Modifier.size(28.dp))
+                }
+                Spacer(Modifier.width(5.dp))
+            }
+            Box(Modifier.fillMaxWidth().height(2.dp).background(Color.DarkGray)) {
+                Box(Modifier.fillMaxWidth(songProgress.coerceIn(0f, 1f))
+                    .height(2.dp).background(Color.White))
+            }
+        }
+        return
+    }
 
     Column(
         modifier = Modifier

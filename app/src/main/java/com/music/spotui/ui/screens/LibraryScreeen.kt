@@ -32,6 +32,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material.icons.Icons
@@ -44,6 +48,9 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.outlined.PushPin
+import com.music.spotui.data.preferences.PinnedLibraryPref
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -249,6 +256,8 @@ fun LibraryScreen(navController: NavController) {
         }
     }
 
+    var pinnedIds by remember { mutableStateOf(PinnedLibraryPref.get(context)) }
+    val togglePin: (String) -> Unit = { id -> pinnedIds = PinnedLibraryPref.toggle(context, id) }
     var gridView by remember { mutableStateOf(isLibraryGridView(context)) }
     var showCreateDialog by remember { mutableStateOf(false) }
 
@@ -515,7 +524,7 @@ fun LibraryScreen(navController: NavController) {
             is Response.Loading -> LibrarySkeleton(PaddingValues(0.dp))
             is Response.Success -> {
                 val rawEntries = (entries as Response.Success).data
-                val filteredEntries = remember(rawEntries, selectedFilter, isDownloadedOnly, searchQuery, currentSort, isDescending, context) {
+                val filteredEntries = remember(rawEntries, selectedFilter, isDownloadedOnly, searchQuery, currentSort, isDescending, pinnedIds, context) {
                     val filtered = rawEntries.filter { entry ->
                         val matchesCategory = when (selectedFilter) {
                             LibraryFilterType.ALL -> true
@@ -528,11 +537,13 @@ fun LibraryScreen(navController: NavController) {
                         val matchesSearch = if (searchQuery.isBlank()) true else (entry.name.contains(searchQuery, ignoreCase = true) || entry.artists.contains(searchQuery, ignoreCase = true) || entry.subtitle.contains(searchQuery, ignoreCase = true))
                         matchesCategory && matchesDownload && matchesSearch
                     }
-                    when (currentSort) {
+                    val sorted = when (currentSort) {
                         LibrarySortOption.RECENTS -> if (isDescending) filtered else filtered.reversed()
                         LibrarySortOption.TITLE -> if (isDescending) filtered.sortedByDescending { it.name.lowercase() } else filtered.sortedBy { it.name.lowercase() }
                         LibrarySortOption.CREATOR -> if (isDescending) filtered.sortedByDescending { it.artists.ifBlank { it.subtitle }.lowercase() } else filtered.sortedBy { it.artists.ifBlank { it.subtitle }.lowercase() }
                     }
+                    // Stable partition; pinned entries retain the selected sort within their group.
+                    sorted.filter { it.spotifyId in pinnedIds } + sorted.filterNot { it.spotifyId in pinnedIds }
                 }
                 val filteredArtists = remember(followedArtists, selectedFilter, isDownloadedOnly, searchQuery, currentSort, isDescending) {
                     if (selectedFilter == LibraryFilterType.PLAYLISTS || selectedFilter == LibraryFilterType.ALBUMS || selectedFilter == LibraryFilterType.PODCASTS) {
@@ -554,6 +565,8 @@ fun LibraryScreen(navController: NavController) {
                         followedArtists = filteredArtists,
                         navController = navController,
                         showHistoryTile = showHistoryTile,
+                        pinnedIds = pinnedIds,
+                        onTogglePin = togglePin,
                         onClearFilters = { libraryViewModel.clearFilters() }
                     )
                 } else {
@@ -563,6 +576,8 @@ fun LibraryScreen(navController: NavController) {
                         followedArtists = filteredArtists,
                         navController = navController,
                         showHistoryTile = showHistoryTile,
+                        pinnedIds = pinnedIds,
+                        onTogglePin = togglePin,
                         onClearFilters = { libraryViewModel.clearFilters() }
                     )
                 }
@@ -654,7 +669,7 @@ private fun AccountAvatar(url: String, size: androidx.compose.ui.unit.Dp) {
     )
 }
 
-@OptIn(ExperimentalGlideComposeApi::class)
+@OptIn(ExperimentalGlideComposeApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun SumUpLibraryScreen(
     padding: PaddingValues,
@@ -662,6 +677,8 @@ fun SumUpLibraryScreen(
     followedArtists: List<com.music.spotui.data.entity.ArtistsModel>,
     navController: NavController,
     showHistoryTile: Boolean = true,
+    pinnedIds: Set<String> = emptySet(),
+    onTogglePin: (String) -> Unit = {},
     onClearFilters: () -> Unit = {}
 ) {
     if (entries.isEmpty() && followedArtists.isEmpty()) {
@@ -776,16 +793,19 @@ fun SumUpLibraryScreen(
             }
         }
         items(entries) { entry ->
+            var pinMenuOpen by remember(entry.spotifyId) { mutableStateOf(false) }
             Row(
                 horizontalArrangement = Arrangement.Start,
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(20.dp, 6.dp)
-                    .clickable(
+                    .combinedClickable(
                         interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { openLibraryEntry(entry, navController) }
+                        indication = null,
+                        onClick = { openLibraryEntry(entry, navController) },
+                        onLongClick = { pinMenuOpen = true }
+                    )
             ) {
                 if (entry.spotifyId == Api.HomeCache.DOWNLOADS_ID) {
                     Box(
@@ -837,9 +857,14 @@ fun SumUpLibraryScreen(
                         contentDescription = ""
                     )
                 }
-                Column(modifier = Modifier.padding(start = 12.dp)) {
+                Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
                     Text(text = entry.name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (entry.spotifyId in pinnedIds) {
+                            Icon(Icons.Filled.PushPin, contentDescription = "Fijado",
+                                tint = Color(0xFF1ED760), modifier = Modifier.size(13.dp))
+                            Spacer(Modifier.width(3.dp))
+                        }
                         if (entry.isLocal) {
                             Icon(
                                 imageVector = Icons.Default.PhoneAndroid,
@@ -852,6 +877,13 @@ fun SumUpLibraryScreen(
                         }
                         Text(text = entry.subtitle, color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
+                }
+                DropdownMenu(expanded = pinMenuOpen, onDismissRequest = { pinMenuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text(if (entry.spotifyId in pinnedIds) "Desfijar de Tu biblioteca" else "Fijar en Tu biblioteca") },
+                        leadingIcon = { Icon(Icons.Filled.PushPin, contentDescription = null, tint = Color(0xFF1ED760)) },
+                        onClick = { pinMenuOpen = false; onTogglePin(entry.spotifyId) }
+                    )
                 }
             }
         }
@@ -916,7 +948,7 @@ private fun openLibraryEntry(entry: LibraryEntry, navController: NavController) 
  * title/subtitle underneath, like Spotify's "Grid" library view. Followed
  * artists render as circles under their own full-width header.
  */
-@OptIn(ExperimentalGlideComposeApi::class)
+@OptIn(ExperimentalGlideComposeApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun LibraryGridScreen(
     padding: PaddingValues,
@@ -924,6 +956,8 @@ fun LibraryGridScreen(
     followedArtists: List<com.music.spotui.data.entity.ArtistsModel>,
     navController: NavController,
     showHistoryTile: Boolean = true,
+    pinnedIds: Set<String> = emptySet(),
+    onTogglePin: (String) -> Unit = {},
     onClearFilters: () -> Unit = {}
 ) {
     if (entries.isEmpty() && followedArtists.isEmpty()) {
@@ -1003,12 +1037,22 @@ fun LibraryGridScreen(
             }
         }
         items(entries) { entry ->
+            var pinMenuOpen by remember(entry.spotifyId) { mutableStateOf(false) }
             Column(
-                modifier = Modifier.clickable(
+                modifier = Modifier.combinedClickable(
                     interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) { openLibraryEntry(entry, navController) }
+                    indication = null,
+                    onClick = { openLibraryEntry(entry, navController) },
+                    onLongClick = { pinMenuOpen = true }
+                )
             ) {
+                DropdownMenu(expanded = pinMenuOpen, onDismissRequest = { pinMenuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text(if (entry.spotifyId in pinnedIds) "Desfijar de Tu biblioteca" else "Fijar en Tu biblioteca") },
+                        leadingIcon = { Icon(Icons.Filled.PushPin, contentDescription = null, tint = Color(0xFF1ED760)) },
+                        onClick = { pinMenuOpen = false; onTogglePin(entry.spotifyId) }
+                    )
+                }
                 if (entry.spotifyId == Api.HomeCache.DOWNLOADS_ID) {
                     Box(
                         contentAlignment = Alignment.Center,
@@ -1062,9 +1106,14 @@ fun LibraryGridScreen(
                         contentDescription = ""
                     )
                 }
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(text = entry.name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (entry.spotifyId in pinnedIds) {
+                        Icon(Icons.Filled.PushPin, contentDescription = "Fijado",
+                            tint = Color(0xFF1ED760), modifier = Modifier.size(12.dp))
+                        Spacer(Modifier.width(3.dp))
+                    }
                     if (entry.isLocal) {
                         Icon(
                             imageVector = Icons.Default.PhoneAndroid,
