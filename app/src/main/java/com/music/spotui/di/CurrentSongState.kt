@@ -134,7 +134,9 @@ class CurrentSongState @Inject constructor() {
         }
     }
 
-    val shuffle = mutableStateOf(false)
+    val shuffle = mutableStateOf(
+        com.music.spotui.data.preferences.loadShuffleEnabled(com.music.spotui.MyApplication.instance)
+    )
     val repeat = mutableStateOf(
         com.music.spotui.data.preferences.loadRepeatMode(com.music.spotui.MyApplication.instance)
     )
@@ -152,6 +154,9 @@ class CurrentSongState @Inject constructor() {
     fun updateShuffleState(newShuffleState: Boolean) {
         if (newShuffleState == shuffle.value) return
         shuffle.value = newShuffleState
+        com.music.spotui.data.preferences.saveShuffleEnabled(
+            com.music.spotui.MyApplication.instance, newShuffleState
+        )
         val q = _queue.value
         if (newShuffleState) {
             unshuffledQueue = q
@@ -185,7 +190,12 @@ class CurrentSongState @Inject constructor() {
         val shuffled = songs.shuffled()
         unshuffledQueue = songs
         shuffle.value = true
+        com.music.spotui.data.preferences.saveShuffleEnabled(
+            com.music.spotui.MyApplication.instance, true
+        )
         updateQueue(shuffled, isManualEdit = true)
+        // updateQueue on a manually ordered queue otherwise overwrites this.
+        unshuffledQueue = songs
         return _queue.value.firstOrNull()
     }
     fun updateRepeatState(newRepeatState : RepeatMode){

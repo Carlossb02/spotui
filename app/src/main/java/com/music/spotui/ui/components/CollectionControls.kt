@@ -72,19 +72,10 @@ class CollectionSearchState internal constructor(
     val nestedScrollConnection: NestedScrollConnection = object : NestedScrollConnection {
         override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
             if (source != NestedScrollSource.Drag) return Offset.Zero
-            if (expanded) {
-                // A short list may not consume any scroll distance; in that case
-                // the remaining drag distance must still be able to close search.
-                val upwardDelta = minOf(consumed.y, available.y)
-                if (upwardDelta < 0f) {
-                    upwardScrollPx += -upwardDelta
-                    if (upwardScrollPx >= 32f * densityScale) {
-                        close()
-                        onDismissByScroll?.invoke()
-                    }
-                } else if (consumed.y > 0f) upwardScrollPx = 0f
-                return Offset.Zero
-            }
+            // Once expanded, search is a deliberate mode. Scrolling results must
+            // never dismiss it: hiding the IME must not restore the cover/header.
+            // The close affordance or Back performs that transition explicitly.
+            if (expanded) return Offset.Zero
             val atTop = !listState.canScrollBackward
             if (atTop && available.y > 0f) {
                 isPulling = true

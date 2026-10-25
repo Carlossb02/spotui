@@ -1,5 +1,6 @@
 package com.music.spotui.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -147,6 +148,14 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    // Leave search expanded when the keyboard is dismissed. Back while the
+    // keyboard is already hidden is the explicit exit from search mode.
+    BackHandler(enabled = (searchReveal.expanded || searchQuery.isNotBlank()) && !keyboardVisible) {
+        searchQuery = ""
+        searchReveal.close()
+        keyboard?.hide()
+        focusManager.clearFocus()
+    }
     searchReveal.onDismissByScroll = {
         searchQuery = ""
         focusManager.clearFocus()
@@ -195,12 +204,19 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
-                        ) { navController.navigateUp() },
+                        ) {
+                            if (searchReveal.expanded || searchQuery.isNotBlank()) {
+                                searchQuery = ""
+                                searchReveal.close()
+                                keyboard?.hide()
+                                focusManager.clearFocus()
+                            } else navController.navigateUp()
+                        },
                 )
             }
 
             // Hide the show header while typing so search results remain visible.
-            if (!keyboardVisible) item {
+            if (!keyboardVisible && !searchReveal.expanded && searchQuery.isBlank()) item {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier

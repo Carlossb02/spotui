@@ -1,5 +1,6 @@
 package com.music.spotui.ui.screens
 
+import androidx.activity.compose.BackHandler
 import android.content.Context
 import android.annotation.SuppressLint
 import androidx.compose.animation.AnimatedVisibility
@@ -357,6 +358,12 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                 startY = 0f, endY = 2100f
             )
         }
+        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        val searchReveal = rememberCollectionSearchState(listState, playlistId)
+        val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+        val keyboardController = LocalSoftwareKeyboardController.current
+        val focusManager = LocalFocusManager.current
+
         Scaffold(
             modifier = Modifier.fillMaxSize().background(playlistBackground),
             containerColor = Color.Transparent,
@@ -373,7 +380,14 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null
-                                ) { navController.navigateUp() }
+                                ) {
+                                    if (searchReveal.expanded || searchQuery.isNotBlank()) {
+                                        searchQuery = ""
+                                        searchReveal.close()
+                                        keyboardController?.hide()
+                                        focusManager.clearFocus()
+                                    } else navController.navigateUp()
+                                }
                                 .padding(9.dp),
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "",
@@ -398,11 +412,14 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                 )
             }
         ) { innerPadding ->
-            val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-            val searchReveal = rememberCollectionSearchState(listState, playlistId)
-            val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-            val keyboardController = LocalSoftwareKeyboardController.current
-            val focusManager = LocalFocusManager.current
+            // The keyboard Back action only hides the IME. A second Back exits
+            // search and restores the artwork, exactly like the close button.
+            BackHandler(enabled = (searchReveal.expanded || searchQuery.isNotBlank()) && !keyboardVisible) {
+                searchQuery = ""
+                searchReveal.close()
+                keyboardController?.hide()
+                focusManager.clearFocus()
+            }
             LaunchedEffect(keyboardVisible) {
                 if (keyboardVisible) listState.scrollToItem(0)
             }
@@ -430,7 +447,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                             placeholder = "Buscar en la lista"
                         )
                     }
-                    if (!keyboardVisible) {
+                    if (!keyboardVisible && !searchReveal.expanded && searchQuery.isBlank()) {
                     item(key = "playlist_header") {
                         Column(
                             modifier = Modifier

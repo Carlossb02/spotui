@@ -1,5 +1,6 @@
 package com.music.spotui.ui.screens
 
+import androidx.activity.compose.BackHandler
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -179,6 +180,12 @@ fun LikedSongsScreen(navController: NavController) {
                 startY = 0f, endY = 2100f
             )
         }
+        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        val searchReveal = rememberCollectionSearchState(listState, "liked_songs")
+        val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+        val keyboardController = LocalSoftwareKeyboardController.current
+        val focusManager = LocalFocusManager.current
+
         Scaffold(
             modifier = Modifier.fillMaxSize().background(likedBackground),
             containerColor = Color.Transparent,
@@ -195,7 +202,14 @@ fun LikedSongsScreen(navController: NavController) {
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null
-                                ) { navController.navigateUp() }
+                                ) {
+                                    if (searchReveal.expanded || searchQuery.isNotBlank()) {
+                                        searchQuery = ""
+                                        searchReveal.close()
+                                        keyboardController?.hide()
+                                        focusManager.clearFocus()
+                                    } else navController.navigateUp()
+                                }
                                 .padding(9.dp),
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "",
@@ -210,11 +224,14 @@ fun LikedSongsScreen(navController: NavController) {
                 )
             }
         ) { innerPadding ->
-            val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-            val searchReveal = rememberCollectionSearchState(listState, "liked_songs")
-            val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-            val keyboardController = LocalSoftwareKeyboardController.current
-            val focusManager = LocalFocusManager.current
+            // The keyboard Back action only hides the IME. A second Back exits
+            // search and restores the artwork, exactly like the close button.
+            BackHandler(enabled = (searchReveal.expanded || searchQuery.isNotBlank()) && !keyboardVisible) {
+                searchQuery = ""
+                searchReveal.close()
+                keyboardController?.hide()
+                focusManager.clearFocus()
+            }
             LaunchedEffect(keyboardVisible) {
                 if (keyboardVisible) listState.scrollToItem(0)
             }
@@ -242,7 +259,7 @@ fun LikedSongsScreen(navController: NavController) {
                             placeholder = "Buscar en canciones que te gustan"
                         )
                     }
-                    if (!keyboardVisible) {
+                    if (!keyboardVisible && !searchReveal.expanded && searchQuery.isBlank()) {
                     item(key = "liked_header") {
                         Column(
                             modifier = Modifier

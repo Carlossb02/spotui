@@ -14,6 +14,7 @@ private const val KEY_SONG = "song"
 private const val KEY_POSITION = "positionMs"
 private const val KEY_QUEUE = "queue"
 private const val KEY_REPEAT_MODE = "repeat_mode"
+private const val KEY_SHUFFLE = "shuffle_enabled"
 
 private fun songToJson(song: SongsModel): JSONObject {
     return JSONObject().apply {
@@ -119,3 +120,15 @@ fun loadRepeatMode(context: Context): RepeatMode {
         .getString(KEY_REPEAT_MODE, null)
     return runCatching { RepeatMode.valueOf(raw!!) }.getOrNull() ?: RepeatMode.OFF
 }
+
+
+/** Shuffle is a user preference, not a temporary queue flag. */
+fun saveShuffleEnabled(context: Context, enabled: Boolean) {
+    context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        .edit().putBoolean(KEY_SHUFFLE, enabled).apply()
+}
+
+/** Preserve shuffle ON/OFF across restarts and service recreation. */
+fun loadShuffleEnabled(context: Context): Boolean =
+    context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        .getBoolean(KEY_SHUFFLE, false)

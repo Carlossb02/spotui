@@ -77,6 +77,10 @@ class PlaybackService : MediaLibraryService() {
 
     private var mediaSession: MediaLibrarySession? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    // Android Auto's legacy MediaBrowser can BLOCK the main thread while
+    // waiting for onGetChildren. Never complete that future on the main thread:
+    // doing so deadlocks browsing, leaving only the "Now playing" screen.
+    private val carBrowseScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var notificationRefreshJob: kotlinx.coroutines.Job? = null
     private var taskRemovalCheckJob: kotlinx.coroutines.Job? = null
     private var ownsPlaybackForeground = false
@@ -90,9 +94,10 @@ class PlaybackService : MediaLibraryService() {
         private const val ACTION_NOTIFICATION_NEXT = "com.music.spotui.action.NOTIFICATION_NEXT"
         private const val ACTION_NOTIFICATION_CLOSE = "com.music.spotui.action.NOTIFICATION_CLOSE"
 
-        // Android Auto browse tree nodes
+        // Android Auto browse tree
         private const val ROOT = "root"
         private const val NODE_HOME = "auto_home"
+        private const val NODE_PINNED = "auto_pinned"
         private const val NODE_RECENTS = "auto_recents"
         private const val NODE_BROWSE = "auto_browse"
         private const val NODE_LIBRARY = "auto_library"
@@ -910,7 +915,7 @@ class PlaybackService : MediaLibraryService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? =
         mediaSession
 
-    // ── Android Auto browse tree ──────────────────────────────────────────
+
 
     /**
      * Builds the notification custom layout: [repeat button | close button].
@@ -1236,6 +1241,7 @@ class PlaybackService : MediaLibraryService() {
 
                 parentId == NODE_HOME -> listOf(
                     folder(NODE_RECENTS, "Escuchado recientemente"),
+                    folder(NODE_PINNED, "Fijados"),
                     folder(NODE_LIKED, "Canciones que te gustan"),
                     folder(NODE_PLAYLISTS, "Tus playlists"),
                     folder(NODE_DOWNLOADS, "Descargas"),
@@ -1326,6 +1332,17 @@ class PlaybackService : MediaLibraryService() {
                         NODE_DOWNLOADS,
                         com.music.spotui.data.preferences.getDownloadedSongs(applicationContext),
                     )
+
+                parentId == NODE_PINNED -> {
+                    val pinned = com.music.spotui.data.preferences.PinnedLibraryPref.get(applicationContext)
+                    libraryEntries().filter { it.spotifyId in pinned && !it.isPodcast }.map { entry ->
+                        val mediaId = when {
+                            entry.isPlaylist -> "playlist/${entry.spotifyId}"
+                            else -> "album/${android.net.Uri.encode(entry.name)}/${android.net.Uri.encode(entry.artists)}"
+                        }
+                        folder(mediaId, entry.name, entry.coverUri)
+                    }
+                }
 
                 parentId == NODE_PLAYLISTS ->
                     libraryEntries().filter {
@@ -1534,10 +1551,15 @@ class PlaybackService : MediaLibraryService() {
 
     private fun <T> future(block: suspend () -> T): ListenableFuture<T> {
         val f = SettableFuture.create<T>()
-        serviceScope.launch {
+        // Android Auto calls its legacy browser synchronously on the service's
+        // main thread. Keeping browse/database/network work off Main is essential.
+        carBrowseScope.launch {
             try {
                 f.set(block())
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                f.cancel(false)
             } catch (e: Exception) {
+                android.util.Log.e("SpotuiAuto", "Library browse failed", e)
                 f.setException(e)
             }
         }
@@ -1666,6 +1688,7 @@ class PlaybackService : MediaLibraryService() {
         (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
             .cancel(PLAYBACK_NOTIFICATION_ID)
         serviceScope.cancel()
+        carBrowseScope.cancel()
         runCatching { unregisterReceiver(mediaControlReceiver) }
         SongPlayer.exoPlayer?.removeListener(playerListener)
         SongPlayer.onPlayerCreated = null
