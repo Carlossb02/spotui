@@ -1,5 +1,7 @@
 package com.music.spotui.ui.components
 
+import com.music.spotui.util.uiLocalized
+
 import android.Manifest
 import android.content.Context
 import android.os.Build
@@ -112,7 +114,7 @@ fun DevicesSheet(
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "Connect to a device",
+                        text = uiLocalized("Connect to a device"),
                         color = Color.White,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
@@ -120,7 +122,7 @@ fun DevicesSheet(
                 }
                 Icon(
                     imageVector = Icons.Default.Close,
-                    contentDescription = "Close",
+                    contentDescription = uiLocalized("Close"),
                     tint = Color.LightGray,
                     modifier = Modifier
                         .size(24.dp)
@@ -147,7 +149,7 @@ fun DevicesSheet(
                         .padding(horizontal = 14.dp, vertical = 10.dp)
                 ) {
                     Text(
-                        text = "Grant permission to discover paired Bluetooth devices",
+                        text = uiLocalized("Grant permission to discover paired Bluetooth devices"),
                         color = Color.White,
                         fontSize = 12.sp,
                         modifier = Modifier.weight(1f)
@@ -163,7 +165,7 @@ fun DevicesSheet(
                             .padding(horizontal = 12.dp, vertical = 6.dp)
                     ) {
                         Text(
-                            text = "Grant",
+                            text = uiLocalized("Grant"),
                             color = Color.Black,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
@@ -177,7 +179,7 @@ fun DevicesSheet(
             val activeDevice = devices.firstOrNull { it.isActive }
             if (activeDevice != null) {
                 Text(
-                    text = "CURRENT DEVICE",
+                    text = uiLocalized("CURRENT DEVICE"),
                     color = Color.Gray,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
@@ -210,14 +212,14 @@ fun DevicesSheet(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "Listening on this device",
+                            text = uiLocalized("Listening on this device"),
                             color = Color(0xFF1ED760).copy(alpha = 0.8f),
                             fontSize = 12.sp
                         )
                     }
                     Icon(
                         imageVector = Icons.Default.Check,
-                        contentDescription = "Active",
+                        contentDescription = uiLocalized("Active"),
                         tint = Color(0xFF1ED760),
                         modifier = Modifier.size(20.dp)
                     )
@@ -228,7 +230,7 @@ fun DevicesSheet(
 
             // Available Devices Section Title
             Text(
-                text = "SELECT A DEVICE",
+                text = uiLocalized("SELECT A DEVICE"),
                 color = Color.Gray,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
@@ -288,13 +290,13 @@ fun DevicesSheet(
                 Spacer(modifier = Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "System Audio Switcher",
+                        text = uiLocalized("System Audio Switcher"),
                         color = Color.White,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "Connect or pair Bluetooth devices in Android Settings",
+                        text = uiLocalized("Connect or pair Bluetooth devices in Android Settings"),
                         color = Color.Gray,
                         fontSize = 11.sp
                     )
@@ -376,7 +378,7 @@ private fun DeviceItemRow(
         if (item.isActive) {
             Icon(
                 imageVector = Icons.Default.Check,
-                contentDescription = "Active",
+                contentDescription = uiLocalized("Active"),
                 tint = Color(0xFF1ED760),
                 modifier = Modifier.size(18.dp)
             )

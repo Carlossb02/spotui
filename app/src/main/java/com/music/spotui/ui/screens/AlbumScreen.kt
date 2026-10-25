@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import android.annotation.SuppressLint
 import android.content.Context
 import android.util.Log
@@ -333,10 +335,10 @@ fun SumUpAlbumScreen(
                             model = album[0].coverUri,
                             contentScale = ContentScale.Crop,
                             failure = placeholder(R.drawable.placeholder),
-                            contentDescription = "Carátula del álbum"
+                            contentDescription = uiLocalized("Carátula del álbum")
                         )
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("ÁLBUM", fontSize = 11.sp, color = Color(0xFFDDDDDD),
+                            Text(uiLocalized("ÁLBUM"), fontSize = 11.sp, color = Color(0xFFDDDDDD),
                                 fontWeight = FontWeight.SemiBold)
                             Spacer(Modifier.height(8.dp))
                 Text(modifier = Modifier
@@ -526,7 +528,7 @@ fun SumUpAlbumScreen(
                                             }
                                         }
                                     },
-                                contentDescription = "Download album",
+                                contentDescription = uiLocalized("Download album"),
                             )
                             Spacer(modifier = Modifier.width(16.dp))
                             if (albumSongs.isNotEmpty()) {
@@ -546,7 +548,7 @@ fun SumUpAlbumScreen(
                                                 android.widget.Toast.LENGTH_SHORT,
                                             ).show()
                                         },
-                                    contentDescription = "Add to queue",
+                                    contentDescription = uiLocalized("Add to queue"),
                                 )
                                 Spacer(modifier = Modifier.width(16.dp))
                             }
@@ -573,7 +575,7 @@ fun SumUpAlbumScreen(
                                             SongPlayer.playSong(first.url, context, "song/${first.id}")
                                         }
                                     },
-                                contentDescription = "Shuffle play",
+                                contentDescription = uiLocalized("Shuffle play"),
                             )
                         }
 
@@ -638,7 +640,7 @@ fun SumUpAlbumScreen(
                     query = searchQuery,
                     onQueryChange = { searchQuery = it },
                     modifier = Modifier.padding(20.dp, 8.dp),
-                    placeholder = "Search in album",
+                    placeholder = uiLocalized("Search in album"),
                 )
 
                 // Sort action button
@@ -664,7 +666,7 @@ fun SumUpAlbumScreen(
                         )
                         Icon(
                             imageVector = Icons.Default.KeyboardArrowDown,
-                            contentDescription = "Sort Options",
+                            contentDescription = uiLocalized("Sort Options"),
                             tint = Color.White,
                             modifier = Modifier
                                 .size(16.dp)
@@ -681,7 +683,7 @@ fun SumUpAlbumScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "No matches found for \"$searchQuery\"",
+                            text = "${uiLocalized("No matches found for")} \"$searchQuery\"",
                             color = Color.White,
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Medium
@@ -767,14 +769,18 @@ fun SumUpAlbumScreen(
                                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                             )
                                         }
-                                        Text(
-                                            text = targetSong.singer,
-                                            color = Color.Gray,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            maxLines = 1,
-                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                        )
+                                        Row(verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            com.music.spotui.ui.components.DownloadedSongIndicator(targetSong.id)
+                                            Text(
+                                                text = targetSong.singer,
+                                                color = Color.Gray,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                maxLines = 1,
+                                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                            )
+                                        }
                                     }
                                 }
 
@@ -832,7 +838,7 @@ fun SumUpAlbumScreen(
                         .navigationBarsPadding()
                 ) {
                     Text(
-                        text = "Sort by",
+                        text = uiLocalized("Sort by"),
                         color = Color.White,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,

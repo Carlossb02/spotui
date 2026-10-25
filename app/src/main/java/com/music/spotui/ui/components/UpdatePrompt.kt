@@ -1,5 +1,7 @@
 package com.music.spotui.ui.components
 
+import com.music.spotui.util.uiLocalized
+
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.Column
@@ -59,6 +61,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 
+
 @Composable
 fun UpdatePrompt() {
     val context = LocalContext.current
@@ -88,7 +91,7 @@ fun UpdatePrompt() {
                     RenderMarkdown(info.releaseBody)
                 } else {
                     Text(
-                        "A new version of Spotui is available.",
+                        uiLocalized("A new version of Spotui is available."),
                         color = Color(0xFFB3B3B3),
                     )
                 }
@@ -103,7 +106,7 @@ fun UpdatePrompt() {
                 }
                 update = null
             }) {
-                Text("Update", color = Color(0xFF1DB954))
+                Text(uiLocalized("Update"), color = Color(0xFF1DB954))
             }
         },
         dismissButton = {
@@ -111,10 +114,10 @@ fun UpdatePrompt() {
                 UpdateChecker.skipRelease(context, info)
                 update = null
             }) {
-                Text("Don't show again", color = Color(0xFFB3B3B3))
+                Text(uiLocalized("Don't show again"), color = Color(0xFFB3B3B3))
             }
             TextButton(onClick = { update = null }) {
-                Text("Dismiss", color = Color.White)
+                Text(uiLocalized("Dismiss"), color = Color.White)
             }
         },
     )
@@ -234,7 +237,7 @@ private fun ZoomableImageDialog(url: String, onDismiss: () -> Unit) {
             ) {
                 Icon(
                     imageVector = androidx.compose.material.icons.Icons.Default.Close,
-                    contentDescription = "Close",
+                    contentDescription = uiLocalized("Close"),
                     tint = Color.White
                 )
             }

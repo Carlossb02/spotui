@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -237,7 +239,7 @@ fun SumUpSearchScreen(
                                 fontWeight = FontWeight.Bold,
                             )
                             Text(
-                                "Clear",
+                                uiLocalized("Clear"),
                                 color = Color(0xFFB3B3B3),
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
@@ -566,7 +568,7 @@ fun RecentItemRow(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                 ) { onRemove() },
-            contentDescription = "Remove",
+            contentDescription = uiLocalized("Remove"),
         )
     }
 }
@@ -667,13 +669,17 @@ fun SearchSongRow(
                             maxLines = 1
                         )
                     }
-                    Text(
-                        text = "Song • ${song.singer}",
-                        color = Color.Gray,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
+                        Text(
+                            text = "Song • ${song.singer}",
+                            color = Color.Gray,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1
+                        )
+                    }
                 }
             }
 
@@ -745,7 +751,7 @@ fun SearchShowRow(show: com.music.spotui.data.entity.PodcastModel, onClick: () -
                 maxLines = 1
             )
             Text(
-                text = "Podcast" + (if (show.publisher.isNotBlank()) " • ${show.publisher}" else ""),
+                text = uiLocalized("Podcast") + (if (show.publisher.isNotBlank()) " • ${show.publisher}" else ""),
                 color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1,
             )
         }
@@ -784,7 +790,7 @@ fun SearchArtistRow(artist: com.music.spotui.data.entity.ArtistsModel, onClick: 
                 fontWeight = FontWeight.Medium
             )
             Text(
-                text = "Artist",
+                text = uiLocalized("Artist"),
                 color = Color.Gray,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium
@@ -947,7 +953,7 @@ fun SearchTopBar() {
             .fillMaxWidth()
             .padding(16.dp)
     ) {
-        Text(text = "Search", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text(text = uiLocalized("Search"), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         //Icon(imageVector = Icons.Default.Person, contentDescription = "", tint = Color.White)
     }
 

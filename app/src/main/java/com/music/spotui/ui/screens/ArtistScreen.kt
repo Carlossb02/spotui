@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -227,10 +229,10 @@ private fun ArtistOverviewContent(
                         .background(Color(0xFF4A90E2)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("✓", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text(uiLocalized("✓"), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                     Spacer(Modifier.width(6.dp))
-                    Text("Verified Artist", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Text(uiLocalized("Verified Artist"), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                 }
             }
             overview.monthlyListeners?.let {
@@ -270,7 +272,7 @@ private fun ArtistOverviewContent(
                         .padding(16.dp, 7.dp),
                     ) {
                         Text(
-                            text = if (following) "Following" else "Follow",
+                            text = if (following) uiLocalized("Following") else uiLocalized("Follow"),
                             color = Color.White,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -323,7 +325,7 @@ private fun ArtistOverviewContent(
         if (tracks.isNotEmpty()) {
             item {
                 Text(
-                    text = "Popular",
+                    text = uiLocalized("Popular"),
                     color = Color.White,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
@@ -687,7 +689,7 @@ private fun ShowAllButton(onClick: () -> Unit) {
         ) { onClick() }
         .padding(20.dp, 8.dp),
     ) {
-        Text(text = "Show all", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(text = uiLocalized("Show all"), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -747,7 +749,7 @@ fun ArtistReleasesScreen(navController: NavController, artistName: String) {
                     )
                     Spacer(Modifier.width(16.dp))
                     Text(
-                        text = "Releases",
+                        text = uiLocalized("Releases"),
                         color = Color.White,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
@@ -861,6 +863,6 @@ private fun RelatedArtistCard(artist: ArtistsModel, onClick: () -> Unit) {
         )
         Spacer(Modifier.height(6.dp))
         Text(text = artist.name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-        Text(text = "Artist", color = Color.Gray, fontSize = 11.sp)
+        Text(text = uiLocalized("Artist"), color = Color.Gray, fontSize = 11.sp)
     }
 }

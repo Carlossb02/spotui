@@ -1,5 +1,7 @@
 package com.music.spotui.ui.components
 
+import com.music.spotui.util.uiLocalized
+
 import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -58,6 +60,7 @@ private val SpotifySubtleBorder = Color(0xFF282828)
 private val SpotifyTextSecondary = Color(0xFFA7A7A7)
 
 @OptIn(ExperimentalMaterial3Api::class)
+
 @Composable
 fun DefaultAppPrompt(
     forceShow: Boolean = false,
@@ -155,7 +158,7 @@ fun DefaultAppPrompt(
 
                 // Header Title
                 Text(
-                    text = "Open Links in Spotui",
+                    text = uiLocalized("Open Links in Spotui"),
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
@@ -164,7 +167,7 @@ fun DefaultAppPrompt(
                 Spacer(modifier = Modifier.height(6.dp))
 
                 Text(
-                    text = "Set Spotui as default to play Spotify links directly.",
+                    text = uiLocalized("Set Spotui as default to play Spotify links directly."),
                     fontSize = 14.sp,
                     color = SpotifyTextSecondary
                 )
@@ -262,7 +265,7 @@ fun DefaultAppPrompt(
                         }
                     ) {
                         Text(
-                            text = "Don't ask again",
+                            text = uiLocalized("Don't ask again"),
                             color = SpotifyTextSecondary,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Medium
@@ -273,7 +276,7 @@ fun DefaultAppPrompt(
                         onClick = { dismiss() }
                     ) {
                         Text(
-                            text = "Later",
+                            text = uiLocalized("Later"),
                             color = Color.White,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold

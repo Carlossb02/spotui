@@ -1,5 +1,7 @@
 package com.music.spotui.ui.notification
 
+import com.music.spotui.util.uiLocalized
+
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -65,17 +67,17 @@ fun MusicPlayerController(
             verticalArrangement = Arrangement.SpaceEvenly
         ) {
             Text(
-                text = "spotui",
+                text = uiLocalized("spotui"),
                 fontSize = 10.sp
 
             )
             Text(
-                text = "Song Name",
+                text = uiLocalized("Song Name"),
                 fontSize = 19.sp,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "Singer name",
+                text = uiLocalized("Singer name"),
                 fontSize = 14.sp,
             )
 
@@ -112,13 +114,13 @@ fun MusicPlayerController(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "0:00",
+                    text = uiLocalized("0:00"),
                     color = Color.Gray,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium
                 )
                 Text(
-                    text = "0:00",
+                    text = uiLocalized("0:00"),
                     color = Color.Gray,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium

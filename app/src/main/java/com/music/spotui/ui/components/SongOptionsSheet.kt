@@ -1,5 +1,7 @@
 package com.music.spotui.ui.components
 
+import com.music.spotui.util.uiLocalized
+
 import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.clickable
@@ -124,11 +126,11 @@ fun SongOptionsSheet(
 
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showEditDialog = false },
-            title = { Text("Edit Metadata", color = Color.White) },
+            title = { Text(uiLocalized("Edit Metadata"), color = Color.White) },
             containerColor = Color(0xFF242424),
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Title", color = Color.Gray, fontSize = 12.sp)
+                    Text(uiLocalized("Title"), color = Color.Gray, fontSize = 12.sp)
                     androidx.compose.material3.OutlinedTextField(
                         value = editTitle,
                         onValueChange = { editTitle = it },
@@ -140,7 +142,7 @@ fun SongOptionsSheet(
                             unfocusedBorderColor = Color.Gray
                         )
                     )
-                    Text("Artist", color = Color.Gray, fontSize = 12.sp)
+                    Text(uiLocalized("Artist"), color = Color.Gray, fontSize = 12.sp)
                     androidx.compose.material3.OutlinedTextField(
                         value = editArtist,
                         onValueChange = { editArtist = it },
@@ -152,7 +154,7 @@ fun SongOptionsSheet(
                             unfocusedBorderColor = Color.Gray
                         )
                     )
-                    Text("Album", color = Color.Gray, fontSize = 12.sp)
+                    Text(uiLocalized("Album"), color = Color.Gray, fontSize = 12.sp)
                     androidx.compose.material3.OutlinedTextField(
                         value = editAlbum,
                         onValueChange = { editAlbum = it },
@@ -164,7 +166,7 @@ fun SongOptionsSheet(
                             unfocusedBorderColor = Color.Gray
                         )
                     )
-                    Text("Cover URI", color = Color.Gray, fontSize = 12.sp)
+                    Text(uiLocalized("Cover URI"), color = Color.Gray, fontSize = 12.sp)
                     androidx.compose.material3.OutlinedTextField(
                         value = editCover,
                         onValueChange = { editCover = it },
@@ -200,12 +202,12 @@ fun SongOptionsSheet(
                         onDismiss()
                     }
                 ) {
-                    Text("Save", color = Color(AppPalette.toArgb()))
+                    Text(uiLocalized("Save"), color = Color(AppPalette.toArgb()))
                 }
             },
             dismissButton = {
                 androidx.compose.material3.TextButton(onClick = { showEditDialog = false }) {
-                    Text("Cancel", color = Color.Gray)
+                    Text(uiLocalized("Cancel"), color = Color.Gray)
                 }
             }
         )
@@ -242,22 +244,22 @@ fun SongOptionsSheet(
             if (editableLocalTrack) {
                 SongMenuRow(
                     icon = Icons.Default.Edit,
-                    label = "Edit metadata",
+                    label = uiLocalized("Edit metadata"),
                 ) {
                     showEditDialog = true
                 }
             }
 
-            SongMenuRow(Icons.Default.PlayArrow, "Play next") {
+            SongMenuRow(Icons.Default.PlayArrow, uiLocalized("Play next")) {
                 playerViewModel.playNext(song)
                 onDismiss()
             }
-            SongMenuRow(Icons.AutoMirrored.Filled.List, "Add to queue") {
+            SongMenuRow(Icons.AutoMirrored.Filled.List, uiLocalized("Add to queue")) {
                 playerViewModel.addToQueue(song)
                 onDismiss()
             }
             SongMenuRow(
-                Icons.Default.Add, "Add to playlist",
+                Icons.Default.Add, uiLocalized("Add to playlist"),
                 enabled = true, trailingArrow = true,
             ) {
                 showSavedIn = true
@@ -265,10 +267,13 @@ fun SongOptionsSheet(
             if (!currentPlaylistId.isNullOrBlank()) {
                 SongMenuRow(
                     icon = Icons.Default.Delete,
-                    label = "Remove from this playlist",
+                    label = uiLocalized("Remove from this playlist"),
                     iconTint = Color.White
                 ) {
-                    if (currentPlaylistId.startsWith("local_pl_")) {
+                    if (song.url.startsWith("yt_local:") && !currentPlaylistId.startsWith("local_pl_")) {
+                        com.music.spotui.data.preferences.PlaylistAdditionsPref.remove(context, currentPlaylistId, song.url)
+                        onSongRemovedFromPlaylist?.invoke()
+                    } else if (currentPlaylistId.startsWith("local_pl_")) {
                         com.music.spotui.data.preferences.LocalPlaylistPref.removeSongFromPlaylist(context, currentPlaylistId, song)
                         com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(currentPlaylistId)
                         com.music.spotui.data.api.Api.HomeCache.library = null
@@ -278,7 +283,13 @@ fun SongOptionsSheet(
                         com.music.spotui.data.api.SpotifySync.removeTrackFromPlaylist(context, currentPlaylistId, trackId) { ok ->
                             com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(currentPlaylistId)
                             if (ok) {
-                                onSongRemovedFromPlaylist?.invoke()
+                                com.music.spotui.data.preferences.PlaylistSyncedPendingPref.remove(
+                                    context, currentPlaylistId, trackId
+                                )
+                                // Remote callbacks run off the UI thread.
+                                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                                    onSongRemovedFromPlaylist?.invoke()
+                                }
                             }
                         }
                     }
@@ -320,7 +331,7 @@ fun SongOptionsSheet(
             if (downloaded) {
                 SongMenuRow(
                     icon = ImageVector.vectorResource(R.drawable.ic_download),
-                    label = "Export to Music",
+                    label = uiLocalized("Export to Music"),
                 ) {
                     onDismiss()
                     // Detached scope + app context so the copy + toast survive the
@@ -340,13 +351,13 @@ fun SongOptionsSheet(
             }
             SongMenuRow(
                 icon = Icons.Default.Refresh,
-                label = "Invalidate cache",
+                label = uiLocalized("Invalidate cache"),
             ) {
                 onDismiss()
                 com.music.spotui.di.SongPlayer.invalidateSongCache(song, context, reloadIfPlaying = true)
             }
             val artist = song.singer.substringBefore(",").trim()
-            SongMenuRow(Icons.Default.Person, "Go to artist", enabled = artist.isNotBlank(), trailingArrow = true) {
+            SongMenuRow(Icons.Default.Person, uiLocalized("Go to artist"), enabled = artist.isNotBlank(), trailingArrow = true) {
                 // Resolve the exact artist (id) from the track so the name can't
                 // fuzzy-match to a different artist.
                 playerViewModel.goToArtist(song.spotifyTrackId, song.singer) { route ->
@@ -354,11 +365,11 @@ fun SongOptionsSheet(
                 }
                 onDismiss()
             }
-            SongMenuRow(Icons.Default.Add, "Go to album", enabled = song.album.isNotBlank(), trailingArrow = true) {
+            SongMenuRow(Icons.Default.Add, uiLocalized("Go to album"), enabled = song.album.isNotBlank(), trailingArrow = true) {
                 navController.navigate(albumRoute(song.album, song.singer))
                 onDismiss()
             }
-            SongMenuRow(Icons.Default.Share, "Share") {
+            SongMenuRow(Icons.Default.Share, uiLocalized("Share")) {
                 // Share the real Spotify track link when we know the id.
                 val shareText = song.spotifyTrackId.takeIf { it.isNotBlank() }
                     ?.let { "https://open.spotify.com/track/$it" }

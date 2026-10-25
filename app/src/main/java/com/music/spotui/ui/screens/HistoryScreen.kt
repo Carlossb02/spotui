@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -216,7 +218,7 @@ fun HistoryScreen(navController: NavController) {
                 if (history.isEmpty()) {
                     item {
                         Text(
-                            "Nothing here yet — play something!",
+                            uiLocalized("Nothing here yet — play something!"),
                             color = Color.Gray,
                             fontSize = 14.sp,
                             modifier = Modifier.padding(16.dp, 32.dp),
@@ -241,7 +243,7 @@ fun HistoryScreen(navController: NavController) {
                                 .padding(16.dp),
                         ) {
                             Column {
-                                Text("YOUR LISTENING HABITS", color = Color(0xFFB09BE8), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text(uiLocalized("YOUR LISTENING HABITS"), color = Color(0xFFB09BE8), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 Spacer(Modifier.height(12.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -259,7 +261,7 @@ fun HistoryScreen(navController: NavController) {
                     if (topArtists.isNotEmpty()) {
                         item {
                             Text(
-                                "Top artists",
+                                uiLocalized("Top artists"),
                                 color = Color.White,
                                 fontSize = 20.sp,
                                 fontWeight = FontWeight.Bold,
@@ -289,7 +291,7 @@ fun HistoryScreen(navController: NavController) {
                     if (topTracks.isNotEmpty()) {
                         item {
                             Text(
-                                "Top tracks",
+                                uiLocalized("Top tracks"),
                                 color = Color.White,
                                 fontSize = 20.sp,
                                 fontWeight = FontWeight.Bold,
@@ -325,7 +327,7 @@ fun HistoryScreen(navController: NavController) {
                     // ── History list ──
                     item {
                         Text(
-                            "History",
+                            uiLocalized("History"),
                             color = Color.White,
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold,
@@ -339,7 +341,7 @@ fun HistoryScreen(navController: NavController) {
                             query = searchQuery,
                             onQueryChange = { searchQuery = it },
                             modifier = Modifier.padding(16.dp, 8.dp),
-                            placeholder = "Search in history",
+                            placeholder = uiLocalized("Search in history"),
                         )
                     }
 
@@ -367,7 +369,7 @@ fun HistoryScreen(navController: NavController) {
                                 )
                                 Icon(
                                     imageVector = Icons.Default.KeyboardArrowDown,
-                                    contentDescription = "Sort Options",
+                                    contentDescription = uiLocalized("Sort Options"),
                                     tint = Color.White,
                                     modifier = Modifier
                                         .size(16.dp)
@@ -386,7 +388,7 @@ fun HistoryScreen(navController: NavController) {
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Text(
-                                    text = "No matches found for \"$searchQuery\"",
+                                    text = "${uiLocalized("No matches found for")} \"$searchQuery\"",
                                     color = Color.White,
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.Medium
@@ -436,7 +438,7 @@ fun HistoryScreen(navController: NavController) {
                             .navigationBarsPadding()
                     ) {
                         Text(
-                            text = "Sort by",
+                            text = uiLocalized("Sort by"),
                             color = Color.White,
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
@@ -499,7 +501,7 @@ fun HistoryScreen(navController: NavController) {
             if (showClearDialog) {
                 AlertDialog(
                     onDismissRequest = { showClearDialog = false },
-                    title = { Text("Clear listening history?", color = Color.White, fontWeight = FontWeight.Bold) },
+                    title = { Text(uiLocalized("Clear listening history?"), color = Color.White, fontWeight = FontWeight.Bold) },
                     text = { Text("This will remove all ${history.size} plays. This action cannot be undone.", color = MutedText) },
                     confirmButton = {
                         TextButton(onClick = {
@@ -507,12 +509,12 @@ fun HistoryScreen(navController: NavController) {
                             history = emptyList()
                             showClearDialog = false
                         }) {
-                            Text("Clear", color = Color(0xFFE57373))
+                            Text(uiLocalized("Clear"), color = Color(0xFFE57373))
                         }
                     },
                     dismissButton = {
                         TextButton(onClick = { showClearDialog = false }) {
-                            Text("Cancel", color = Color.White)
+                            Text(uiLocalized("Cancel"), color = Color.White)
                         }
                     },
                     containerColor = Color(0xFF1A1A1A),
@@ -734,7 +736,7 @@ private fun HistoryRow(
         }
         Icon(
             imageVector = Icons.Default.Close,
-            contentDescription = "Remove",
+            contentDescription = uiLocalized("Remove"),
             tint = MutedText,
             modifier = Modifier
                 .size(18.dp)

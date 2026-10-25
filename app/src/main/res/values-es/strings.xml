@@ -157,4 +157,21 @@
     <string name="downloaded_music">Música descargada</string>
     <string name="no_downloads_yet">Aún no hay descargas</string>
     <string name="no_local_files_found">No se encontraron archivos de audio locales</string>
+    <string name="add_music_to_playlist">Añadir música a esta playlist</string>
+    <string name="search_catalog">Buscar música</string>
+    <string name="synced_with_spotify">Sincronizado con Spotify</string>
+    <string name="saved_locally">Guardado en este dispositivo</string>
+    <string name="add_from_youtube">Añadir desde YouTube</string>
+    <string name="only_saved_locally">Solo se guarda en Spotui, no en Spotify</string>
+    <string name="search_tracks">Buscar canciones</string>
+    <string name="youtube_link">Enlace del vídeo de YouTube</string>
+    <string name="invalid_youtube_link">Introduce un enlace válido de YouTube</string>
+    <string name="continue_label">Continuar</string>
+    <string name="track_title">Título</string>
+    <string name="artist">Artista</string>
+    <string name="cover_uri">Enlace de la carátula</string>
+    <string name="save_locally">Guardar en la lista localmente</string>
+    <string name="back">Volver</string>
+    <string name="track_not_spotify">Esta canción no está en el catálogo de Spotify</string>
+    <string name="spotify_add_failed">Spotify no ha permitido añadirla. Comprueba los permisos de la lista.</string>
 </resources>

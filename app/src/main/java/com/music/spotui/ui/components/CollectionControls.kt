@@ -1,5 +1,7 @@
 package com.music.spotui.ui.components
 
+import com.music.spotui.util.uiLocalized
+
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -26,6 +28,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -38,6 +42,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -121,6 +126,7 @@ class CollectionSearchState internal constructor(
     internal val dragging: Boolean get() = isPulling
 }
 
+
 @Composable
 fun rememberCollectionSearchState(listState: LazyListState, key: Any): CollectionSearchState {
     val density = LocalDensity.current.density
@@ -142,6 +148,16 @@ fun CollectionPullSearch(
     )
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(state.expanded) {
+        if (state.expanded) {
+            // Wait for the expanding field to be attached and measured.
+            withFrameNanos { }
+            focusRequester.requestFocus()
+            withFrameNanos { }
+            keyboard?.show()
+        }
+    }
     Box(
         modifier = Modifier.fillMaxWidth().height(animatedHeight).clipToBounds(),
         contentAlignment = Alignment.BottomCenter
@@ -156,6 +172,7 @@ fun CollectionPullSearch(
                 onQueryChange = onQueryChange,
                 modifier = Modifier.weight(1f),
                 placeholder = placeholder,
+                focusRequester = focusRequester,
                 height = 52.dp
             )
             Box(
@@ -169,7 +186,7 @@ fun CollectionPullSearch(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.Close, contentDescription = "Cerrar búsqueda", tint = Color.White)
+                Icon(Icons.Default.Close, contentDescription = uiLocalized("Cerrar búsqueda"), tint = Color.White)
             }
         }
     }
@@ -196,7 +213,7 @@ fun CollectionSortRow(
             Spacer(Modifier.width(9.dp))
             Text(label, color = Color(0xFFECECEC), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.width(4.dp))
-            Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Cambiar orden", tint = Color(0xFFB3B3B3), modifier = Modifier.size(18.dp))
+            Icon(Icons.Default.KeyboardArrowDown, contentDescription = uiLocalized("Cambiar orden"), tint = Color(0xFFB3B3B3), modifier = Modifier.size(18.dp))
         }
     }
 }
@@ -220,9 +237,9 @@ fun CollectionSortSheet(
     )
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color(0xFF202020)) {
         Column(modifier = Modifier.fillMaxWidth().padding(bottom = 22.dp)) {
-            Text("Ordenar por", color = Color.White, fontSize = 19.sp,
+            Text(uiLocalized("Ordenar por"), color = Color.White, fontSize = 19.sp,
                 fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp))
-            Text("Pulsa de nuevo la opción seleccionada para invertir el orden",
+            Text(uiLocalized("Pulsa de nuevo la opción seleccionada para invertir el orden"),
                 color = Color(0xFFB3B3B3), fontSize = 12.sp,
                 modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 16.dp))
             HorizontalDivider(color = Color(0xFF383838))

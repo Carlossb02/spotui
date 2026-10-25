@@ -8,6 +8,9 @@ import android.provider.MediaStore
 import com.music.spotui.data.entity.SongsModel
 import org.json.JSONObject
 import java.io.File
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /**
  * Tracks downloaded (offline) tracks. Each entry is keyed by the song id and stores
@@ -18,6 +21,17 @@ import java.io.File
 private const val PREF = "Downloads"
 private const val KEY_DL_SORT = "download_sort_option"
 private const val KEY_DL_DESC = "download_sort_desc"
+
+/** One lightweight invalidation stream shared by all song lists. */
+private val _downloadsVersion = MutableStateFlow(0L)
+val downloadsVersion = _downloadsVersion.asStateFlow()
+private fun notifyDownloadsChanged() { _downloadsVersion.update { it + 1L } }
+
+/** Just the keys; unlike getDownloadedSongs this never decodes covers/metadata. */
+fun getDownloadedSongIds(context: Context): Set<String> =
+    context.getSharedPreferences(PREF, Context.MODE_PRIVATE).all
+        .filter { (key, value) -> key.toIntOrNull() != null && value is String }
+        .keys
 
 enum class DownloadSortOption(val label: String) {
     DATE("Added"),
@@ -79,6 +93,7 @@ fun addDownload(context: Context, song: SongsModel, filePath: String) {
     context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
         .putString(song.id.toString(), song.toJson(filePath))
         .apply()
+    notifyDownloadsChanged()
 }
 
 fun removeDownload(context: Context, songId: String) {
@@ -90,6 +105,7 @@ fun removeDownload(context: Context, songId: String) {
     runCatching { File(dir, "${songId}_cover.jpg").delete() }
     runCatching { File(dir, "${songId}.jpg").delete() }
     prefs.edit().remove(songId).apply()
+    notifyDownloadsChanged()
 }
 
 fun isDownloaded(context: Context, songId: String): Boolean =
@@ -142,6 +158,7 @@ fun clearAllDownloads(context: Context): Int {
     prefs.edit().clear().apply()
     setDownloadsSortOption(context, currentSort, currentDesc)
     OfflineCollectionsPref.clearAll(context)
+    notifyDownloadsChanged()
     return entries.size
 }
 

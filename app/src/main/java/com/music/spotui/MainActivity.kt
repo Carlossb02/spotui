@@ -6,13 +6,20 @@ import android.os.Build
 import android.os.Bundle
 import android.app.PictureInPictureParams
 import android.content.res.Configuration
+import android.content.ContextWrapper
+import android.content.res.Resources
 import android.util.Rational
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.delay
 import com.music.spotui.ui.screens.PodcastVideoPipState
 import com.music.spotui.ui.screens.PodcastVideoSession
@@ -49,23 +56,6 @@ class MainActivity : ComponentActivity() {
             PodcastVideoSession.activeVideoId != null &&
             PodcastVideoSession.player != null
 
-    @RequiresApi(Build.VERSION_CODES.O)
-    private fun buildPipParams(): PictureInPictureParams {
-        val canEnter = canEnterPodcastPip() && SongPlayer.isPlaying()
-        val size = PodcastVideoSession.player?.videoSize?.let { it.width to it.height }
-        val w = size?.first ?: 16
-        val h = size?.second ?: 9
-        val ratio = (if (w > 0 && h > 0) w.toFloat() / h else 16f / 9f)
-            .coerceIn(0.45f, 2.2f)
-        val builder = PictureInPictureParams.Builder()
-            .setAspectRatio(Rational((ratio * 1000).toInt(), 1000))
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            builder.setAutoEnterEnabled(canEnter)
-            builder.setSeamlessResizeEnabled(true)
-        }
-        return builder.build()
-    }
-
     private fun refreshPodcastPipParams() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
             !packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return
@@ -74,8 +64,18 @@ class MainActivity : ComponentActivity() {
         val canEnter = canEnterPodcastPip() && SongPlayer.isPlaying()
         val size = PodcastVideoSession.player?.videoSize?.let { it.width to it.height }
         if (canEnter == pipAutoEnterEnabled && size == lastPipVideoSize) return
-        val params = buildPipParams()
-        runCatching { setPictureInPictureParams(params) }
+        val w = size?.first ?: 16
+        val h = size?.second ?: 9
+        val ratio = (if (w > 0 && h > 0) w.toFloat() / h else 16f / 9f)
+            .coerceIn(0.45f, 2.2f)
+        val builder = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational((ratio * 1000).toInt(), 1000))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // Enter explicitly from onUserLeaveHint: pre-compose the PiP video first.
+            builder.setAutoEnterEnabled(false)
+            builder.setSeamlessResizeEnabled(true)
+        }
+        runCatching { setPictureInPictureParams(builder.build()) }
             .onSuccess {
                 pipAutoEnterEnabled = canEnter
                 lastPipVideoSize = size
@@ -85,25 +85,26 @@ class MainActivity : ComponentActivity() {
 
     /** Also exposed as a control in the video overlay. Never starts a second player. */
     fun enterPodcastPictureInPicture() {
-        if (!canEnterPodcastPip() || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+        if (!canEnterPodcastPip()) {
             PodcastVideoSession.finishPipHandoff()
             return
         }
+        PodcastVideoPipState.isInPictureInPicture = true
         refreshPodcastPipParams()
-        val params = buildPipParams()
-        val entered = runCatching { enterPictureInPictureMode(params) }
+        val entered = runCatching { enterPictureInPictureMode() }
             .onFailure { android.util.Log.w("SpotuiPiP", "Unable to enter PiP", it) }
-            .getOrDefault(false)
-        if (!entered) PodcastVideoSession.finishPipHandoff()
+            .isSuccess
+        if (!entered) {
+            PodcastVideoPipState.isInPictureInPicture = false
+            PodcastVideoSession.finishPipHandoff()
+        }
     }
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        // Android 12+ uses auto-enter, avoiding double transitions with gestures.
-        if (Build.VERSION.SDK_INT in Build.VERSION_CODES.O until Build.VERSION_CODES.S &&
-            SongPlayer.isPlaying()) {
-            enterPodcastPictureInPicture()
-        }
+        // Handoff irrespective of whether video is mini, lateral or fullscreen.
+        // Android's automatic entry would capture the rest of the app on some Xiaomi devices.
+        if (canEnterPodcastPip() && SongPlayer.isPlaying()) enterPodcastPictureInPicture()
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
@@ -121,12 +122,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?){
 
         super.onCreate(savedInstanceState)
-        val preferredLanguage = com.music.spotui.data.preferences.getAppLanguage(this)
-        if (androidx.appcompat.app.AppCompatDelegate.getApplicationLocales().toLanguageTags() != preferredLanguage) {
-            androidx.appcompat.app.AppCompatDelegate.setApplicationLocales(
-                androidx.core.os.LocaleListCompat.forLanguageTags(preferredLanguage)
-            )
-        }
+        com.music.spotui.data.preferences.SpotuiLanguage.initialize(this)
 
         // Ask for notification permission (Android 13+) so the media notification shows.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -152,15 +148,41 @@ class MainActivity : ComponentActivity() {
         val controller = WindowInsetsControllerCompat(window, window.decorView)
         controller.isAppearanceLightNavigationBars = false
         setContent {
-
+            // ComponentActivity does not install AppCompat locales into Compose resources.
+            // A localized Context + Configuration lets all stringResource callers refresh live.
+            val appLanguage = com.music.spotui.data.preferences.SpotuiLanguage.current
+            val parentContext = LocalContext.current
+            val systemConfiguration = LocalConfiguration.current
+            val localeConfiguration = remember(appLanguage, systemConfiguration) {
+                Configuration(systemConfiguration).apply {
+                    val locale = java.util.Locale.forLanguageTag(appLanguage)
+                    setLocale(locale)
+                    setLayoutDirection(locale)
+                }
+            }
+            val localizedContext = remember(parentContext, localeConfiguration) {
+                object : ContextWrapper(parentContext) {
+                    private val translated = parentContext.createConfigurationContext(localeConfiguration)
+                    override fun getResources(): Resources = translated.resources
+                    override fun getAssets(): android.content.res.AssetManager = translated.assets
+                    override fun getTheme(): Resources.Theme = translated.theme
+                }
+            }
+            CompositionLocalProvider(
+                LocalContext provides localizedContext,
+                LocalConfiguration provides localeConfiguration
+            ) {
             SpotuiTheme {
                 // Keep the original Compose navigation and audio session mounted while
                 // Android displays only the video surface in its PiP window.
                 Box(Modifier.fillMaxSize()) {
-                    App()
+                    // Keep the NavController, back stack and Compose view-model state mounted
+                    // during PiP. Merely hide its drawing; never recreate the whole app.
+                    Box(Modifier.fillMaxSize().graphicsLayer {
+                        alpha = if (PodcastVideoPipState.isInPictureInPicture) 0f else 1f
+                    }) { App() }
                     if (PodcastVideoPipState.isInPictureInPicture) {
-                        // Never expose miniature navigation if a podcast finishes
-                        // before Android closes the system PiP window.
+                        // PiP displays video regardless of current mini/lateral/full layout.
                         Box(Modifier.fillMaxSize().background(Color.Black)) {
                             if (PodcastVideoSession.player != null) {
                                 PodcastPipContent(Modifier.fillMaxSize())
@@ -188,6 +210,7 @@ class MainActivity : ComponentActivity() {
                     com.music.spotui.ui.components.BatteryOptimizationPrompt()
                 }
             }
+            } // Language CompositionLocalProvider
         }
 
         // Experimental Spotify web-player engine: attach its hidden WebView deferred

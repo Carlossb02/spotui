@@ -1,6 +1,8 @@
 package com.music.spotui.data.preferences
 
 import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import android.net.ConnectivityManager
 import com.metrolist.music.constants.AudioQuality
 
@@ -311,19 +313,24 @@ fun setEqualizerBandGains(c: Context, gains: FloatArray) {
 
 fun getAppLanguage(c: Context): String = prefs(c).getString(KEY_LANGUAGE, "es") ?: "es"
 
-private tailrec fun Context.findActivity(): android.app.Activity? = when (this) {
-    is android.app.Activity -> this
-    is android.content.ContextWrapper -> baseContext.findActivity()
-    else -> null
+/** Live language preference; Compose observes it at the root and in legacy UI strings. */
+object SpotuiLanguage {
+    var current by androidx.compose.runtime.mutableStateOf("es")
+        private set
+
+    fun initialize(context: Context) { current = getAppLanguage(context) }
+
+    fun change(context: Context, language: String) {
+        val normalized = if (language == "en") "en" else "es"
+        prefs(context).edit().putString(KEY_LANGUAGE, normalized).apply()
+        current = normalized
+    }
 }
 
 fun setAppLanguage(c: Context, lang: String) {
-    prefs(c).edit().putString(KEY_LANGUAGE, lang).apply()
-    androidx.appcompat.app.AppCompatDelegate.setApplicationLocales(
-        androidx.core.os.LocaleListCompat.forLanguageTags(lang)
-    )
-    c.findActivity()?.recreate()
+    SpotuiLanguage.change(c, lang)
 }
+
 
 
 

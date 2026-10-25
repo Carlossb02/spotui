@@ -6,6 +6,9 @@ import androidx.annotation.RequiresApi
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
@@ -91,11 +94,15 @@ fun MyNavHost(
     NavHost(
         navController = navHostController,
         startDestination = startDestination,
-        // Quick fade between screens instead of the default slide/scale animations.
-        enterTransition = { fadeIn(animationSpec = tween(150)) },
-        exitTransition = { fadeOut(animationSpec = tween(150)) },
-        popEnterTransition = { fadeIn(animationSpec = tween(150)) },
-        popExitTransition = { fadeOut(animationSpec = tween(150)) },
+        // Subtle coordinated opacity/scale, without moving the whole navigation rail.
+        enterTransition = { fadeIn(tween(290, easing = FastOutSlowInEasing)) +
+            scaleIn(initialScale = 0.985f, animationSpec = tween(310, easing = FastOutSlowInEasing)) },
+        exitTransition = { fadeOut(tween(200)) +
+            scaleOut(targetScale = 0.993f, animationSpec = tween(220)) },
+        popEnterTransition = { fadeIn(tween(290, easing = FastOutSlowInEasing)) +
+            scaleIn(initialScale = 0.985f, animationSpec = tween(310, easing = FastOutSlowInEasing)) },
+        popExitTransition = { fadeOut(tween(200)) +
+            scaleOut(targetScale = 0.993f, animationSpec = tween(220)) },
     ){
         composable(Routes.Login.route){
             SpotifyLoginScreen(navHostController)

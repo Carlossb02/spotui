@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -616,7 +618,7 @@ fun PlayerScreen(
             containerColor = Color(0xFF202020)
         ) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
-                Text("Capítulos", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+                Text(uiLocalized("Capítulos"), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
                 androidx.compose.foundation.lazy.LazyColumn(
                     modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp)
                 ) {
@@ -967,7 +969,7 @@ fun PlayerScreen(
                                     shape = RoundedCornerShape(24.dp)
                                 ) {
                                     Text(
-                                        text = if (showPodcastVideo) "Cambiar a audio" else "Cambiar a vídeo",
+                                        text = if (showPodcastVideo) uiLocalized("Switch to audio") else uiLocalized("Switch to video"),
                                         color = Color.White, fontSize = 12.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
@@ -986,7 +988,7 @@ fun PlayerScreen(
                                             Icon(Icons.AutoMirrored.Filled.List, contentDescription = null,
                                                 tint = Color.White, modifier = Modifier.size(16.dp))
                                             Spacer(Modifier.width(6.dp))
-                                            Text("Capítulos", color = Color.White, fontSize = 12.sp,
+                                            Text(uiLocalized("Capítulos"), color = Color.White, fontSize = 12.sp,
                                                 fontWeight = FontWeight.SemiBold)
                                         }
                                     }
@@ -1192,7 +1194,7 @@ fun PlayerTopBar(
             }
             androidx.compose.material3.IconButton(onClick = onBackClick) {
                 Icon(painter = painterResource(id = R.drawable.ic_down),
-                    tint = Color.White, contentDescription = "Minimizar reproductor")
+                    tint = Color.White, contentDescription = uiLocalized("Minimizar reproductor"))
             }
         }
 
@@ -1217,7 +1219,7 @@ fun PlayerTopBar(
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (onPodcastVideoToggle != null) {
                 Text(
-                    text = if (podcastVideoEnabled) "Audio" else "Vídeo",
+                    text = if (podcastVideoEnabled) uiLocalized("Audio") else uiLocalized("Video"),
                     color = Color.White,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -1283,23 +1285,23 @@ fun PlayerInfo(
         AlertDialog(
             onDismissRequest = { showStreamDetailDialog = false },
             title = {
-                Text("Stream Resolution Info", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(uiLocalized("Stream Resolution Info"), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             },
             text = {
                 Column {
                     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                        Text("Engine / Source:", color = Color(0xFFB3B3B3), fontSize = 13.sp, modifier = Modifier.width(115.dp))
+                        Text(uiLocalized("Engine / Source:"), color = Color(0xFFB3B3B3), fontSize = 13.sp, modifier = Modifier.width(115.dp))
                         Text(if (source.isBlank()) "Standard" else source, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                     if (quality.isNotBlank()) {
                         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                            Text("Audio Quality:", color = Color(0xFFB3B3B3), fontSize = 13.sp, modifier = Modifier.width(115.dp))
+                            Text(uiLocalized("Audio Quality:"), color = Color(0xFFB3B3B3), fontSize = 13.sp, modifier = Modifier.width(115.dp))
                             Text(quality, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
                     if (!resolveDetailNote.isNullOrBlank()) {
                         Spacer(Modifier.height(8.dp))
-                        Text("Status Note:", color = Color(0xFFB3B3B3), fontSize = 12.sp)
+                        Text(uiLocalized("Status Note:"), color = Color(0xFFB3B3B3), fontSize = 12.sp)
                         Spacer(Modifier.height(4.dp))
                         Text(
                             resolveDetailNote,
@@ -1314,7 +1316,7 @@ fun PlayerInfo(
                         )
                     }
                     Spacer(Modifier.height(10.dp))
-                    Text("Resolution Trace Log:", color = Color(0xFFB3B3B3), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(uiLocalized("Resolution Trace Log:"), color = Color(0xFFB3B3B3), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(4.dp))
                     SelectionContainer {
                         Box(
@@ -1329,7 +1331,7 @@ fun PlayerInfo(
                             Column {
                                 val logs = com.music.spotui.di.SongPlayer.resolutionLogs.toList()
                                 if (logs.isEmpty()) {
-                                    Text("No live trace logs captured for current playback session.", color = Color.Gray, fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                                    Text(uiLocalized("No live trace logs captured for current playback session."), color = Color.Gray, fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
                                 } else {
                                     logs.forEach { line ->
                                         val textColor = when {
@@ -1355,10 +1357,10 @@ fun PlayerInfo(
                         clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(text))
                         Toast.makeText(context, "Resolution logs copied to clipboard", Toast.LENGTH_SHORT).show()
                     }) {
-                        Text("Copy Logs", color = AppPalette)
+                        Text(uiLocalized("Copy Logs"), color = AppPalette)
                     }
                     TextButton(onClick = { showStreamDetailDialog = false }) {
-                        Text("Close", color = AppPalette)
+                        Text(uiLocalized("Close"), color = AppPalette)
                     }
                 }
             },
@@ -1504,7 +1506,7 @@ fun PlayerInfo(
                     painterResource(id = R.drawable.ic_add)
                 },
                 tint = if (isLiked.value) {
-                    Color(AppPalette.toArgb())
+                    Color(0xFF1ED760) // Spotify green for the added-to-library tick.
                 } else {
                     Color.White
                 },
@@ -1671,7 +1673,7 @@ fun PlayerFull(
             Icon(
                 painter = painterResource(id = R.drawable.ic_player_back),
                 tint = Color.White,
-                contentDescription = "Episodio anterior",
+                contentDescription = uiLocalized("Episodio anterior"),
                 modifier = Modifier.size(25.dp).clickable {
                     playerViewModel.playPreviousSong(queueSongs, context)
                 }
@@ -1702,7 +1704,7 @@ fun PlayerFull(
         }
         if (podcastEpisode) {
             androidx.compose.material3.Text(
-                text = "↶15",
+                text = uiLocalized("↶15"),
                 fontSize = 17.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
@@ -1787,7 +1789,7 @@ fun PlayerFull(
 
         if (podcastEpisode) {
             androidx.compose.material3.Text(
-                text = "15↷",
+                text = uiLocalized("15↷"),
                 fontSize = 17.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
@@ -1819,7 +1821,7 @@ fun PlayerFull(
             Icon(
                 painter = painterResource(id = R.drawable.ic_player_skip),
                 tint = Color.White,
-                contentDescription = "Episodio siguiente",
+                contentDescription = uiLocalized("Episodio siguiente"),
                 modifier = Modifier.size(25.dp).clickable {
                     playerViewModel.playNextSongs(queueSongs, context)
                 }
@@ -1854,11 +1856,11 @@ fun PlayerFull(
                         Color.White
                     },
                     painter = painterResource(id = R.drawable.ic_repeat),
-                    contentDescription = "Repeat"
+                    contentDescription = uiLocalized("Repeat")
                 )
                 if (repeat == RepeatMode.ONE) {
                     Text(
-                        text = "1",
+                        text = uiLocalized("1"),
                         color = Color(0xFF1ED760),
                         fontSize = 8.sp,
                         fontWeight = FontWeight.Bold,
@@ -1896,7 +1898,7 @@ fun PlayerEndInfo(onOpenDevices: () -> Unit = {}) {
                 .clickable { onOpenDevices() },
             painter = painterResource(id = R.drawable.ic_devices),
             tint = Color.White,
-            contentDescription = "Devices"
+            contentDescription = uiLocalized("Devices")
         )
         Icon(
             modifier = Modifier
@@ -1961,7 +1963,7 @@ fun PlayerConnectRow(
                 painter = painterResource(id = R.drawable.ic_devices),
                 tint = Color(0xFF1ED760),
                 modifier = Modifier.size(18.dp),
-                contentDescription = "Device",
+                contentDescription = uiLocalized("Device"),
             )
             Text(
                 text = routeName,
@@ -1995,7 +1997,7 @@ fun PlayerConnectRow(
                         }
                         context.startActivity(Intent.createChooser(send, "Share"))
                     },
-                contentDescription = "Share",
+                contentDescription = uiLocalized("Share"),
             )
             Spacer(modifier = Modifier.width(22.dp))
             Icon(
@@ -2007,7 +2009,7 @@ fun PlayerConnectRow(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                     ) { onOpenQueue() },
-                contentDescription = "Queue",
+                contentDescription = uiLocalized("Queue"),
             )
         }
     }
@@ -2078,7 +2080,7 @@ fun ArtistsSheet(
                 .padding(bottom = 12.dp)
         ) {
             Text(
-                text = "Artists",
+                text = uiLocalized("Artists"),
                 color = Color.White,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
@@ -2182,7 +2184,7 @@ fun ArtistsSheet(
                                 .padding(horizontal = 16.dp, vertical = 6.dp),
                         ) {
                             Text(
-                                text = if (following) "Following" else "Follow",
+                                text = if (following) uiLocalized("Following") else uiLocalized("Follow"),
                                 color = if (following) Color(0xFF191414) else Color.White,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
@@ -2270,10 +2272,8 @@ fun PlayerOptionsSheet(
                 picked,
                 picked.lastPathSegment.orEmpty()
             )
-            if (com.music.spotui.data.preferences.isDownloaded(context, song.id.toString())) {
-                com.music.spotui.data.preferences.removeDownload(context, song.id.toString())
-                SongPlayer.downloadSong(song, context)
-            }
+            // Keep any downloaded file for offline use. Alternate playback bypasses it.
+            SongPlayer.registerAlternativeKeys(listOf(song.url to alternativeKey))
             currentAlternative = getAlternativeStream(context, alternativeKey)
             Toast.makeText(context, "Alternative stream set to local file", Toast.LENGTH_SHORT).show()
             SongPlayer.invalidateSongCache(song, context, reloadIfPlaying = true, clearAltStream = false)
@@ -2311,10 +2311,7 @@ fun PlayerOptionsSheet(
                     onUseVideoId = { videoId ->
                         val song = currentSong ?: return@YouTubeSearchView
                         setYouTubeAlternativeStream(context, alternativeKey, videoId)
-                        if (com.music.spotui.data.preferences.isDownloaded(context, song.id.toString())) {
-                            com.music.spotui.data.preferences.removeDownload(context, song.id.toString())
-                            SongPlayer.downloadSong(song, context)
-                        }
+                        SongPlayer.registerAlternativeKeys(listOf(song.url to alternativeKey))
                         currentAlternative = getAlternativeStream(context, alternativeKey)
                         showYouTubeSearch = false
                         showAlternativeStream = false
@@ -2343,10 +2340,7 @@ fun PlayerOptionsSheet(
                             ).show()
                         } else {
                             setYouTubeAlternativeStream(context, alternativeKey, videoId)
-                            if (com.music.spotui.data.preferences.isDownloaded(context, song.id.toString())) {
-                                com.music.spotui.data.preferences.removeDownload(context, song.id.toString())
-                                SongPlayer.downloadSong(song, context)
-                            }
+                            SongPlayer.registerAlternativeKeys(listOf(song.url to alternativeKey))
                             currentAlternative = getAlternativeStream(context, alternativeKey)
                             Toast.makeText(
                                 context,
@@ -2407,7 +2401,7 @@ fun PlayerOptionsSheet(
 
                 PlayerMenuRow(
                     icon = Icons.Default.Share,
-                    label = "Share"
+                    label = uiLocalized("Share")
                 ) {
                     val shareText = currentSong?.spotifyTrackId?.takeIf { it.isNotBlank() }
                         ?.let { "https://open.spotify.com/track/$it" }
@@ -2457,7 +2451,7 @@ fun PlayerOptionsSheet(
                 }
                 PlayerMenuRow(
                     icon = Icons.Default.Refresh,
-                    label = "Invalidate cache",
+                    label = uiLocalized("Invalidate cache"),
                     enabled = currentSong != null,
                 ) {
                     val song = currentSong ?: return@PlayerMenuRow
@@ -2483,7 +2477,7 @@ fun PlayerOptionsSheet(
                 }
                 PlayerMenuRow(
                     icon = Icons.Default.Add,
-                    label = "Add to playlist",
+                    label = uiLocalized("Add to playlist"),
                     enabled = currentSong != null,
                     trailingArrow = true,
                 ) {
@@ -2491,7 +2485,7 @@ fun PlayerOptionsSheet(
                 }
                 PlayerMenuRow(
                     icon = Icons.AutoMirrored.Filled.List,
-                    label = "View queue"
+                    label = uiLocalized("View queue")
                 ) {
                     onDismiss()
                     onOpenQueue()
@@ -2501,7 +2495,7 @@ fun PlayerOptionsSheet(
                 val realAlbum = currentSong?.album?.ifBlank { null } ?: album
                 PlayerMenuRow(
                     icon = Icons.Default.PlayArrow,
-                    label = "Go to album",
+                    label = uiLocalized("Go to album"),
                     enabled = realAlbum.isNotBlank()
                 ) {
                     onDismiss()
@@ -2509,7 +2503,7 @@ fun PlayerOptionsSheet(
                 }
                 PlayerMenuRow(
                     icon = Icons.Default.Person,
-                    label = "Go to artist",
+                    label = uiLocalized("Go to artist"),
                     enabled = singer.isNotBlank()
                 ) {
                     onDismiss()
@@ -2539,7 +2533,7 @@ fun PlayerOptionsSheet(
                         modifier = Modifier
                             .size(24.dp)
                             .clickable { showSleep = false },
-                        contentDescription = "Back",
+                        contentDescription = uiLocalized("Back"),
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
@@ -2609,7 +2603,7 @@ fun AlternativeStreamEditor(
             )
             Spacer(Modifier.width(12.dp))
             Text(
-                "Alternative stream",
+                uiLocalized("Alternative stream"),
                 color = Color.White,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
@@ -2646,7 +2640,7 @@ fun AlternativeStreamEditor(
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "YouTube alternative",
+                        text = uiLocalized("YouTube alternative"),
                         color = Color(AppPalette.toArgb()),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
@@ -2664,7 +2658,7 @@ fun AlternativeStreamEditor(
                     imageVector = Icons.AutoMirrored.Filled.OpenInNew,
                     tint = Color(0xFFB3B3B3),
                     modifier = Modifier.size(18.dp),
-                    contentDescription = "Open on YouTube",
+                    contentDescription = uiLocalized("Open on YouTube"),
                 )
             }
         } else if (currentAlternative != null && currentAlternative.isLocal) {
@@ -2676,7 +2670,7 @@ fun AlternativeStreamEditor(
             )
         } else {
             Text(
-                text = "No alternative stream set",
+                text = uiLocalized("No alternative stream set"),
                 color = Color(0xFFB3B3B3),
                 fontSize = 13.sp,
             )
@@ -2688,7 +2682,7 @@ fun AlternativeStreamEditor(
             enabled = enabled,
             singleLine = true,
             textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp),
-            label = { Text("YouTube link or video ID", color = Color(0xFFB3B3B3)) },
+            label = { Text(uiLocalized("YouTube link or video ID"), color = Color(0xFFB3B3B3)) },
             modifier = Modifier.fillMaxWidth(),
         )
         Row(
@@ -2700,14 +2694,14 @@ fun AlternativeStreamEditor(
                 enabled = enabled && youtubeText.isNotBlank(),
                 onClick = { onUseYouTube(youtubeText) }) {
                 Text(
-                    "Use YouTube",
+                    uiLocalized("Use YouTube"),
                     color = if (enabled && youtubeText.isNotBlank()) AppPalette else Color.Gray
                 )
             }
         }
         PlayerMenuRow(
             icon = Icons.Default.Search,
-            label = "Search YouTube",
+            label = uiLocalized("Search YouTube"),
             enabled = enabled,
             trailingArrow = true,
         ) {
@@ -2715,14 +2709,14 @@ fun AlternativeStreamEditor(
         }
         PlayerMenuRow(
             icon = Icons.Default.Add,
-            label = "Use local audio file",
+            label = uiLocalized("Use local audio file"),
             enabled = enabled,
         ) {
             onPickLocal()
         }
         PlayerMenuRow(
             icon = Icons.Default.CheckCircle,
-            label = "Clear alternative stream",
+            label = uiLocalized("Clear alternative stream"),
             enabled = enabled && currentAlternative != null,
             iconTint = Color(0xFFE57373),
         ) {
@@ -2767,7 +2761,7 @@ fun YouTubeSearchView(
             )
             Spacer(Modifier.width(12.dp))
             Text(
-                "Search YouTube",
+                uiLocalized("Search YouTube"),
                 color = Color.White,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
@@ -2780,7 +2774,7 @@ fun YouTubeSearchView(
             enabled = enabled,
             singleLine = true,
             textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp),
-            label = { Text("Search query", color = Color(0xFFB3B3B3)) },
+            label = { Text(uiLocalized("Search query"), color = Color(0xFFB3B3B3)) },
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(12.dp))
@@ -2811,7 +2805,7 @@ fun YouTubeSearchView(
 
             viewModel.searchResults.isEmpty() && viewModel.searchQuery.isNotBlank() -> {
                 Text(
-                    text = "No results found",
+                    text = uiLocalized("No results found"),
                     color = Color(0xFFB3B3B3),
                     fontSize = 13.sp,
                     modifier = Modifier.padding(top = 8.dp),
@@ -2920,7 +2914,7 @@ private fun YouTubeSearchResultRow(
                     .size(32.dp)
                     .clickable(enabled = enabled) { onPreview() }
                     .padding(4.dp),
-                contentDescription = "Preview",
+                contentDescription = uiLocalized("Preview"),
             )
         }
         Spacer(Modifier.width(2.dp))
@@ -2931,7 +2925,7 @@ private fun YouTubeSearchResultRow(
                 .size(32.dp)
                 .clickable(enabled = enabled) { onSelect() }
                 .padding(4.dp),
-            contentDescription = "Use this",
+            contentDescription = uiLocalized("Use this"),
         )
     }
 }

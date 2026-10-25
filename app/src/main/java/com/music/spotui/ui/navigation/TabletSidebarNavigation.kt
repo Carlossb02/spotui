@@ -1,5 +1,7 @@
 package com.music.spotui.ui.navigation
 
+import com.music.spotui.util.uiLocalized
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -66,7 +68,7 @@ fun TabletSidebarNavigation(
                 modifier = Modifier.size(34.dp)
             )
             Spacer(Modifier.width(12.dp))
-            Text("Spotui", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+            Text(uiLocalized("Spotui"), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
         }
 
         listOf(
@@ -119,7 +121,7 @@ fun TabletSidebarNavigation(
         HorizontalDivider(color = Color(0xFF2B2B2E))
         Spacer(Modifier.height(18.dp))
         Text(
-            "TU MÚSICA",
+            uiLocalized("TU MÚSICA"),
             fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold,
             color = Color(0xFFB3B3B3),

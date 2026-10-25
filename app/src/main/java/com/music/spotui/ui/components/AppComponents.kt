@@ -211,7 +211,7 @@ fun MiniPlayer(
             ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
         val videoActive = PodcastVideoSession.isActive(podcastVideoId)
         Column(
-            Modifier.fillMaxWidth().height(64.dp)
+            Modifier.fillMaxWidth().height(60.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color(0xFF212121))
         ) {
@@ -226,8 +226,8 @@ fun MiniPlayer(
                     PodcastVideoFrame(
                         videoId = podcastVideoId,
                         compact = true,
-                        modifier = Modifier.width(100.dp).fillMaxHeight()
-                            .clip(RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp)),
+                        modifier = Modifier.padding(start = 7.dp, top = 5.dp, bottom = 5.dp)
+                            .width(88.dp).fillMaxHeight().clip(RoundedCornerShape(7.dp)),
                         onUseAudio = { PodcastVideoSession.stop() }
                     )
                 } else {
@@ -238,9 +238,9 @@ fun MiniPlayer(
                         failure = placeholder(R.drawable.placeholder),
                         loading = placeholder(R.drawable.placeholder),
                         modifier = (if (podcastVideoId != null) {
-                            Modifier.width(100.dp).fillMaxHeight().clip(
-                                RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp))
-                        } else Modifier.size(53.dp).clip(RoundedCornerShape(8.dp)))
+                            Modifier.padding(start = 7.dp, top = 5.dp, bottom = 5.dp)
+                                .width(88.dp).fillMaxHeight().clip(RoundedCornerShape(7.dp))
+                        } else Modifier.padding(start = 7.dp).size(45.dp).clip(RoundedCornerShape(7.dp)))
                     )
                 }
                 Column(Modifier.weight(1f).padding(start = 11.dp, end = 6.dp)) {
@@ -440,7 +440,7 @@ fun MiniPlayer(
             Row(horizontalArrangement = Arrangement.Start,
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .width(260.dp)
+                    .weight(1f)
                     .clipToBounds()
                     .graphicsLayer {
                         translationX = swipeOffsetX
@@ -453,7 +453,8 @@ fun MiniPlayer(
                     PodcastVideoFrame(
                         videoId = podcastVideoId!!,
                         compact = true,
-                        modifier = Modifier.padding(end = 10.dp).size(42.dp)
+                        modifier = Modifier.padding(start = 5.dp, end = 10.dp)
+                            .width(75.dp).height(42.dp)
                             .clip(RoundedCornerShape(6.dp)),
                         onUseAudio = { PodcastVideoSession.stop() }
                     )

@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import androidx.activity.compose.BackHandler
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -256,7 +258,7 @@ fun LikedSongsScreen(navController: NavController) {
                             state = searchReveal,
                             query = searchQuery,
                             onQueryChange = { searchQuery = it },
-                            placeholder = "Buscar en canciones que te gustan"
+                            placeholder = uiLocalized("Buscar en canciones que te gustan")
                         )
                     }
                     if (!keyboardVisible && !searchReveal.expanded && searchQuery.isBlank()) {
@@ -348,7 +350,7 @@ fun LikedSongsScreen(navController: NavController) {
                                                             snackbarVisible = true
                                                         }
                                                     },
-                                                contentDescription = "Download liked songs",
+                                                contentDescription = uiLocalized("Download liked songs"),
                                             )
                                             Spacer(modifier = Modifier.width(18.dp))
                                             Icon(
@@ -367,7 +369,7 @@ fun LikedSongsScreen(navController: NavController) {
                                                             android.widget.Toast.LENGTH_SHORT,
                                                         ).show()
                                                     },
-                                                contentDescription = "Add to queue",
+                                                contentDescription = uiLocalized("Add to queue"),
                                             )
                                             Spacer(modifier = Modifier.width(18.dp))
                                             Icon(
@@ -392,7 +394,7 @@ fun LikedSongsScreen(navController: NavController) {
                                                             SongPlayer.playSong(first.url, context, "song/${first.id}")
                                                         }
                                                     },
-                                                contentDescription = "Shuffle play",
+                                                contentDescription = uiLocalized("Shuffle play"),
                                             )
                                         }
                                     }
@@ -462,7 +464,7 @@ fun LikedSongsScreen(navController: NavController) {
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Text(
-                                    text = "No matches found for \"$searchQuery\"",
+                                    text = "${uiLocalized("No matches found for")} \"$searchQuery\"",
                                     color = Color.White,
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.Medium
@@ -533,13 +535,17 @@ fun LikedSongsScreen(navController: NavController) {
                                                 maxLines = 1
                                             )
                                         }
-                                        Text(
-                                            text = song.singer,
-                                            color = Color.Gray,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            maxLines = 1
-                                        )
+                                        Row(verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
+                                            Text(
+                                                text = song.singer,
+                                                color = Color.Gray,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                maxLines = 1
+                                            )
+                                        }
                                     }
                                 }
                             }

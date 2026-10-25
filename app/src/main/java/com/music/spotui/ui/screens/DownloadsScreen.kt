@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -244,7 +246,7 @@ fun DownloadsScreen(navController: NavController) {
                     query = searchQuery,
                     onQueryChange = { searchQuery = it },
                     modifier = Modifier.padding(20.dp, 8.dp),
-                    placeholder = "Search downloaded songs",
+                    placeholder = uiLocalized("Search downloaded songs"),
                 )
 
                 // ── Sort and Clear all action ──
@@ -272,7 +274,7 @@ fun DownloadsScreen(navController: NavController) {
                             )
                             Icon(
                                 imageVector = Icons.Default.KeyboardArrowDown,
-                                contentDescription = "Sort Options",
+                                contentDescription = uiLocalized("Sort Options"),
                                 tint = Color.White,
                                 modifier = Modifier
                                     .size(16.dp)
@@ -285,7 +287,7 @@ fun DownloadsScreen(navController: NavController) {
 
                     if (songs.isNotEmpty() && searchQuery.isBlank()) {
                         Text(
-                            text = "Clear all",
+                            text = uiLocalized("Clear all"),
                             color = Color(0xFFE57373),
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -358,14 +360,14 @@ fun DownloadsScreen(navController: NavController) {
 
                 if (songs.isEmpty() && inProgress.isEmpty()) {
                     Text(
-                        text = "No downloads yet. Tap ⋯ on a track and choose Download.",
+                        text = uiLocalized("No downloads yet. Tap ⋯ on a track and choose Download."),
                         color = Color.Gray,
                         fontSize = 14.sp,
                         modifier = Modifier.padding(20.dp),
                     )
                 } else if (displayedSongs.isEmpty() && inProgress.isEmpty()) {
                     Text(
-                        text = "No matches found for \"$searchQuery\"",
+                        text = "${uiLocalized("No matches found for")} \"$searchQuery\"",
                         color = Color.Gray,
                         fontSize = 14.sp,
                         modifier = Modifier.padding(20.dp),
@@ -434,13 +436,17 @@ fun DownloadsScreen(navController: NavController) {
                                             maxLines = 1
                                         )
                                     }
-                                    Text(
-                                        text = song.singer,
-                                        color = Color.Gray,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        maxLines = 1
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
+                                        Text(
+                                            text = song.singer,
+                                            color = Color.Gray,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -466,7 +472,7 @@ fun DownloadsScreen(navController: NavController) {
                                 .navigationBarsPadding()
                         ) {
                             Text(
-                                text = "Sort by",
+                                text = uiLocalized("Sort by"),
                                 color = Color.White,
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.Bold,
@@ -528,8 +534,8 @@ fun DownloadsScreen(navController: NavController) {
                 if (showClearConfirmDialog) {
                     AlertDialog(
                         onDismissRequest = { showClearConfirmDialog = false },
-                        title = { Text(text = "Clear all downloads?", color = Color.White, fontWeight = FontWeight.Bold) },
-                        text = { Text(text = "Are you sure you want to remove all downloaded songs? This action cannot be undone.", color = Color(0xFFB3B3B3)) },
+                        title = { Text(text = uiLocalized("Clear all downloads?"), color = Color.White, fontWeight = FontWeight.Bold) },
+                        text = { Text(text = uiLocalized("Are you sure you want to remove all downloaded songs? This action cannot be undone."), color = Color(0xFFB3B3B3)) },
                         confirmButton = {
                             TextButton(onClick = {
                                 val n =

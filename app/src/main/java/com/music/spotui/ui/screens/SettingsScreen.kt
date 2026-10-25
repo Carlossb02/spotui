@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -205,7 +207,7 @@ fun SettingsScreen(navController: NavController) {
                 navigationIcon = {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
+                        contentDescription = uiLocalized("Back"),
                         tint = Color.White,
                         modifier = Modifier
                             .padding(start = 8.dp)
@@ -244,7 +246,7 @@ fun SettingsScreen(navController: NavController) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("App Language / Idioma", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(uiLocalized("App Language / Idioma"), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     Text(if (appLang == "es") "Español" else "English", color = Color(0xFF1ED760), fontSize = 12.sp)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -295,7 +297,7 @@ fun SettingsScreen(navController: NavController) {
                 }
                 Icon(
                     painter = painterResource(id = R.drawable.ic_devices),
-                    contentDescription = "Devices",
+                    contentDescription = uiLocalized("Devices"),
                     tint = Color(0xFF1ED760),
                     modifier = Modifier.size(22.dp)
                 )
@@ -335,7 +337,7 @@ fun SettingsScreen(navController: NavController) {
                 if (batteryOptExempt) {
                     Icon(
                         imageVector = Icons.Filled.Check,
-                        contentDescription = "Enabled",
+                        contentDescription = uiLocalized("Enabled"),
                         tint = AppPalette,
                         modifier = Modifier.size(20.dp)
                     )
@@ -360,7 +362,7 @@ fun SettingsScreen(navController: NavController) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Open Spotify links by default", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(uiLocalized("Open Spotify links by default"), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     Text(
                         if (isDefaultLinkHandler) "Spotui handles Spotify URLs by default" else "Not default — tap to open setup guide",
                         color = if (isDefaultLinkHandler) Color(0xFF81C784) else Color(0xFFB3B3B3),
@@ -370,14 +372,14 @@ fun SettingsScreen(navController: NavController) {
                 if (isDefaultLinkHandler) {
                     Icon(
                         imageVector = Icons.Filled.Check,
-                        contentDescription = "Enabled",
+                        contentDescription = uiLocalized("Enabled"),
                         tint = AppPalette,
                         modifier = Modifier.size(20.dp)
                     )
                 } else {
                     Icon(
                         imageVector = Icons.Default.OpenInNew,
-                        contentDescription = "Open Settings",
+                        contentDescription = uiLocalized("Open Settings"),
                         tint = Color.White,
                         modifier = Modifier.size(20.dp)
                     )
@@ -424,11 +426,11 @@ fun SettingsScreen(navController: NavController) {
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(stringResource(R.string.clear_cache), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Text("Unlocks all cached streams and forces re-resolution", color = Color.Gray, fontSize = 11.sp)
+                    Text(uiLocalized("Unlocks all cached streams and forces re-resolution"), color = Color.Gray, fontSize = 11.sp)
                 }
                 Icon(
                     imageVector = Icons.Default.Refresh,
-                    contentDescription = "Clear cache",
+                    contentDescription = uiLocalized("Clear cache"),
                     tint = Color.Gray,
                     modifier = Modifier.size(20.dp)
                 )
@@ -483,7 +485,7 @@ fun SettingsScreen(navController: NavController) {
                         if (isSel) {
                             Icon(
                                 imageVector = Icons.Filled.Check,
-                                contentDescription = "Selected",
+                                contentDescription = uiLocalized("Selected"),
                                 tint = AppPalette,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -628,7 +630,44 @@ fun SettingsScreen(navController: NavController) {
             Spacer(Modifier.height(12.dp))
             }
 
-            SettingsGroupHeader("Datos y aplicación", "Actualizaciones, copias y mantenimiento")
+            SettingsGroupHeader("Datos y aplicación", "Historial, archivos y mantenimiento")
+            Column(
+                modifier = Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xFF19191C))
+                    .padding(horizontal = 14.dp, vertical = 6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { navController.navigate(com.music.spotui.ui.navigation.Routes.History.route) }
+                        .padding(vertical = 14.dp, horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(stringResource(R.string.listening_history), color = Color.White,
+                            fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        Text(uiLocalized("Your plays and stats"), color = Color(0xFFB3B3B3), fontSize = 12.sp)
+                    }
+                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null,
+                        tint = Color(0xFFB3B3B3), modifier = Modifier.size(20.dp))
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { navController.navigate(com.music.spotui.ui.navigation.Routes.LocalFiles.route) }
+                        .padding(vertical = 14.dp, horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(stringResource(R.string.local_files), color = Color.White,
+                            fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        Text(uiLocalized("Music imported from this device"), color = Color(0xFFB3B3B3), fontSize = 12.sp)
+                    }
+                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null,
+                        tint = Color(0xFFB3B3B3), modifier = Modifier.size(20.dp))
+                }
+            }
             Column(
                 modifier = Modifier.fillMaxWidth()
                     .clip(RoundedCornerShape(18.dp))
@@ -660,11 +699,11 @@ fun SettingsScreen(navController: NavController) {
                     focusedPlaceholderColor = Color(0xFF666666),
                     unfocusedPlaceholderColor = Color(0xFF666666),
                 ),
-                placeholder = { Text("https://github.com/Owner/Repo") },
+                placeholder = { Text(uiLocalized("https://github.com/Owner/Repo")) },
                 trailingIcon = {
                     Icon(
                         imageVector = Icons.Filled.Refresh,
-                        contentDescription = "Reset",
+                        contentDescription = uiLocalized("Reset"),
                         tint = if (updateRepoUrl != DEFAULT_UPDATE_REPO_URL) AppPalette else Color(0xFF444444),
                         modifier = Modifier
                             .padding(end = 4.dp)
@@ -724,7 +763,7 @@ fun SettingsScreen(navController: NavController) {
                     } else {
                         Icon(
                             imageVector = Icons.Filled.Save,
-                            contentDescription = "Backup",
+                            contentDescription = uiLocalized("Backup"),
                             tint = AppPalette,
                             modifier = Modifier.size(22.dp)
                         )
@@ -743,7 +782,7 @@ fun SettingsScreen(navController: NavController) {
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Folder,
-                            contentDescription = "Folder",
+                            contentDescription = uiLocalized("Folder"),
                             tint = Color.White,
                             modifier = Modifier.size(22.dp)
                         )
@@ -781,7 +820,7 @@ fun SettingsScreen(navController: NavController) {
                 } else {
                     Icon(
                         imageVector = Icons.Filled.FolderOpen,
-                        contentDescription = "Restore",
+                        contentDescription = uiLocalized("Restore"),
                         tint = Color.White,
                         modifier = Modifier.size(22.dp)
                     )
@@ -831,14 +870,14 @@ fun SettingsScreen(navController: NavController) {
                 Column(Modifier.weight(1f)) {
                     Text(stringResource(R.string.reset_session), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "Clears session tokens and resolved stream caches",
+                        uiLocalized("Clears session tokens and resolved stream caches"),
                         color = Color(0xFFB3B3B3),
                         fontSize = 12.sp,
                     )
                 }
                 Icon(
                     imageVector = Icons.Filled.Refresh,
-                    contentDescription = "Reset",
+                    contentDescription = uiLocalized("Reset"),
                     tint = AppPalette,
                     modifier = Modifier.size(20.dp)
                 )
@@ -965,7 +1004,7 @@ private fun QualityPicker(
                     if (isSel) {
                         Icon(
                             imageVector = Icons.Filled.Check,
-                            contentDescription = "Selected",
+                            contentDescription = uiLocalized("Selected"),
                             tint = AppPalette,
                             modifier = Modifier.size(20.dp)
                         )
@@ -1008,7 +1047,7 @@ private fun GroupedPresetGrid(
             ) {
                 Column {
                     Text(
-                        text = "Preset actual",
+                        text = uiLocalized("Preset actual"),
                         color = Color.Gray,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium
@@ -1026,7 +1065,7 @@ private fun GroupedPresetGrid(
                         color = AppPalette.copy(alpha = 0.15f)
                     ) {
                         Text(
-                            text = "22 presets",
+                            text = uiLocalized("22 presets"),
                             color = AppPalette,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,

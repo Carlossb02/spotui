@@ -1,6 +1,13 @@
 package com.music.spotui.ui.navigation
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
@@ -67,41 +74,54 @@ fun MainBottomNavigation(
 ) {
     AnimatedVisibility(
         visible = bottomBarState.value,
-        enter = slideInVertically(initialOffsetY = { it }),
-        exit = slideOutVertically(targetOffsetY = { it })
+        enter = slideInVertically(animationSpec = tween(360, easing = androidx.compose.animation.core.FastOutSlowInEasing), initialOffsetY = { it / 3 }) + fadeIn(tween(320)),
+        exit = slideOutVertically(animationSpec = tween(300, easing = androidx.compose.animation.core.FastOutSlowInEasing), targetOffsetY = { it / 3 }) + fadeOut(tween(250))
     ) {
         Box(
             contentAlignment = Alignment.BottomCenter,
             modifier = Modifier.fillMaxWidth().background(
                 Brush.verticalGradient(
-                    listOf(Color.Transparent, Color.Black, Color.Black)
+                    if (tabletInlineMiniPlayer) {
+                        // Keep the tablet appearance unchanged.
+                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.18f),
+                            Color.Black.copy(alpha = 0.66f), Color.Black.copy(alpha = 0.94f))
+                    } else {
+                        // Same transparent upper edge; a denser black base for phones.
+                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.18f),
+                            Color.Black.copy(alpha = 0.82f), Color.Black.copy(alpha = 0.995f))
+                    }
                 )
             )
         ) {
             if (tabletInlineMiniPlayer) {
                 androidx.compose.foundation.layout.BoxWithConstraints(
                     modifier = Modifier.fillMaxWidth().navigationBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                        // Extra breathing room above the tablet dock; keep its underside compact.
+                        .padding(start = 22.dp, end = 22.dp, top = 34.dp, bottom = 14.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     val miniVisible = bottomBarPlayerState.value && showMiniPlayer
-                    val gap = 8.dp
+                    val gap = 10.dp
                     val usableWidth = maxWidth
                     val miniWidth = minOf(338.dp, usableWidth * 0.44f)
                     val navWidth = if (miniVisible) {
-                        minOf(430.dp, (usableWidth - miniWidth - gap).coerceAtLeast(180.dp))
-                    } else minOf(430.dp, usableWidth)
+                        minOf(410.dp, (usableWidth - miniWidth - gap).coerceAtLeast(180.dp))
+                    } else minOf(410.dp, usableWidth)
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(gap)
                     ) {
                         NavigationTabs(
                             navController = navController,
-                            modifier = Modifier.width(navWidth).height(62.dp)
+                            modifier = Modifier.width(navWidth).height(72.dp)
                                 .background(Color(0xFF202020), androidx.compose.foundation.shape.RoundedCornerShape(14.dp)),
                             onSearchReselected = onSearchReselected
                         )
-                        AnimatedVisibility(visible = miniVisible) {
+                        AnimatedVisibility(
+                            visible = miniVisible,
+                            enter = expandHorizontally(animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow), expandFrom = Alignment.Start) + fadeIn(tween(260)),
+                            exit = shrinkHorizontally(animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow), shrinkTowards = Alignment.Start) + fadeOut(tween(200)),
+                        ) {
                             Box(Modifier.width(miniWidth)) {
                                 // The dock and miniplayer are a single centered group.
                                 MiniPlayer(navController, onExpandPlayer = onExpandTabletPlayer,

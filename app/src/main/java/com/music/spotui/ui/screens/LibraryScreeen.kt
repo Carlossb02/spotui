@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -66,6 +68,12 @@ import com.music.spotui.data.preferences.isLibrarySortDescending
 import com.music.spotui.data.preferences.setLibrarySortOption
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import com.music.spotui.data.preferences.downloadsVersion
+import com.music.spotui.data.preferences.getDownloadedSongIds
+import com.music.spotui.data.preferences.OfflineCollectionsPref
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -111,18 +119,18 @@ import com.music.spotui.ui.theme.AppBackground
 import com.music.spotui.ui.viewmodel.LibraryFilterType
 import com.music.spotui.ui.viewmodel.LibraryViewModel
 
-fun isLibraryEntryDownloaded(context: android.content.Context, entry: LibraryEntry): Boolean {
-    if (entry.isLocal || entry.spotifyId == Api.HomeCache.DOWNLOADS_ID) return true
-    if (entry.spotifyId == Api.HomeCache.LIKED_SONGS_ID) {
-        return com.music.spotui.data.preferences.getDownloadedSongs(context).isNotEmpty()
-    }
-    val offlineCollections = com.music.spotui.data.preferences.OfflineCollectionsPref.getOfflineCollections(context)
-    val cleanEntryId = Api.cleanId(entry.spotifyId)
-    return offlineCollections.any { col ->
-        val cleanColId = Api.cleanId(col.id)
-        (cleanColId.isNotBlank() && cleanColId == cleanEntryId) ||
-        (entry.isPlaylist == col.isPlaylist && entry.name.equals(col.name, ignoreCase = true))
-    }
+private data class DownloadedLibrarySnapshot(
+    val songIds: Set<String>,
+    val collectionKeys: Set<String>,
+)
+
+private fun downloadedLibraryMatch(entry: LibraryEntry, snapshot: DownloadedLibrarySnapshot): Boolean {
+    if (entry.spotifyId == Api.HomeCache.DOWNLOADS_ID) return true
+    if (entry.spotifyId == Api.HomeCache.LIKED_SONGS_ID) return snapshot.songIds.isNotEmpty()
+    if (entry.isLocal) return true
+    val cleanId = Api.cleanId(entry.spotifyId)
+    return "id:$cleanId" in snapshot.collectionKeys ||
+        "name:${entry.isPlaylist}:${entry.name}".lowercase() in snapshot.collectionKeys
 }
 
 @Composable
@@ -155,7 +163,7 @@ fun LibraryFilterChips(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Close,
-                        contentDescription = "Clear filters",
+                        contentDescription = uiLocalized("Clear filters"),
                         tint = Color.White,
                         modifier = Modifier.size(16.dp)
                     )
@@ -173,14 +181,6 @@ fun LibraryFilterChips(
 
         item {
             LibraryChipItem(
-                label = stringResource(R.string.albums),
-                isSelected = selectedFilter == LibraryFilterType.ALBUMS,
-                onClick = { onFilterSelected(LibraryFilterType.ALBUMS) }
-            )
-        }
-
-        item {
-            LibraryChipItem(
                 label = stringResource(R.string.artists),
                 isSelected = selectedFilter == LibraryFilterType.ARTISTS,
                 onClick = { onFilterSelected(LibraryFilterType.ARTISTS) }
@@ -189,7 +189,15 @@ fun LibraryFilterChips(
 
         item {
             LibraryChipItem(
-                label = "Podcasts",
+                label = stringResource(R.string.albums),
+                isSelected = selectedFilter == LibraryFilterType.ALBUMS,
+                onClick = { onFilterSelected(LibraryFilterType.ALBUMS) }
+            )
+        }
+
+        item {
+            LibraryChipItem(
+                label = uiLocalized("Podcasts"),
                 isSelected = selectedFilter == LibraryFilterType.PODCASTS,
                 onClick = { onFilterSelected(LibraryFilterType.PODCASTS) }
             )
@@ -243,6 +251,16 @@ fun LibraryScreen(navController: NavController) {
     val isDownloadedOnly by libraryViewModel.isDownloadedOnly.collectAsState()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val downloadsRevision by downloadsVersion.collectAsState()
+    // Build the offline index once on an IO dispatcher, never while composing each library tile.
+    val downloadedSnapshot by produceState<DownloadedLibrarySnapshot?>(
+        initialValue = null, key1 = isDownloadedOnly, key2 = downloadsRevision
+    ) {
+        value = if (isDownloadedOnly) withContext(Dispatchers.IO) {
+            val ids = getDownloadedSongIds(context)
+            DownloadedLibrarySnapshot(ids, OfflineCollectionsPref.getDownloadedCollectionKeys(context, ids))
+        } else null
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -266,12 +284,12 @@ fun LibraryScreen(navController: NavController) {
         AlertDialog(
             onDismissRequest = { showCreateDialog = false },
             containerColor = Color(0xFF282828),
-            title = { Text("Create Local Playlist", color = Color.White, fontWeight = FontWeight.Bold) },
+            title = { Text(uiLocalized("Create Local Playlist"), color = Color.White, fontWeight = FontWeight.Bold) },
             text = {
                 TextField(
                     value = playlistNameInput,
                     onValueChange = { playlistNameInput = it },
-                    placeholder = { Text("Playlist name", color = Color.Gray) },
+                    placeholder = { Text(uiLocalized("Playlist name"), color = Color.Gray) },
                     singleLine = true,
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = Color(0xFF383838),
@@ -289,7 +307,7 @@ fun LibraryScreen(navController: NavController) {
             },
             confirmButton = {
                 Text(
-                    "Create",
+                    uiLocalized("Create"),
                     color = Color(0xFF1ED760),
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
@@ -307,7 +325,7 @@ fun LibraryScreen(navController: NavController) {
             },
             dismissButton = {
                 Text(
-                    "Cancel",
+                    uiLocalized("Cancel"),
                     color = Color.Gray,
                     fontSize = 15.sp,
                     modifier = Modifier
@@ -330,87 +348,34 @@ fun LibraryScreen(navController: NavController) {
         var isDescending by remember { mutableStateOf(isLibrarySortDescending(context)) }
         var showSortSheet by remember { mutableStateOf(false) }
 
-        // Header: title + create playlist + search toggle + grid toggle + account avatar.
+        // Spotify-style fixed Library header: avatar, title, search, create.
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp, 12.dp, 16.dp, 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = stringResource(R.string.your_library),
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                fontSize = 22.sp,
-                modifier = Modifier.weight(1f)
-            )
-            // Add Playlist Button
             Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF2A2A2A))
-                    .clickable { showCreateDialog = true },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Create Playlist", tint = Color.White, modifier = Modifier.size(18.dp))
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // Search & Filter Toggle Button
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(if (isSearchVisible || searchQuery.isNotEmpty()) Color(0xFF1ED760) else Color(0xFF2A2A2A))
-                    .clickable { isSearchVisible = !isSearchVisible },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_search_big),
-                    contentDescription = "Search & Filter",
-                    tint = if (isSearchVisible || searchQuery.isNotEmpty()) Color.Black else Color.White,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // Grid/List View Toggle Button
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF2A2A2A))
-                    .clickable {
-                        gridView = !gridView
-                        setLibraryGridView(context, gridView)
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    painter = painterResource(if (gridView) R.drawable.ic_view_list else R.drawable.ic_view_grid),
-                    contentDescription = if (gridView) "Show as list" else "Show as grid",
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // Profile / Settings Button
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF3A3A3A))
+                modifier = Modifier.size(36.dp).clip(CircleShape)
+                    .background(Color(0xFF333333))
                     .clickable { navController.navigate(Routes.Settings.route) },
                 contentAlignment = Alignment.Center
             ) {
                 val avatar = (account as? Response.Success)?.data?.imageUrl.orEmpty()
-                if (avatar.isNotBlank()) {
-                    AccountAvatar(avatar, 34.dp)
-                } else {
-                    Icon(Icons.Default.Person, contentDescription = "Account", tint = Color.White, modifier = Modifier.size(18.dp))
-                }
+                if (avatar.isNotBlank()) AccountAvatar(avatar, 36.dp)
+                else Icon(Icons.Default.Person, contentDescription = uiLocalized("Account"), tint = Color.White)
+            }
+            Spacer(Modifier.width(12.dp))
+            Text(text = stringResource(R.string.your_library), fontSize = 23.sp,
+                fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
+            Box(modifier = Modifier.size(43.dp).clip(CircleShape)
+                .clickable { isSearchVisible = !isSearchVisible },
+                contentAlignment = Alignment.Center) {
+                Icon(painterResource(R.drawable.ic_search_big), contentDescription = uiLocalized("Search Library"),
+                    tint = if (isSearchVisible) Color(0xFF1ED760) else Color.White, modifier = Modifier.size(22.dp))
+            }
+            Box(modifier = Modifier.size(43.dp).clip(CircleShape)
+                .clickable { showCreateDialog = true }, contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Add, contentDescription = uiLocalized("Create Playlist"), tint = Color.White,
+                    modifier = Modifier.size(27.dp))
             }
         }
 
@@ -448,7 +413,7 @@ fun LibraryScreen(navController: NavController) {
                     Icon(
                         painter = painterResource(id = R.drawable.ic_search_big),
                         tint = Color.Gray,
-                        contentDescription = "Search Library",
+                        contentDescription = uiLocalized("Search Library"),
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
@@ -467,7 +432,7 @@ fun LibraryScreen(navController: NavController) {
                             Box(contentAlignment = Alignment.CenterStart) {
                                 if (searchQuery.isEmpty()) {
                                     Text(
-                                        text = "Search in library",
+                                        text = uiLocalized("Search in library"),
                                         color = Color.Gray,
                                         fontSize = 13.sp
                                     )
@@ -480,7 +445,7 @@ fun LibraryScreen(navController: NavController) {
                         Spacer(modifier = Modifier.width(6.dp))
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Clear search",
+                            contentDescription = uiLocalized("Clear search"),
                             tint = Color.Gray,
                             modifier = Modifier
                                 .size(16.dp)
@@ -491,31 +456,39 @@ fun LibraryScreen(navController: NavController) {
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Sort Pill Button
-                Box(
-                    modifier = Modifier
-                        .height(36.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(Color(0xFF2A2A2A))
-                        .clickable { showSortSheet = true }
-                        .padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = currentSort.label,
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowDown,
-                            contentDescription = "Sort Options",
-                            tint = Color.White,
-                            modifier = Modifier.size(14.dp).padding(start = 2.dp)
-                        )
-                    }
-                }
+
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth()
+                .padding(horizontal = 17.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                    .clickable { showSortSheet = true }
+                    .padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.KeyboardArrowDown, contentDescription = null,
+                    tint = Color(0xFFB3B3B3), modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(text = when (currentSort) {
+                        LibrarySortOption.RECENTS -> uiLocalized("Recently added")
+                        LibrarySortOption.TITLE -> uiLocalized("Title")
+                        LibrarySortOption.CREATOR -> uiLocalized("Artist / Creator")
+                    }, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.weight(1f))
+            Box(modifier = Modifier.size(38.dp).clip(CircleShape)
+                .clickable {
+                    gridView = !gridView
+                    setLibraryGridView(context, gridView)
+                }, contentAlignment = Alignment.Center) {
+                Icon(painterResource(if (gridView) R.drawable.ic_view_list else R.drawable.ic_view_grid),
+                    contentDescription = if (gridView) uiLocalized("Show as list") else uiLocalized("Show as grid"),
+                    tint = Color.White, modifier = Modifier.size(19.dp))
             }
         }
 
@@ -524,7 +497,7 @@ fun LibraryScreen(navController: NavController) {
             is Response.Loading -> LibrarySkeleton(PaddingValues(0.dp))
             is Response.Success -> {
                 val rawEntries = (entries as Response.Success).data
-                val filteredEntries = remember(rawEntries, selectedFilter, isDownloadedOnly, searchQuery, currentSort, isDescending, pinnedIds, context) {
+                val filteredEntries = remember(rawEntries, selectedFilter, isDownloadedOnly, downloadedSnapshot, searchQuery, currentSort, isDescending, pinnedIds) {
                     val filtered = rawEntries.filter { entry ->
                         val matchesCategory = when (selectedFilter) {
                             LibraryFilterType.ALL -> true
@@ -533,7 +506,9 @@ fun LibraryScreen(navController: NavController) {
                             LibraryFilterType.ARTISTS -> false
                             LibraryFilterType.PODCASTS -> entry.isPodcast
                         }
-                        val matchesDownload = if (isDownloadedOnly) isLibraryEntryDownloaded(context, entry) else true
+                        val matchesDownload = if (isDownloadedOnly) {
+                            downloadedSnapshot?.let { downloadedLibraryMatch(entry, it) } ?: false
+                        } else entry.spotifyId != Api.HomeCache.DOWNLOADS_ID
                         val matchesSearch = if (searchQuery.isBlank()) true else (entry.name.contains(searchQuery, ignoreCase = true) || entry.artists.contains(searchQuery, ignoreCase = true) || entry.subtitle.contains(searchQuery, ignoreCase = true))
                         matchesCategory && matchesDownload && matchesSearch
                     }
@@ -546,7 +521,7 @@ fun LibraryScreen(navController: NavController) {
                     sorted.filter { it.spotifyId in pinnedIds } + sorted.filterNot { it.spotifyId in pinnedIds }
                 }
                 val filteredArtists = remember(followedArtists, selectedFilter, isDownloadedOnly, searchQuery, currentSort, isDescending) {
-                    if (selectedFilter == LibraryFilterType.PLAYLISTS || selectedFilter == LibraryFilterType.ALBUMS || selectedFilter == LibraryFilterType.PODCASTS) {
+                    if (isDownloadedOnly || selectedFilter == LibraryFilterType.PLAYLISTS || selectedFilter == LibraryFilterType.ALBUMS || selectedFilter == LibraryFilterType.PODCASTS) {
                         emptyList()
                     } else {
                         val searchFiltered = if (searchQuery.isBlank()) followedArtists else followedArtists.filter { it.name.contains(searchQuery, ignoreCase = true) }
@@ -556,7 +531,6 @@ fun LibraryScreen(navController: NavController) {
                         }
                     }
                 }
-                val showHistoryTile = selectedFilter == LibraryFilterType.ALL && !isDownloadedOnly && searchQuery.isBlank()
 
                 if (gridView) {
                     LibraryGridScreen(
@@ -564,7 +538,6 @@ fun LibraryScreen(navController: NavController) {
                         entries = filteredEntries,
                         followedArtists = filteredArtists,
                         navController = navController,
-                        showHistoryTile = showHistoryTile,
                         pinnedIds = pinnedIds,
                         onTogglePin = togglePin,
                         onClearFilters = { libraryViewModel.clearFilters() }
@@ -575,7 +548,6 @@ fun LibraryScreen(navController: NavController) {
                         entries = filteredEntries,
                         followedArtists = filteredArtists,
                         navController = navController,
-                        showHistoryTile = showHistoryTile,
                         pinnedIds = pinnedIds,
                         onTogglePin = togglePin,
                         onClearFilters = { libraryViewModel.clearFilters() }
@@ -596,7 +568,7 @@ fun LibraryScreen(navController: NavController) {
                         .navigationBarsPadding()
                 ) {
                     Text(
-                        text = "Sort by",
+                        text = uiLocalized("Sort by"),
                         color = Color.White,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
@@ -676,7 +648,6 @@ fun SumUpLibraryScreen(
     entries: List<LibraryEntry>,
     followedArtists: List<com.music.spotui.data.entity.ArtistsModel>,
     navController: NavController,
-    showHistoryTile: Boolean = true,
     pinnedIds: Set<String> = emptySet(),
     onTogglePin: (String) -> Unit = {},
     onClearFilters: () -> Unit = {}
@@ -690,7 +661,7 @@ fun SumUpLibraryScreen(
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "No items found",
+                text = uiLocalized("No items found"),
                 color = Color.White,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
@@ -698,7 +669,7 @@ fun SumUpLibraryScreen(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Try clearing your active filters or adding more items to your library.",
+                text = uiLocalized("Try clearing your active filters or adding more items to your library."),
                 color = Color.Gray,
                 fontSize = 14.sp,
                 textAlign = TextAlign.Center
@@ -712,7 +683,7 @@ fun SumUpLibraryScreen(
                     .padding(horizontal = 20.dp, vertical = 10.dp)
             ) {
                 Text(
-                    text = "Clear filters",
+                    text = uiLocalized("Clear filters"),
                     color = Color.Black,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
@@ -728,70 +699,9 @@ fun SumUpLibraryScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .background(Color(0xFF0E0E13))
+                .background(Color(0xFF101010))
         ) {
         item { Spacer(modifier = Modifier.height(10.dp)) }
-        if (showHistoryTile) {
-            // Listening history & stats entry.
-            item {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp, 6.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) { navController.navigate(Routes.History.route) }
-                ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(55.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0xFF27856A)),
-                    ) {
-                        Icon(Icons.Default.DateRange, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
-                    }
-                    Column(modifier = Modifier.padding(start = 12.dp)) {
-                        Text(text = stringResource(R.string.listening_history), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                        Text(text = "Your plays and stats", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                    }
-                }
-            }
-        }
-        // Local files (imported device audio) entry.
-        item {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp, 6.dp)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { navController.navigate(Routes.LocalFiles.route) }
-            ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(55.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color(0xFF3B5BA5)),
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_library_big),
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(26.dp),
-                    )
-                }
-                Column(modifier = Modifier.padding(start = 12.dp)) {
-                    Text(text = stringResource(R.string.local_files), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                    Text(text = "Music imported from this device", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                }
-            }
-        }
         items(entries) { entry ->
             var pinMenuOpen by remember(entry.spotifyId) { mutableStateOf(false) }
             Row(
@@ -821,7 +731,7 @@ fun SumUpLibraryScreen(
                     ) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_download),
-                            contentDescription = "Downloaded",
+                            contentDescription = uiLocalized("Downloaded"),
                             tint = Color(0xFF1ED760),
                             modifier = Modifier.size(24.dp)
                         )
@@ -840,7 +750,7 @@ fun SumUpLibraryScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Favorite,
-                            contentDescription = "Liked Songs",
+                            contentDescription = uiLocalized("Liked Songs"),
                             tint = Color.White,
                             modifier = Modifier.size(24.dp)
                         )
@@ -861,14 +771,14 @@ fun SumUpLibraryScreen(
                     Text(text = entry.name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (entry.spotifyId in pinnedIds) {
-                            Icon(Icons.Filled.PushPin, contentDescription = "Fijado",
+                            Icon(Icons.Filled.PushPin, contentDescription = uiLocalized("Fijado"),
                                 tint = Color(0xFF1ED760), modifier = Modifier.size(13.dp))
                             Spacer(Modifier.width(3.dp))
                         }
                         if (entry.isLocal) {
                             Icon(
                                 imageVector = Icons.Default.PhoneAndroid,
-                                contentDescription = "Local Storage",
+                                contentDescription = uiLocalized("Local Storage"),
                                 tint = Color(0xFF1ED760),
                                 modifier = Modifier
                                     .size(14.dp)
@@ -880,7 +790,7 @@ fun SumUpLibraryScreen(
                 }
                 DropdownMenu(expanded = pinMenuOpen, onDismissRequest = { pinMenuOpen = false }) {
                     DropdownMenuItem(
-                        text = { Text(if (entry.spotifyId in pinnedIds) "Desfijar de Tu biblioteca" else "Fijar en Tu biblioteca") },
+                        text = { Text(if (entry.spotifyId in pinnedIds) uiLocalized("Unpin from Your Library") else uiLocalized("Pin to Your Library")) },
                         leadingIcon = { Icon(Icons.Filled.PushPin, contentDescription = null, tint = Color(0xFF1ED760)) },
                         onClick = { pinMenuOpen = false; onTogglePin(entry.spotifyId) }
                     )
@@ -891,7 +801,7 @@ fun SumUpLibraryScreen(
         if (followedArtists.isNotEmpty()) {
             item {
                 Text(
-                    text = "Artists you follow",
+                    text = uiLocalized("Artists you follow"),
                     color = Color.White,
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
@@ -919,7 +829,7 @@ fun SumUpLibraryScreen(
                     )
                     Column(modifier = Modifier.padding(start = 12.dp)) {
                         Text(text = artist.name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(text = "Artist", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        Text(text = uiLocalized("Artist"), color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     }
                 }
             }
@@ -955,7 +865,6 @@ fun LibraryGridScreen(
     entries: List<LibraryEntry>,
     followedArtists: List<com.music.spotui.data.entity.ArtistsModel>,
     navController: NavController,
-    showHistoryTile: Boolean = true,
     pinnedIds: Set<String> = emptySet(),
     onTogglePin: (String) -> Unit = {},
     onClearFilters: () -> Unit = {}
@@ -969,7 +878,7 @@ fun LibraryGridScreen(
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "No items found",
+                text = uiLocalized("No items found"),
                 color = Color.White,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
@@ -977,7 +886,7 @@ fun LibraryGridScreen(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Try clearing your active filters or adding more items to your library.",
+                text = uiLocalized("Try clearing your active filters or adding more items to your library."),
                 color = Color.Gray,
                 fontSize = 14.sp,
                 textAlign = TextAlign.Center
@@ -991,7 +900,7 @@ fun LibraryGridScreen(
                     .padding(horizontal = 20.dp, vertical = 10.dp)
             ) {
                 Text(
-                    text = "Clear filters",
+                    text = uiLocalized("Clear filters"),
                     color = Color.Black,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
@@ -1002,40 +911,15 @@ fun LibraryGridScreen(
     }
     LazyVerticalGrid(
         columns = if (androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp >= 600)
-            GridCells.Adaptive(minSize = 154.dp) else GridCells.Fixed(3),
+            GridCells.Adaptive(minSize = 154.dp) else GridCells.Fixed(2),
         modifier = Modifier
             .fillMaxSize()
             .padding(padding)
-            .background(Color(0xFF0E0E13)),
+            .background(Color(0xFF101010)),
         contentPadding = PaddingValues(16.dp, 10.dp, 16.dp, 130.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        if (showHistoryTile) {
-            // Listening history & stats entry, as a tile.
-            item {
-                Column(
-                    modifier = Modifier.clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { navController.navigate(Routes.History.route) }
-                ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(1f)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color(0xFF27856A)),
-                    ) {
-                        Icon(Icons.Default.DateRange, contentDescription = null, tint = Color.White, modifier = Modifier.size(32.dp))
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(text = stringResource(R.string.listening_history), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(text = "Your plays and stats", color = Color.Gray, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-        }
         items(entries) { entry ->
             var pinMenuOpen by remember(entry.spotifyId) { mutableStateOf(false) }
             Column(
@@ -1048,7 +932,7 @@ fun LibraryGridScreen(
             ) {
                 DropdownMenu(expanded = pinMenuOpen, onDismissRequest = { pinMenuOpen = false }) {
                     DropdownMenuItem(
-                        text = { Text(if (entry.spotifyId in pinnedIds) "Desfijar de Tu biblioteca" else "Fijar en Tu biblioteca") },
+                        text = { Text(if (entry.spotifyId in pinnedIds) uiLocalized("Unpin from Your Library") else uiLocalized("Pin to Your Library")) },
                         leadingIcon = { Icon(Icons.Filled.PushPin, contentDescription = null, tint = Color(0xFF1ED760)) },
                         onClick = { pinMenuOpen = false; onTogglePin(entry.spotifyId) }
                     )
@@ -1068,7 +952,7 @@ fun LibraryGridScreen(
                     ) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_download),
-                            contentDescription = "Downloaded",
+                            contentDescription = uiLocalized("Downloaded"),
                             tint = Color(0xFF1ED760),
                             modifier = Modifier.size(32.dp)
                         )
@@ -1088,7 +972,7 @@ fun LibraryGridScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Favorite,
-                            contentDescription = "Liked Songs",
+                            contentDescription = uiLocalized("Liked Songs"),
                             tint = Color.White,
                             modifier = Modifier.size(32.dp)
                         )
@@ -1110,14 +994,14 @@ fun LibraryGridScreen(
                 Text(text = entry.name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (entry.spotifyId in pinnedIds) {
-                        Icon(Icons.Filled.PushPin, contentDescription = "Fijado",
+                        Icon(Icons.Filled.PushPin, contentDescription = uiLocalized("Fijado"),
                             tint = Color(0xFF1ED760), modifier = Modifier.size(12.dp))
                         Spacer(Modifier.width(3.dp))
                     }
                     if (entry.isLocal) {
                         Icon(
                             imageVector = Icons.Default.PhoneAndroid,
-                            contentDescription = "Local Storage",
+                            contentDescription = uiLocalized("Local Storage"),
                             tint = Color(0xFF1ED760),
                             modifier = Modifier
                                 .size(12.dp)
@@ -1131,7 +1015,7 @@ fun LibraryGridScreen(
         if (followedArtists.isNotEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Text(
-                    text = "Artists you follow",
+                    text = uiLocalized("Artists you follow"),
                     color = Color.White,
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
@@ -1157,7 +1041,7 @@ fun LibraryGridScreen(
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(text = artist.name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-                    Text(text = "Artist", color = Color.Gray, fontSize = 11.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
+                    Text(text = uiLocalized("Artist"), color = Color.Gray, fontSize = 11.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
                 }
             }
         }
@@ -1170,7 +1054,7 @@ private fun LibrarySkeleton(padding: PaddingValues) {
         modifier = Modifier
             .fillMaxSize()
             .padding(padding)
-            .background(Color(0xFF0E0E13))
+            .background(Color(0xFF101010))
     ) {
         Spacer(modifier = Modifier.height(10.dp))
         repeat(8) {

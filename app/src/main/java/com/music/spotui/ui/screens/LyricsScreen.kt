@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.animation.animateColorAsState
@@ -89,6 +91,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** Polls ExoPlayer's position every 250ms so the active lyric line tracks the music. */
+
 @Composable
 private fun rememberPlaybackPositionMs(): State<Long> {
     val pos = remember { mutableStateOf(0L) }
@@ -295,7 +298,7 @@ fun LyricsScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Close",
+                        contentDescription = uiLocalized("Close"),
                         tint = Color.White,
                         modifier = Modifier
                             .size(30.dp)
@@ -381,7 +384,7 @@ private fun TranslateFloatingPanel(vm: LyricsViewModel, modifier: Modifier = Mod
                     ) {
                         Icon(
                             imageVector = Icons.Default.ClearAll,
-                            contentDescription = "Clear translation",
+                            contentDescription = uiLocalized("Clear translation"),
                             tint = Color.Black,
                             modifier = Modifier.size(16.dp),
                         )
@@ -413,7 +416,7 @@ private fun TranslateFloatingPanel(vm: LyricsViewModel, modifier: Modifier = Mod
         ) {
             Icon(
                 imageVector = Icons.Default.Translate,
-                contentDescription = "Translate",
+                contentDescription = uiLocalized("Translate"),
                 tint = if (vm.showLanguageBar) Color(0xFF1DB954) else Color.White,
                 modifier = Modifier.size(24.dp),
             )
@@ -480,15 +483,15 @@ fun InlineLyrics(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Lyrics preview", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text(uiLocalized("Lyrics preview"), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
         }
         androidx.compose.foundation.layout.Spacer(modifier = Modifier.size(12.dp))
 
         when (val s = state) {
             is LyricsViewModel.State.Loading ->
-                Text("Loading lyrics…", color = Color.White.copy(alpha = 0.8f), fontSize = 15.sp)
+                Text(uiLocalized("Loading lyrics…"), color = Color.White.copy(alpha = 0.8f), fontSize = 15.sp)
             is LyricsViewModel.State.NotFound ->
-                Text("No lyrics found for this track", color = Color.White.copy(alpha = 0.8f), fontSize = 15.sp)
+                Text(uiLocalized("No lyrics found for this track"), color = Color.White.copy(alpha = 0.8f), fontSize = 15.sp)
             is LyricsViewModel.State.Loaded -> {
                 val lyrics = s.lyrics
                 val activeIndex = activeIndexFor(lyrics, positionMs)
@@ -522,7 +525,7 @@ fun InlineLyrics(
                         ) { onExpand() }
                         .padding(16.dp, 8.dp)
                 ) {
-                    Text("Show lyrics", color = Color.Black, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text(uiLocalized("Show lyrics"), color = Color.Black, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -623,7 +626,7 @@ private fun TranslationBar(vm: LyricsViewModel) {
                         ) { vm.startTranslation() }
                         .padding(horizontal = 14.dp, vertical = 6.dp)
                 ) {
-                    Text("Translate", color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    Text(uiLocalized("Translate"), color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                 }
             }
         }
@@ -731,7 +734,7 @@ private fun LanguagePickerBottomSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Select Language",
+                    text = uiLocalized("Select Language"),
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
@@ -739,7 +742,7 @@ private fun LanguagePickerBottomSheet(
                 IconButton(onClick = onDismiss) {
                     Icon(
                         imageVector = Icons.Default.Close,
-                        contentDescription = "Close",
+                        contentDescription = uiLocalized("Close"),
                         tint = Color.White.copy(alpha = 0.7f)
                     )
                 }
@@ -749,14 +752,14 @@ private fun LanguagePickerBottomSheet(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = { Text("Search languages...", color = Color.White.copy(alpha = 0.4f), fontSize = 14.sp) },
+                placeholder = { Text(uiLocalized("Search languages..."), color = Color.White.copy(alpha = 0.4f), fontSize = 14.sp) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 16.dp),
                 leadingIcon = {
                     Icon(
                         imageVector = Icons.Default.Search,
-                        contentDescription = "Search icon",
+                        contentDescription = uiLocalized("Search icon"),
                         tint = Color.White.copy(alpha = 0.5f)
                     )
                 },
@@ -765,7 +768,7 @@ private fun LanguagePickerBottomSheet(
                         IconButton(onClick = { searchQuery = "" }) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = "Clear search",
+                                contentDescription = uiLocalized("Clear search"),
                                 tint = Color.White.copy(alpha = 0.5f)
                             )
                         }
@@ -793,7 +796,7 @@ private fun LanguagePickerBottomSheet(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "No languages found",
+                        text = uiLocalized("No languages found"),
                         color = Color.White.copy(alpha = 0.5f),
                         fontSize = 14.sp
                     )
@@ -826,7 +829,7 @@ private fun LanguagePickerBottomSheet(
                             if (isSelected) {
                                 Icon(
                                     imageVector = Icons.Default.Check,
-                                    contentDescription = "Selected",
+                                    contentDescription = uiLocalized("Selected"),
                                     tint = Color(0xFF1DB954),
                                     modifier = Modifier.size(18.dp)
                                 )

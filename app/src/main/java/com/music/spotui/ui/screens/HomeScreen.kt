@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
@@ -286,13 +288,8 @@ fun HomeFeedContent(
     val gridSection = sections.firstOrNull()?.takeIf { it.title.isBlank() }
     val carousels = if (gridSection != null) sections.drop(1) else sections
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(AppBackground.toArgb()))
-    ) {
-        item {
-            HomeHeaderRow(
+    Column(modifier = Modifier.fillMaxSize().background(Color(AppBackground.toArgb()))) {
+        HomeHeaderRow(
                 navController = navController,
                 selectedFilter = selectedFilter,
                 isFollowingOnly = isFollowingOnly,
@@ -300,7 +297,11 @@ fun HomeFeedContent(
                 onToggleFollowing = { homeViewModel.toggleFollowing() },
                 onResetFilters = { homeViewModel.resetFilters() }
             )
-        }
+        LazyColumn(
+        modifier = Modifier
+            .weight(1f)
+            .background(Color(AppBackground.toArgb()))
+    ) {
         gridSection?.let { section ->
             item {
                 HomeShortcutGrid(navController, section.items.take(8))
@@ -311,6 +312,8 @@ fun HomeFeedContent(
         }
         item { Spacer(modifier = Modifier.height(160.dp)) }
     }
+    } // fixed Home header
+
 }
 
 @OptIn(ExperimentalGlideComposeApi::class)
@@ -333,7 +336,8 @@ private fun HomeHeaderRow(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 26.dp, bottom = 8.dp),
+            .background(Color(AppBackground.toArgb()))
+            .padding(top = 14.dp, bottom = 10.dp),
     ) {
         val avatarUrl = com.music.spotui.data.api.ProfileCache.imageUrl
         val initial = com.music.spotui.data.api.ProfileCache.name
@@ -354,7 +358,7 @@ private fun HomeHeaderRow(
                 GlideImage(
                     model = avatarUrl,
                     contentScale = ContentScale.Crop,
-                    contentDescription = "Profile",
+                    contentDescription = uiLocalized("Profile"),
                     modifier = Modifier.size(34.dp),
                 )
             } else {
@@ -585,13 +589,8 @@ private fun HomeMusicFeedContent(
         }
     }
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(AppBackground.toArgb()))
-    ) {
-        item {
-            HomeHeaderRow(
+    Column(modifier = Modifier.fillMaxSize().background(Color(AppBackground.toArgb()))) {
+        HomeHeaderRow(
                 navController = navController,
                 selectedFilter = selectedFilter,
                 isFollowingOnly = isFollowingOnly,
@@ -599,7 +598,11 @@ private fun HomeMusicFeedContent(
                 onToggleFollowing = { homeViewModel.toggleFollowing() },
                 onResetFilters = { homeViewModel.resetFilters() }
             )
-        }
+        LazyColumn(
+        modifier = Modifier
+            .weight(1f)
+            .background(Color(AppBackground.toArgb()))
+    ) {
 
         if (isFollowingOnly) {
             // ── Spotify "Latest releases" Feed ──
@@ -681,6 +684,8 @@ private fun HomeMusicFeedContent(
 
         item { Spacer(modifier = Modifier.height(160.dp)) }
     }
+    } // fixed Home header
+
 }
 
 @OptIn(ExperimentalGlideComposeApi::class, ExperimentalMaterial3Api::class)
@@ -813,7 +818,7 @@ private fun LatestReleaseCard(
                 ) {
                     Icon(
                         imageVector = Icons.Default.MoreVert,
-                        contentDescription = "Options",
+                        contentDescription = uiLocalized("Options"),
                         tint = Color(0xFFB3B3B3),
                         modifier = Modifier.size(20.dp)
                     )
@@ -879,7 +884,7 @@ private fun LatestReleaseCard(
                         } else {
                             Icon(
                                 imageVector = Icons.Default.PlayArrow,
-                                contentDescription = "Play release",
+                                contentDescription = uiLocalized("Play release"),
                                 tint = Color.Black,
                                 modifier = Modifier.size(24.dp)
                             )
@@ -941,7 +946,7 @@ private fun LatestReleaseCard(
                 ) {
                     Icon(
                         imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Go to album",
+                        contentDescription = uiLocalized("Go to album"),
                         tint = Color.White,
                         modifier = Modifier.size(22.dp)
                     )
@@ -968,7 +973,7 @@ private fun LatestReleaseCard(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Person,
-                            contentDescription = "Go to artist",
+                            contentDescription = uiLocalized("Go to artist"),
                             tint = Color.White,
                             modifier = Modifier.size(22.dp)
                         )
@@ -991,7 +996,7 @@ private fun LatestReleaseCard(
                 ) {
                     Icon(
                         imageVector = if (isSaved) Icons.Default.CheckCircle else Icons.Default.AddCircleOutline,
-                        contentDescription = "Save album",
+                        contentDescription = uiLocalized("Save album"),
                         tint = if (isSaved) Color(0xFF64D36D) else Color.White,
                         modifier = Modifier.size(22.dp)
                     )
@@ -1021,7 +1026,7 @@ private fun LatestReleaseCard(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Share,
-                        contentDescription = "Share",
+                        contentDescription = uiLocalized("Share"),
                         tint = Color.White,
                         modifier = Modifier.size(22.dp)
                     )
@@ -1077,12 +1082,16 @@ private fun HomeSongRow(
                 maxLines = 1
             )
             Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = song.singer,
-                color = Color(0xFFB3B3B3),
-                fontSize = 12.sp,
-                maxLines = 1
-            )
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
+                Text(
+                    text = song.singer,
+                    color = Color(0xFFB3B3B3),
+                    fontSize = 12.sp,
+                    maxLines = 1
+                )
+            }
         }
         Spacer(modifier = Modifier.width(8.dp))
         Box(
@@ -1094,7 +1103,7 @@ private fun HomeSongRow(
         ) {
             Icon(
                 imageVector = Icons.Default.PlayArrow,
-                contentDescription = "Play",
+                contentDescription = uiLocalized("Play"),
                 tint = Color.Black,
                 modifier = Modifier.size(20.dp)
             )
@@ -1139,13 +1148,8 @@ private fun HomePodcastsFeedContent(
         }
     }
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(AppBackground.toArgb()))
-    ) {
-        item {
-            HomeHeaderRow(
+    Column(modifier = Modifier.fillMaxSize().background(Color(AppBackground.toArgb()))) {
+        HomeHeaderRow(
                 navController = navController,
                 selectedFilter = selectedFilter,
                 isFollowingOnly = isFollowingOnly,
@@ -1153,7 +1157,11 @@ private fun HomePodcastsFeedContent(
                 onToggleFollowing = { homeViewModel.toggleFollowing() },
                 onResetFilters = { homeViewModel.resetFilters() }
             )
-        }
+        LazyColumn(
+        modifier = Modifier
+            .weight(1f)
+            .background(Color(AppBackground.toArgb()))
+    ) {
 
         item {
             Row(
@@ -1162,7 +1170,7 @@ private fun HomePodcastsFeedContent(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = if (isFollowingOnly) "Podcasts que sigues" else "Podcasts y categorías",
+                    text = if (isFollowingOnly) uiLocalized("Podcasts que sigues") else uiLocalized("Podcasts y categorías"),
                     color = Color.White,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
@@ -1170,7 +1178,7 @@ private fun HomePodcastsFeedContent(
                 )
                 if (!isFollowingOnly && !isLoading) {
                     Text(
-                        text = "Actualizar",
+                        text = uiLocalized("Actualizar"),
                         color = Color(0xFF1ED760),
                         fontSize = 13.sp,
                         modifier = Modifier.clickable { homeViewModel.retryPodcasts() }.padding(6.dp)
@@ -1189,14 +1197,14 @@ private fun HomePodcastsFeedContent(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "No sigues ningún podcast aún",
+                            text = uiLocalized("No sigues ningún podcast aún"),
                             color = Color.White,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Busca tus programas favoritos y entra a su pantalla para pulsar 'Seguir'.",
+                            text = uiLocalized("Busca tus programas favoritos y entra a su pantalla para pulsar 'Seguir'."),
                             color = Color.Gray,
                             fontSize = 13.sp,
                             textAlign = TextAlign.Center
@@ -1206,7 +1214,7 @@ private fun HomePodcastsFeedContent(
             } else {
                 item {
                     Text(
-                        text = "Siguiendo",
+                        text = uiLocalized("Siguiendo"),
                         color = Color.White,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
@@ -1285,14 +1293,14 @@ private fun HomePodcastsFeedContent(
                         if (isLoading) {
                             CircularProgressIndicator(color = Color(0xFF1ED760), modifier = Modifier.size(28.dp))
                             Spacer(Modifier.height(14.dp))
-                            Text("Cargando podcast…", color = Color(0xFFB3B3B3), fontSize = 14.sp)
+                            Text(uiLocalized("Cargando podcast…"), color = Color(0xFFB3B3B3), fontSize = 14.sp)
                         } else {
-                            Text("No se han encontrado podcasts disponibles", color = Color.White, fontSize = 15.sp)
+                            Text(uiLocalized("No se han encontrado podcasts disponibles"), color = Color.White, fontSize = 15.sp)
                             Spacer(Modifier.height(8.dp))
-                            Text("Comprueba tu conexión y vuelve a intentarlo.", color = Color.Gray, fontSize = 12.sp)
+                            Text(uiLocalized("Comprueba tu conexión y vuelve a intentarlo."), color = Color.Gray, fontSize = 12.sp)
                             Spacer(Modifier.height(14.dp))
                             Text(
-                                "Reintentar",
+                                uiLocalized("Reintentar"),
                                 color = Color(0xFF1ED760),
                                 modifier = Modifier.clickable { homeViewModel.retryPodcasts() }.padding(10.dp)
                             )
@@ -1387,6 +1395,8 @@ private fun HomePodcastsFeedContent(
 
         item { Spacer(modifier = Modifier.height(210.dp)) }
     }
+    } // fixed Home header
+
 }
 
 @OptIn(ExperimentalGlideComposeApi::class)
@@ -1400,21 +1410,20 @@ private fun HomeAudiobooksFeedContent(
     val searchResults = (audiobooksResult as? Response.Success)?.data
     val albums = searchResults?.albums.orEmpty()
 
-    LazyColumn(
+    Column(modifier = Modifier.fillMaxSize().background(Color(AppBackground.toArgb()))) {
+        HomeHeaderRow(
+            navController = navController,
+            selectedFilter = selectedFilter,
+            isFollowingOnly = false,
+            onSelectFilter = { homeViewModel.setSelectedFilter(it) },
+            onToggleFollowing = { homeViewModel.toggleFollowing() },
+            onResetFilters = { homeViewModel.resetFilters() }
+        )
+        LazyColumn(
         modifier = Modifier
-            .fillMaxSize()
+            .weight(1f)
             .background(Color(AppBackground.toArgb()))
     ) {
-        item {
-            HomeHeaderRow(
-                navController = navController,
-                selectedFilter = selectedFilter,
-                isFollowingOnly = false,
-                onSelectFilter = { homeViewModel.setSelectedFilter(it) },
-                onToggleFollowing = { homeViewModel.toggleFollowing() },
-                onResetFilters = { homeViewModel.resetFilters() }
-            )
-        }
 
         item {
             Text(
@@ -1486,6 +1495,8 @@ private fun HomeAudiobooksFeedContent(
 
         item { Spacer(modifier = Modifier.height(160.dp)) }
     }
+    } // fixed Home header
+
 }
 
 @OptIn(ExperimentalGlideComposeApi::class)
@@ -1610,12 +1621,7 @@ fun SumUpHomeScreen(
     selectedFilter: String,
     isFollowingOnly: Boolean
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .background(Color(AppBackground.toArgb()))
-    ){
+    Column(modifier = Modifier.fillMaxSize().background(Color(AppBackground.toArgb()))) {
         HomeHeaderRow(
             navController = navController,
             selectedFilter = selectedFilter,
@@ -1624,6 +1630,7 @@ fun SumUpHomeScreen(
             onToggleFollowing = { homeViewModel.toggleFollowing() },
             onResetFilters = { homeViewModel.resetFilters() }
         )
+        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
         GreetingSection()
 
         if (albums.isNotEmpty()) {
@@ -1636,10 +1643,9 @@ fun SumUpHomeScreen(
         if (albums.isNotEmpty()) {
             ImageCard(navController, albums)
         }
+        }
     }
 }
-
-
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
@@ -1672,7 +1678,7 @@ fun GreetingSection(name : String = "User") {
                 fontSize = 13.sp
                 )
         }
-//        Icon(imageVector = Icons.Outlined.Person, contentDescription = "Profile", tint = Color.White)
+//        Icon(imageVector = Icons.Outlined.Person, contentDescription = uiLocalized("Profile"), tint = Color.White)
     }
 }
 
@@ -1750,7 +1756,7 @@ fun HomePlaylistGrid(navController: NavController, albums: List<AlbumsModel>) {
                             model = chunkedAlbums[it][album].coverUri,
                             loading = placeholder(R.drawable.placeholder),
                             failure = placeholder(R.drawable.placeholder),
-                            contentDescription = "Profile")
+                            contentDescription = uiLocalized("Profile"))
                         Text(modifier = Modifier.padding(5.dp),
                             text = chunkedAlbums[it][album].name,
                             style = MaterialTheme.typography.bodyMedium,
@@ -1804,7 +1810,7 @@ fun HomeAlbums(
                         model = reversedAlbum[album].coverUri,
                         loading = placeholder(R.drawable.placeholder),
                         failure = placeholder(R.drawable.placeholder),
-                        contentDescription = "Albums")
+                        contentDescription = uiLocalized("Albums"))
                     Text(
                         fontSize = 13.sp,
                         text = reversedAlbum[album].name,
@@ -1853,7 +1859,7 @@ fun HomeRecentlyPlayed(
                         .background(Color.Green),
                         contentScale = ContentScale.Crop,
                         painter = painterResource(id = R.drawable.album),
-                        contentDescription = "Albums")
+                        contentDescription = uiLocalized("Albums"))
                     Text(modifier = Modifier.padding(2.dp),
                         text = "Album name",
                         color = Color.White,
@@ -1902,7 +1908,7 @@ fun HomeArtists(
                         model = artists[artist].coverUri,
                         loading = placeholder(R.drawable.placeholder),
                         failure = placeholder(R.drawable.placeholder),
-                        contentDescription = "Albums")
+                        contentDescription = uiLocalized("Albums"))
                     Text(modifier = Modifier.padding(2.dp),
                         text = "This is ${artists[artist].name}",
                         color = Color.LightGray,
@@ -1957,7 +1963,7 @@ fun ImageCard(
                     GlideImage(
                         modifier = Modifier.fillMaxSize(),
                         model = albums[album].coverUri,
-                        contentDescription = "artists",
+                        contentDescription = uiLocalized("artists"),
                         loading = placeholder(R.drawable.placeholder),
                         failure = placeholder(R.drawable.placeholder),
                         contentScale = ContentScale.Crop

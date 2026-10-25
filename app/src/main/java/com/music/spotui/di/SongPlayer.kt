@@ -581,6 +581,16 @@ object SongPlayer {
 
         invalidateResolvedStream(songUrl)
         inFlightResolutions.remove(songUrl)?.cancel()
+        // The exact query can be a Spotify synthetic search URI rather than a
+        // Spotify ID. Map that URI to the same key the UI used to save the override.
+        if (songId != null && songId != 0) {
+            val key = if (songId == boundState?.songId?.value) {
+                boundState?.queue?.value?.firstOrNull { it.id == songId }?.let {
+                    com.music.spotui.data.preferences.alternativeStreamKey(it)
+                }
+            } else null
+            if (!key.isNullOrBlank()) alternativeKeyRegistry[songUrl] = key
+        }
 
         val matchSong = boundState?.queue?.value?.firstOrNull { it.url == songUrl }
 
@@ -605,6 +615,10 @@ object SongPlayer {
         val title = songTitle ?: matchSong?.title ?: "track"
 
         if (isCurrentlyPlaying && reloadIfPlaying) {
+            // Keep the current seek position across manual stream changes.
+            restoreQuery = songUrl
+            restorePositionMs = getCurrentPosition().coerceAtLeast(0L)
+            cancelCrossfade()
             exoPlayer?.stop()
             exoPlayer?.clearMediaItems()
             android.widget.Toast.makeText(
@@ -785,7 +799,16 @@ object SongPlayer {
             }
         }
 
-        val immediateDownloadedPath = com.music.spotui.data.preferences.downloadedPathForQuery(appContext, song)
+        // A user-selected alternate source must win over an old offline copy.
+        // Keep the download stored; only bypass it while the override exists.
+        val manualOverride = alternativeStreamForPlayback(song, appContext)
+        if (manualOverride != null && SpotifyWebPlayer.isPlaying) {
+            // Switching from Spotify Web Playback to a user-supplied source must
+            // silence the old engine before the ExoPlayer version starts.
+            SpotifyWebPlayer.pause()
+        }
+        val immediateDownloadedPath = if (manualOverride != null) null else
+            com.music.spotui.data.preferences.downloadedPathForQuery(appContext, song)
         if (immediateDownloadedPath != null && java.io.File(immediateDownloadedPath).isFile) {
             runCatching {
                 ensurePlayer(appContext)
@@ -854,6 +877,8 @@ object SongPlayer {
         }
 
         if (webPlayerEnabled &&
+            // Manual source overrides must win over Spotify Web Playback too.
+            alternativeStreamForPlayback(song, appContext) == null &&
             com.music.spotui.data.preferences.isWebPlaybackEnabled(appContext) &&
             SpotifyWebPlayer.canPlay
         ) {
@@ -1244,6 +1269,17 @@ object SongPlayer {
     private suspend fun doResolveStreamUrl(song: String, appContext: Context, forPlayback: Boolean): String? {
 
         val quality = com.music.spotui.data.preferences.currentStreamingQuality(appContext)
+        if (song.startsWith("yt_local:")) {
+            val videoId = song.removePrefix("yt_local:")
+            if (!videoId.matches(Regex("[A-Za-z0-9_-]{11}"))) return null
+            val playback = resolveYtPlayback("https://www.youtube.com/watch?v=$videoId", quality.audioQuality, appContext, forPlayback)
+                ?: return null
+            if (forPlayback) {
+                currentSource = "YouTube (local playlist)"
+                currentQuality = "${playback.format.bitrate / 1000} kbps"
+            }
+            return playback.streamUrl
+        }
         val expectedTier = quality.name
 
         val meta = metadataRegistry[song]
@@ -1280,7 +1316,7 @@ object SongPlayer {
                         currentQuality = ""
                         logResolution("Resolving user alternative YouTube link...")
                     }
-                    val playback = resolveYtPlayback(alt.value, quality.audioQuality, appContext, forPlayback = forPlayback) ?: run {
+                    val playback = resolveYtPlayback("https://www.youtube.com/watch?v=${alt.value}", quality.audioQuality, appContext, forPlayback = forPlayback) ?: run {
                         if (forPlayback) updateResolveStatus(false)
                         return null
                     }
@@ -1736,6 +1772,9 @@ object SongPlayer {
         appContext: Context,
     ): com.music.spotui.data.preferences.AlternativeStream? {
         val key = alternativeKeyRegistry[song]
+            ?: boundState?.queue?.value?.firstOrNull { it.url == song }?.let {
+                com.music.spotui.data.preferences.alternativeStreamKey(it)
+            }
             ?: spotifyTrackIdForPlayback(song)?.let {
                 com.music.spotui.data.preferences.alternativeStreamKeyForSpotifyId(it)
             }
@@ -2990,7 +3029,9 @@ object SongPlayer {
                 return null
             }
             Log.d(TAG, "Resolving explicit YouTube link directly: videoId=$directVideoId")
-            tryIds(listOf(directVideoId), skipValidation = false)?.let { return it }
+            // Explicit user choice: do not reject the video because it differs
+            // from Spotify's automatically matched title/duration.
+            tryIds(listOf(directVideoId), skipValidation = true)?.let { return it }
             lastYtFailureReason = lastYtFailureReason ?: "Couldn't resolve the stream for linked video $directVideoId"
             Log.e(TAG, "Explicit YouTube video failed to resolve; not substituting another video: $directVideoId")
             return null

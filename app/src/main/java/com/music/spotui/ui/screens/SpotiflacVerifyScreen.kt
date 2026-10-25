@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import android.annotation.SuppressLint
 import android.os.Handler
 import android.os.Looper
@@ -44,6 +46,7 @@ import org.json.JSONObject
  * `/api/dl` endpoints is wired only after this is confirmed working on a device.
  */
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
+
 @Composable
 fun SpotiflacVerifyScreen(navController: NavController, next: String = "") {
     val context = LocalContext.current
@@ -111,7 +114,7 @@ fun SpotiflacVerifyScreen(navController: NavController, next: String = "") {
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                "SpotiFLAC verification (experimental)",
+                uiLocalized("SpotiFLAC verification (experimental)"),
                 color = Color(0xFF00C7B7),
                 fontWeight = FontWeight.Bold,
                 fontSize = 14.sp,

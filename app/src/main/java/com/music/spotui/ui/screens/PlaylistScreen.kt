@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import androidx.activity.compose.BackHandler
 import android.content.Context
 import android.annotation.SuppressLint
@@ -33,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
@@ -145,7 +148,23 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         playlistViewModel.loadPlaylist(playlistId)
     }
 
-    val songs = (songsResp as? Response.Success)?.data.orEmpty()
+    var addedSongsRevision by remember(playlistId) { mutableStateOf(0) }
+    val originalSongs = (songsResp as? Response.Success)?.data.orEmpty()
+    val localAdditions = remember(playlistId, addedSongsRevision, songsResp) {
+        if (playlistId.startsWith("local_pl_")) emptyList()
+        else com.music.spotui.data.preferences.PlaylistAdditionsPref.tracks(context, playlistId)
+    }
+    val syncedPending = remember(playlistId, addedSongsRevision, songsResp) {
+        if (playlistId.startsWith("local_pl_")) emptyList()
+        else com.music.spotui.data.preferences.PlaylistSyncedPendingPref.tracks(context, playlistId)
+    }
+    // Spotify may return stale playlist content immediately after a successful POST.
+    // Show confirmed additions now, deduplicating once the remote endpoint catches up.
+    val songs = originalSongs + (localAdditions + syncedPending).filterNot { extra ->
+        originalSongs.any { existing -> existing.url == extra.url ||
+            (extra.spotifyTrackId.isNotBlank() &&
+                com.music.spotui.data.api.SpotifySync.cleanTrackId(existing.spotifyTrackId) == extra.spotifyTrackId) }
+    }
     val playlist = (playlistResp as? Response.Success)?.data
         ?: AlbumsModel(
             id = playlistId.hashCode() and 0x7fffffff,
@@ -180,6 +199,18 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     var isDescending by remember(playlistId) { mutableStateOf(isPlaylistSortDescending(context, playlistId)) }
     var showSortSheet by remember { mutableStateOf(false) }
     var showPlaylistActions by remember { mutableStateOf(false) }
+    var showAddMusic by remember { mutableStateOf(false) }
+    if (showAddMusic) {
+        com.music.spotui.ui.components.PlaylistAddMusicSheet(
+            playlistId = playlistId,
+            onDismiss = { showAddMusic = false },
+            onAdded = {
+                addedSongsRevision++
+                com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(playlistId)
+                playlistViewModel.reloadPlaylist(playlistId)
+            }
+        )
+    }
 
     val filteredSongs = remember(songs, searchQuery, currentSort, isDescending) {
         val filtered = if (searchQuery.isBlank()) {
@@ -199,6 +230,17 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         }
     }
 
+    // Keys are stable across insertions and deletions; O(n) even for long playlists.
+    val stableSongKeys = remember(filteredSongs) {
+        val occurrences = HashMap<String, Int>()
+        filteredSongs.map { song ->
+            val identity = song.url.ifBlank { "song-${song.id}" }
+            val occurrence = occurrences[identity] ?: 0
+            occurrences[identity] = occurrence + 1
+            "$identity#$occurrence"
+        }
+    }
+
     var menuSong by remember { mutableStateOf<com.music.spotui.data.entity.SongsModel?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
@@ -209,12 +251,12 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         AlertDialog(
             onDismissRequest = { showRenameDialog = false },
             containerColor = Color(0xFF282828),
-            title = { Text("Rename Playlist", color = Color.White, fontWeight = FontWeight.Bold) },
+            title = { Text(uiLocalized("Rename Playlist"), color = Color.White, fontWeight = FontWeight.Bold) },
             text = {
                 TextField(
                     value = newPlaylistNameInput,
                     onValueChange = { newPlaylistNameInput = it },
-                    placeholder = { Text("Playlist name", color = Color.Gray) },
+                    placeholder = { Text(uiLocalized("Playlist name"), color = Color.Gray) },
                     singleLine = true,
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = Color(0xFF383838),
@@ -232,7 +274,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             },
             confirmButton = {
                 Text(
-                    "Save",
+                    uiLocalized("Save"),
                     color = Color(0xFF1ED760),
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
@@ -252,7 +294,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             },
             dismissButton = {
                 Text(
-                    "Cancel",
+                    uiLocalized("Cancel"),
                     color = Color.Gray,
                     fontSize = 15.sp,
                     modifier = Modifier
@@ -267,11 +309,11 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
             containerColor = Color(0xFF282828),
-            title = { Text("Delete Playlist", color = Color.White, fontWeight = FontWeight.Bold) },
-            text = { Text("Are you sure you want to delete this playlist?", color = Color.LightGray) },
+            title = { Text(uiLocalized("Delete Playlist"), color = Color.White, fontWeight = FontWeight.Bold) },
+            text = { Text(uiLocalized("Are you sure you want to delete this playlist?"), color = Color.LightGray) },
             confirmButton = {
                 Text(
-                    "Delete",
+                    uiLocalized("Delete"),
                     color = Color(0xFFFF5252),
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
@@ -288,7 +330,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             },
             dismissButton = {
                 Text(
-                    "Cancel",
+                    uiLocalized("Cancel"),
                     color = Color.Gray,
                     fontSize = 15.sp,
                     modifier = Modifier
@@ -320,6 +362,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             context = context,
             currentPlaylistId = playlistId,
             onSongRemovedFromPlaylist = {
+                addedSongsRevision++
                 com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(playlistId)
                 playlistViewModel.reloadPlaylist(playlistId)
             },
@@ -405,7 +448,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                             modifier = Modifier.clip(RoundedCornerShape(50))
                                 .background(Color.Black.copy(alpha = 0.35f))
                         ) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "Más opciones de la lista",
+                            Icon(Icons.Default.MoreVert, contentDescription = uiLocalized("Más opciones de la lista"),
                                 tint = Color.White)
                         }
                     }
@@ -444,7 +487,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                             state = searchReveal,
                             query = searchQuery,
                             onQueryChange = { searchQuery = it },
-                            placeholder = "Buscar en la lista"
+                            placeholder = uiLocalized("Buscar en la lista")
                         )
                     }
                     if (!keyboardVisible && !searchReveal.expanded && searchQuery.isBlank()) {
@@ -499,7 +542,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                     Icon(Icons.Default.PhoneAndroid, contentDescription = null,
                                         tint = Color(0xFF1ED760), modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(5.dp))
-                                    Text("Lista local", color = Color.White,
+                                    Text(uiLocalized("Lista local"), color = Color.White,
                                         fontWeight = FontWeight.Medium, fontSize = 13.sp)
                                 } else if (playlist.artists.isNotBlank()) {
                                     Text(
@@ -570,7 +613,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                                             android.widget.Toast.LENGTH_SHORT,
                                                         ).show()
                                                     },
-                                                contentDescription = "Add to queue",
+                                                contentDescription = uiLocalized("Add to queue"),
                                             )
                                             Spacer(modifier = Modifier.width(18.dp))
                                             Icon(
@@ -601,7 +644,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                                             snackbarVisible = true
                                                         }
                                                     },
-                                                contentDescription = "Download playlist",
+                                                contentDescription = uiLocalized("Download playlist"),
                                             )
                                             Spacer(modifier = Modifier.width(18.dp))
                                             // Shuffle-play: start the playlist in random order.
@@ -627,7 +670,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                                             SongPlayer.playSong(first.url, context, "song/${first.id}")
                                                         }
                                                     },
-                                                contentDescription = "Shuffle play",
+                                                contentDescription = uiLocalized("Shuffle play"),
                                             )
 
                                         }
@@ -698,7 +741,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 ) {
                                     Icon(Icons.Default.Edit, null, tint = Color.White, modifier = Modifier.size(17.dp))
                                     Spacer(Modifier.width(8.dp))
-                                    Text("Editar", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(uiLocalized("Editar"), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                                 }
                                 Row(
                                     modifier = Modifier.clip(RoundedCornerShape(24.dp))
@@ -709,7 +752,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 ) {
                                     Icon(Icons.Default.Menu, null, tint = Color.White, modifier = Modifier.size(17.dp))
                                     Spacer(Modifier.width(8.dp))
-                                    Text("Ordenar", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(uiLocalized("Ordenar"), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }
@@ -725,14 +768,39 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                         }
                     }
 
-                    itemsIndexed(filteredSongs, key = { index, song -> "${song.id}_$index" }) { index, song ->
+                    item(key = "add_music_to_playlist") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth()
+                                .background(Color(AppBackground.toArgb()))
+                                .clickable { showAddMusic = true }
+                                .padding(horizontal = 17.dp, vertical = 10.dp)
+                                .height(48.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier.size(48.dp)
+                                    .clip(RoundedCornerShape(7.dp))
+                                    .background(Color(0xFF303030)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    androidx.compose.material.icons.Icons.Default.Add,
+                                    contentDescription = null, tint = Color.White,
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                androidx.compose.ui.res.stringResource(R.string.add_music_to_playlist),
+                                color = Color.White, fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                    itemsIndexed(filteredSongs, key = { index, _ -> stableSongKeys[index] }) { index, song ->
                         val currentColor = if (song.id == playlistViewModel.currentSongId.value)
                             Color(AppPalette.toArgb()) else Color.White
 
                         // Forzar recomposición si el trigger de descargas cambia
-                        val isDownloaded = remember(downloadRefreshTrigger, song.id) {
-                            com.music.spotui.data.preferences.isDownloaded(context, song.id.toString())
-                        }
 
                         SwipeToPlayNextWrapper(
                             onPlayNext = {
@@ -795,24 +863,9 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                             modifier = Modifier.weight(1f, fill = false)
                                         )
                                     }
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        if (isDownloaded) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(14.dp)
-                                                    .clip(CircleShape)
-                                                    .background(Color(0xFF1ED760)),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(
-                                                    painter = painterResource(id = R.drawable.ic_download),
-                                                    contentDescription = "Downloaded",
-                                                    tint = Color.Black,
-                                                    modifier = Modifier.size(10.dp)
-                                                )
-                                            }
-                                            Spacer(Modifier.width(6.dp))
-                                        }
+                                    Row(verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
                                         Text(
                                             text = song.singer,
                                             color = Color.Gray,
@@ -849,7 +902,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                 containerColor = Color(0xFF202020)
             ) {
                 Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding()) {
-                    Text("Opciones de la lista", color = Color.White,
+                    Text(uiLocalized("Opciones de la lista"), color = Color.White,
                         fontWeight = FontWeight.Bold, fontSize = 20.sp,
                         modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 18.dp))
                     Row(
@@ -861,7 +914,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                     ) {
                         Icon(Icons.Default.Menu, contentDescription = null, tint = Color.White)
                         Spacer(Modifier.width(20.dp))
-                        Text("Ordenar canciones", color = Color.White, fontSize = 16.sp)
+                        Text(uiLocalized("Ordenar canciones"), color = Color.White, fontSize = 16.sp)
                     }
                     if (filteredSongs.isNotEmpty()) {
                         Row(modifier = Modifier.fillMaxWidth().clickable {
@@ -872,7 +925,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                         ) {
                             Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color.White)
                             Spacer(Modifier.width(20.dp))
-                            Text("Añadir canciones a la cola", color = Color.White, fontSize = 16.sp)
+                            Text(uiLocalized("Añadir canciones a la cola"), color = Color.White, fontSize = 16.sp)
                         }
                     }
                     if (playlistId.startsWith("local_pl_")) {
@@ -884,7 +937,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                         ) {
                             Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White)
                             Spacer(Modifier.width(20.dp))
-                            Text("Cambiar nombre", color = Color.White, fontSize = 16.sp)
+                            Text(uiLocalized("Cambiar nombre"), color = Color.White, fontSize = 16.sp)
                         }
                         Row(modifier = Modifier.fillMaxWidth().clickable {
                             showPlaylistActions = false
@@ -894,7 +947,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                         ) {
                             Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFFF7070))
                             Spacer(Modifier.width(20.dp))
-                            Text("Eliminar lista", color = Color(0xFFFF7070), fontSize = 16.sp)
+                            Text(uiLocalized("Eliminar lista"), color = Color(0xFFFF7070), fontSize = 16.sp)
                         }
                     }
                     Spacer(Modifier.height(18.dp))

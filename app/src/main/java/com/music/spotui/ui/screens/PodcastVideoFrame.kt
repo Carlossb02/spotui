@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import android.content.Context
 import android.content.ContextWrapper
 import android.view.LayoutInflater
@@ -416,7 +418,7 @@ fun PodcastVideoFrame(
             error != null -> {
                 if (!compact) Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(error, color = Color.White, modifier = Modifier.padding(12.dp))
-                    TextButton(onClick = onUseAudio) { Text("Continuar solo con audio") }
+                    TextButton(onClick = onUseAudio) { Text(uiLocalized("Continuar solo con audio")) }
                 }
             }
             fullscreen || PodcastVideoSession.enteringPictureInPicture -> Unit
@@ -428,7 +430,7 @@ fun PodcastVideoFrame(
                 onClick = { fullscreen = true },
                 modifier = Modifier.align(Alignment.BottomEnd)
                     .background(Color.Black.copy(alpha = 0.42f), RoundedCornerShape(8.dp))
-            ) { Icon(Icons.Default.Fullscreen, contentDescription = "Vídeo a pantalla completa", tint = Color.White) }
+            ) { Icon(Icons.Default.Fullscreen, contentDescription = uiLocalized("Vídeo a pantalla completa"), tint = Color.White) }
         }
     }
     if (fullscreen && active && !PodcastVideoPipState.isInPictureInPicture) {
@@ -560,7 +562,7 @@ fun PodcastVideoFrame(
                                 modifier = Modifier.background(Color.Black.copy(alpha = 0.68f), CircleShape)
                             ) {
                                 Icon(Icons.Default.PictureInPictureAlt,
-                                    contentDescription = "Picture-in-Picture", tint = Color.White)
+                                    contentDescription = uiLocalized("Picture-in-Picture"), tint = Color.White)
                             }
                             Spacer(Modifier.width(8.dp))
                         }
@@ -568,7 +570,7 @@ fun PodcastVideoFrame(
                             onClick = { dismissFullscreen() },
                             modifier = Modifier.background(Color.Black.copy(alpha = 0.68f), CircleShape)
                         ) {
-                            Icon(Icons.Default.Close, contentDescription = "Cerrar vídeo a pantalla completa", tint = Color.White)
+                            Icon(Icons.Default.Close, contentDescription = uiLocalized("Cerrar vídeo a pantalla completa"), tint = Color.White)
                         }
                     }
                 }
@@ -612,7 +614,7 @@ fun PodcastVideoFrame(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         TextButton(onClick = { refreshControls(); SongPlayer.seekTo((SongPlayer.getCurrentPosition() - 15_000L).coerceAtLeast(0L)) }) {
-                            Text("↶15", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                            Text(uiLocalized("↶15"), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 19.sp)
                         }
                         IconButton(
                             onClick = { refreshControls(); SongPlayer.togglePlay() },
@@ -628,7 +630,7 @@ fun PodcastVideoFrame(
                             val next = SongPlayer.getCurrentPosition() + 15_000L
                             SongPlayer.seekTo(if (end > 0L) next.coerceAtMost(end) else next)
                         }) {
-                            Text("15↷", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                            Text(uiLocalized("15↷"), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 19.sp)
                         }
                     }
                 }

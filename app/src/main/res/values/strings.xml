@@ -157,4 +157,21 @@
     <string name="downloaded_music">Downloaded Music</string>
     <string name="no_downloads_yet">No downloads yet</string>
     <string name="no_local_files_found">No local audio files found</string>
+    <string name="add_music_to_playlist">Add music to this playlist</string>
+    <string name="search_catalog">Search music</string>
+    <string name="synced_with_spotify">Synced with Spotify</string>
+    <string name="saved_locally">Saved on this device</string>
+    <string name="add_from_youtube">Add from YouTube</string>
+    <string name="only_saved_locally">Only saved in Spotui, not in Spotify</string>
+    <string name="search_tracks">Search for songs</string>
+    <string name="youtube_link">YouTube video link</string>
+    <string name="invalid_youtube_link">Enter a valid YouTube video link</string>
+    <string name="continue_label">Continue</string>
+    <string name="track_title">Title</string>
+    <string name="artist">Artist</string>
+    <string name="cover_uri">Cover image link</string>
+    <string name="save_locally">Save to playlist locally</string>
+    <string name="back">Back</string>
+    <string name="track_not_spotify">This song is not in the Spotify catalog</string>
+    <string name="spotify_add_failed">Spotify did not accept the addition. Check playlist permissions.</string>
 </resources>

@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -133,7 +135,7 @@ fun LocalFilesScreen(navController: NavController) {
                         containerColor = Color.Transparent,
                         titleContentColor = Color.White,
                     ),
-                    title = { Text("Local files", color = Color.White, fontWeight = FontWeight.Bold) },
+                    title = { Text(uiLocalized("Local files"), color = Color.White, fontWeight = FontWeight.Bold) },
                 )
             },
         ) { innerPadding ->
@@ -146,7 +148,7 @@ fun LocalFilesScreen(navController: NavController) {
                     .verticalScroll(rememberScrollState()),
             ) {
                 Text(
-                    text = "On this device",
+                    text = uiLocalized("On this device"),
                     color = Color.White,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
@@ -173,7 +175,7 @@ fun LocalFilesScreen(navController: NavController) {
                 }
                 if (importing) {
                     Text(
-                        "Importing…",
+                        uiLocalized("Importing…"),
                         color = accent,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(20.dp, 2.dp),
@@ -184,7 +186,7 @@ fun LocalFilesScreen(navController: NavController) {
 
                 if (songs.isEmpty()) {
                     Text(
-                        text = "No local music yet. Tap “Add songs” or “Add folder” to import from your device.",
+                        text = uiLocalized("No local music yet. Tap “Add songs” or “Add folder” to import from your device."),
                         color = Color.Gray,
                         fontSize = 14.sp,
                         modifier = Modifier.padding(20.dp),
@@ -231,7 +233,7 @@ fun LocalFilesScreen(navController: NavController) {
                         }
                     }
                     Text(
-                        text = "Long-press a song to remove it from your library.",
+                        text = uiLocalized("Long-press a song to remove it from your library."),
                         color = Color(0xFF6A6A6A),
                         fontSize = 11.sp,
                         modifier = Modifier.padding(20.dp, 12.dp),

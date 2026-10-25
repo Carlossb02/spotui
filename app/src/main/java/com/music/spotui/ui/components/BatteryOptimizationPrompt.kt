@@ -1,5 +1,7 @@
 package com.music.spotui.ui.components
 
+import com.music.spotui.util.uiLocalized
+
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -24,6 +26,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.music.spotui.data.BatteryOptimizationHelper
 
 private var hasPromptedThisSession = false
+
 
 @Composable
 fun BatteryOptimizationPrompt() {
@@ -61,7 +64,7 @@ fun BatteryOptimizationPrompt() {
         textContentColor = Color.White,
         title = {
             Text(
-                text = "Reproducción en segundo plano",
+                text = uiLocalized("Reproducción en segundo plano"),
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White
@@ -107,7 +110,7 @@ fun BatteryOptimizationPrompt() {
                     }
                 }
             ) {
-                Text("Permitir sin restricciones", color = Color(0xFF1DB954), fontWeight = FontWeight.Bold)
+                Text(uiLocalized("Permitir sin restricciones"), color = Color(0xFF1DB954), fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
@@ -117,7 +120,7 @@ fun BatteryOptimizationPrompt() {
                     showDialog = false
                 }
             ) {
-                Text("Más tarde", color = Color(0xFF888888))
+                Text(uiLocalized("Más tarde"), color = Color(0xFF888888))
             }
         }
     )

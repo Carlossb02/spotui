@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -188,7 +190,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         state = searchReveal,
                         query = searchQuery,
                         onQueryChange = { searchQuery = it },
-                        placeholder = "Buscar en episodios"
+                        placeholder = uiLocalized("Buscar en episodios")
                     )
                 }
             }
@@ -197,7 +199,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     tint = Color.White,
-                    contentDescription = "Volver",
+                    contentDescription = uiLocalized("Volver"),
                     modifier = Modifier
                         .padding(16.dp, 12.dp)
                         .size(26.dp)
@@ -261,7 +263,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                     if (resolvedPublisher.isNotBlank()) {
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = "De $resolvedPublisher",
+                            text = "${uiLocalized("By")} $resolvedPublisher",
                             color = Color(0xFFB3B3B3),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium
@@ -269,6 +271,11 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                     }
 
                     Spacer(Modifier.height(18.dp))
+
+                    val msgSubscribedAdded = uiLocalized("Añadido a tus podcasts seguidos")
+                    val msgSubscribedRemoved = uiLocalized("Eliminado de tus podcasts")
+                    val msgNotifOn = uiLocalized("Notificaciones activadas")
+                    val msgNotifOff = uiLocalized("Notificaciones desactivadas")
 
                     // Action Control Row (Follow button + Notifications + Queue/Play)
                     Row(
@@ -284,7 +291,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                 border = if (isSubscribed) null else androidx.compose.foundation.BorderStroke(1.dp, Color.White),
                                 modifier = Modifier.clickable {
                                     vm.toggleSubscription(context)
-                                    val msg = if (vm.isSubscribed.value) "Añadido a tus podcasts seguidos" else "Eliminado de tus podcasts"
+                                    val msg = if (vm.isSubscribed.value) msgSubscribedAdded else msgSubscribedRemoved
                                     android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
                                 }
                             ) {
@@ -302,7 +309,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                         Spacer(modifier = Modifier.width(6.dp))
                                     }
                                     Text(
-                                        text = if (isSubscribed) "Siguiendo" else "Seguir",
+                                        text = if (isSubscribed) uiLocalized("Following") else uiLocalized("Follow"),
                                         color = if (isSubscribed) Color.Black else Color.White,
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.Bold
@@ -320,14 +327,14 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                     .background(Color(0xFF2A2A30))
                                     .clickable {
                                         isNotificationOn = !isNotificationOn
-                                        val msg = if (isNotificationOn) "Notificaciones activadas" else "Notificaciones desactivadas"
+                                        val msg = if (isNotificationOn) msgNotifOn else msgNotifOff
                                         android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Notifications,
-                                    contentDescription = "Notificaciones",
+                                    contentDescription = uiLocalized("Notificaciones"),
                                     tint = if (isNotificationOn) Color(0xFF1ED760) else Color.White,
                                     modifier = Modifier.size(18.dp)
                                 )
@@ -353,7 +360,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                                 android.widget.Toast.LENGTH_SHORT,
                                             ).show()
                                         },
-                                    contentDescription = "Añadir episodios a la cola",
+                                    contentDescription = uiLocalized("Añadir episodios a la cola"),
                                 )
 
                                 Spacer(modifier = Modifier.width(16.dp))
@@ -375,7 +382,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.PlayArrow,
-                                        contentDescription = "Reproducir",
+                                        contentDescription = uiLocalized("Reproducir"),
                                         tint = Color.Black,
                                         modifier = Modifier.size(28.dp)
                                     )
@@ -404,7 +411,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         )
                         Spacer(Modifier.height(12.dp))
                         Text(
-                            "Reintentar episodios",
+                            uiLocalized("Reintentar episodios"),
                             color = Color(0xFF1ED760),
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.clickable { vm.retryShow(context, showId, showName) }.padding(12.dp)
@@ -424,7 +431,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "${filteredEpisodes.size} episodios",
+                            text = "${filteredEpisodes.size} ${uiLocalized("episodes")}",
                             color = Color.White,
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold
@@ -439,14 +446,14 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                 .padding(horizontal = 14.dp, vertical = 6.dp)
                         ) {
                             Text(
-                                text = currentSort.getDescriptiveLabel(isDescending),
+                                text = uiLocalized(currentSort.getDescriptiveLabel(isDescending)),
                                 color = Color.White,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Icon(
                                 imageVector = Icons.Default.KeyboardArrowDown,
-                                contentDescription = "Opciones de orden",
+                                contentDescription = uiLocalized("Opciones de orden"),
                                 tint = Color.White,
                                 modifier = Modifier
                                     .size(16.dp)
@@ -466,7 +473,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "No se encontraron coincidencias para \"$searchQuery\"",
+                            text = "${uiLocalized("No matches found for")} \"$searchQuery\"",
                             color = Color.White,
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Medium
@@ -583,7 +590,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                                     overflow = TextOverflow.Ellipsis,
                                                     modifier = Modifier.widthIn(max = 120.dp)
                                                 )
-                                                Text(" • ", color = Color(0xFFB3B3B3), fontSize = 12.sp)
+                                                Text(uiLocalized(" • "), color = Color(0xFFB3B3B3), fontSize = 12.sp)
                                             }
                                             if (ep.durationMs > 0) {
                                                 Surface(
@@ -618,7 +625,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.PlayArrow,
-                                                contentDescription = "Reproducir episodio",
+                                                contentDescription = uiLocalized("Reproducir episodio"),
                                                 tint = Color.White,
                                                 modifier = Modifier.size(18.dp)
                                             )
@@ -639,7 +646,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                         shape = RoundedCornerShape(12.dp)
                                     ) {
                                         Text(
-                                            text = "${chapters.size} capítulos",
+                                            text = "${chapters.size} ${uiLocalized("chapters")}",
                                             color = Color(0xFF1ED760),
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
@@ -648,7 +655,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                     }
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Pulsa un bloque para saltar",
+                                        text = uiLocalized("Pulsa un bloque para saltar"),
                                         color = Color(0xFF8E8E93),
                                         fontSize = 11.sp,
                                         maxLines = 1,
@@ -662,6 +669,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                 ) {
                                     items(chapters.take(3).size) { cIdx ->
                                         val chapter = chapters[cIdx]
+                                        val skippingToText = uiLocalized("Saltando a")
                                         Surface(
                                             color = Color(0xFF2A2A30),
                                             shape = RoundedCornerShape(16.dp),
@@ -679,7 +687,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                                 }
                                                 android.widget.Toast.makeText(
                                                     context,
-                                                    "Saltando a ${chapter.timeFormatted}: ${chapter.title}",
+                                                    "$skippingToText ${chapter.timeFormatted}: ${chapter.title}",
                                                     android.widget.Toast.LENGTH_SHORT
                                                 ).show()
                                             }
@@ -746,7 +754,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                     .clickable { vm.loadMoreEpisodes() }
                             ) {
                                 Text(
-                                    text = "Cargar más episodios",
+                                    text = uiLocalized("Cargar más episodios"),
                                     color = Color.Black,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold,
@@ -774,7 +782,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         .navigationBarsPadding()
                 ) {
                     Text(
-                        text = "Ordenar por",
+                        text = uiLocalized("Ordenar por"),
                         color = Color.White,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
@@ -814,7 +822,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                             )
                             Spacer(modifier = Modifier.width(18.dp))
                             Text(
-                                text = if (isSelected) option.getDescriptiveLabel(isDescending) else option.getDescriptiveLabel(option == ShowSortOption.DATE),
+                                text = uiLocalized(if (isSelected) option.getDescriptiveLabel(isDescending) else option.getDescriptiveLabel(option == ShowSortOption.DATE)),
                                 color = if (isSelected) Color(AppPalette.toArgb()) else Color.White,
                                 fontSize = 15.sp,
                                 modifier = Modifier.weight(1f)

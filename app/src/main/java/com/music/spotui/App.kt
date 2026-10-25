@@ -7,6 +7,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import kotlinx.coroutines.flow.first
 
 import android.annotation.SuppressLint
 import android.os.Build
@@ -127,7 +130,31 @@ fun App() {
         }
     }
 
-    var tabletPlayerExpanded by rememberSaveable { mutableStateOf(true) }
+    // Persist only the tablet mini/side choice, never the full-screen player route.
+    // SharedPreferences survive process death; no media service state is touched.
+    val tabletDisplayPrefs = remember(context) {
+        context.getSharedPreferences("tablet_player_layout", android.content.Context.MODE_PRIVATE)
+    }
+    var tabletPlayerExpanded by rememberSaveable {
+        mutableStateOf(tabletDisplayPrefs.getBoolean("side_panel_expanded", true))
+    }
+    fun setTabletPanelExpanded(expanded: Boolean) {
+        tabletPlayerExpanded = expanded
+        tabletDisplayPrefs.edit().putBoolean("side_panel_expanded", expanded).apply()
+    }
+    val tabletStarting = androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp >= 600
+    // Navigation Compose may restore a dialog (full-screen player) after process death.
+    // The initial tablet destination must be mini/side, not that restored dialog.
+    LaunchedEffect(navController, tabletStarting) {
+        if (tabletStarting) {
+            // Wait until Navigation has installed/restored its graph before inspecting it.
+            navController.currentBackStackEntryFlow.first()
+            kotlinx.coroutines.delay(100L)
+            if (navController.currentDestination?.route == Routes.Player.route) {
+                navController.popBackStack()
+            }
+        }
+    }
     val isTabletDevice = androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp >= 600
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         // Spotify's 2026 adaptive tablet pattern: browse and playback side-by-side.
@@ -153,7 +180,7 @@ fun App() {
                                 tabletInlineMiniPlayer = true,
                                 showMiniPlayer = !showPlayerPanel,
                                 onExpandTabletPlayer = if (!showPlayerPanel && playerState.isNotBlank()) {
-                                    { tabletPlayerExpanded = true }
+                                    { setTabletPanelExpanded(true) }
                                 } else null
                             )
                         }
@@ -170,23 +197,23 @@ fun App() {
                     visible = showPlayerPanel,
                     enter = expandHorizontally(
                         expandFrom = Alignment.End,
-                        animationSpec = tween(350, easing = FastOutSlowInEasing)
+                        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessLow)
                     ) + fadeIn(tween(240)),
                     exit = shrinkHorizontally(
                         shrinkTowards = Alignment.End,
-                        animationSpec = tween(320, easing = FastOutSlowInEasing)
+                        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
                     ) + fadeOut(tween(250))
                 ) {
                     TabletNowPlayingPanel(
                         navController = navController,
                         modifier = Modifier.width(panelWidth).fillMaxHeight(),
-                        onCollapse = { tabletPlayerExpanded = false },
+                        onCollapse = { setTabletPanelExpanded(false) },
                         playerViewModel = playerViewModel
                     )
                 }
             }
             BackHandler(enabled = showTabletPlayerPanel) {
-                tabletPlayerExpanded = false
+                setTabletPanelExpanded(false)
             }
         } else {
             Scaffold(

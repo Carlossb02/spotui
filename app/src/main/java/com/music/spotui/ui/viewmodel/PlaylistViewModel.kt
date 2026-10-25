@@ -79,12 +79,27 @@ class PlaylistViewModel @Inject constructor(
     }
 
     fun reloadPlaylist(playlistId: String) {
+        val differentPlaylist = playlistKey != playlistId
         playlistKey = playlistId
-        viewModelScope.launch(Dispatchers.IO) {
-            repository.providePlaylist(playlistId).collect { _playlist.value = it }
+        // Initial navigation may show a loader; refreshing the same collection must not
+        // clear its content or discard its LazyListState/visible scroll anchor.
+        if (differentPlaylist) {
+            _playlist.value = Response.Loading()
+            _songs.value = Response.Loading()
         }
         viewModelScope.launch(Dispatchers.IO) {
-            repository.providePlaylistSongs(playlistId).collect { _songs.value = it }
+            repository.providePlaylist(playlistId).collect { result ->
+                if (result !is Response.Loading || _playlist.value !is Response.Success) {
+                    _playlist.value = result
+                }
+            }
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.providePlaylistSongs(playlistId).collect { result ->
+                if (result !is Response.Loading || _songs.value !is Response.Success) {
+                    _songs.value = result
+                }
+            }
         }
     }
 }

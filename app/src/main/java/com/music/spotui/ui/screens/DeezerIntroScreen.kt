@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,6 +40,7 @@ private const val DEEZER_PURPLE = 0xFFA238FF
  * why and lets the user log in or skip. Only shown when no Deezer account is
  * connected yet.
  */
+
 @Composable
 fun DeezerIntroScreen(navController: NavController) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -71,12 +74,12 @@ fun DeezerIntroScreen(navController: NavController) {
                     .background(Color(DEEZER_PURPLE).copy(alpha = 0.15f), RoundedCornerShape(24.dp)),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("🎵", fontSize = 44.sp)
+                Text(uiLocalized("🎵"), fontSize = 44.sp)
             }
 
             Spacer(Modifier.height(28.dp))
             Text(
-                "Log in to Deezer",
+                uiLocalized("Log in to Deezer"),
                 color = Color.White,
                 fontSize = 24.sp,
                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
@@ -84,7 +87,7 @@ fun DeezerIntroScreen(navController: NavController) {
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "Spotui streams your music from Deezer. Skip this and playback falls back to YouTube instead — slower to load, and some tracks come back censored or as a different edit.",
+                uiLocalized("Spotui streams your music from Deezer. Skip this and playback falls back to YouTube instead — slower to load, and some tracks come back censored or as a different edit."),
                 color = Color(0xFFB3B3B3),
                 fontSize = 14.sp,
                 textAlign = TextAlign.Center,
@@ -108,14 +111,14 @@ fun DeezerIntroScreen(navController: NavController) {
                 shape = RoundedCornerShape(50),
                 modifier = Modifier.fillMaxWidth().height(52.dp),
             ) {
-                Text("Log in to Deezer", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, fontSize = 16.sp)
+                Text(uiLocalized("Log in to Deezer"), fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, fontSize = 16.sp)
             }
             Spacer(Modifier.height(10.dp))
             TextButton(onClick = goHome, modifier = Modifier.fillMaxWidth()) {
-                Text("Skip for now", color = Color(0xFFB3B3B3), fontSize = 14.sp)
+                Text(uiLocalized("Skip for now"), color = Color(0xFFB3B3B3), fontSize = 14.sp)
             }
             Text(
-                "You can connect Deezer any time from Settings.",
+                uiLocalized("You can connect Deezer any time from Settings."),
                 color = Color(0xFF6A6A6A),
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center,

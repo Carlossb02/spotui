@@ -94,13 +94,21 @@ object SpotifySync {
         scope.launch {
             if (!SpotifyTokenProvider.ensureToken(app)) { onDone(false); return@launch }
             val uri = "spotify:track:$cleanTr"
-            val refs = Spotify.playlistTracks(cleanPl, limit = 100).getOrNull()
-                ?.items.orEmpty()
-                .filter { pt ->
-                    val tid = pt.track?.id?.let { cleanTrackId(it) }.orEmpty()
-                    tid == cleanTr || pt.track?.uri == uri
+            // Paginate the whole Spotify playlist. Added tracks are typically at the end,
+            // so scanning only the first 100 entries makes "Remove" silently fail.
+            val refs = mutableListOf<Spotify.PlaylistItemRef>()
+            var offset = 0
+            while (true) {
+                val page = Spotify.playlistTracks(cleanPl, limit = 100, offset = offset).getOrNull() ?: break
+                page.items.forEach { item ->
+                    val tid = item.track?.id?.let { cleanTrackId(it) }.orEmpty()
+                    if (tid == cleanTr || item.track?.uri == uri) {
+                        item.uid?.let { refs += Spotify.PlaylistItemRef(uri = uri, uid = it) }
+                    }
                 }
-                .mapNotNull { pt -> pt.uid?.let { Spotify.PlaylistItemRef(uri = uri, uid = it) } }
+                offset += page.items.size
+                if (page.items.isEmpty() || offset >= page.total) break
+            }
             val ok = refs.isNotEmpty() &&
                 Spotify.removeTracksFromPlaylist(cleanPl, refs).isSuccess
             if (ok) {
@@ -143,10 +151,16 @@ object SpotifySync {
         if (cleanPl.isBlank()) return emptySet()
         membershipCache[cleanPl]?.let { return it }
         if (!SpotifyTokenProvider.ensureToken(context.applicationContext)) return emptySet()
-        val ids = Spotify.playlistTracks(cleanPl, limit = 100).getOrNull()
-            ?.items.orEmpty()
-            .mapNotNull { pt -> pt.track?.id?.let { cleanTrackId(it) }?.takeIf { it.isNotBlank() } }
-            .toMutableSet()
+        val ids = mutableSetOf<String>()
+        var offset = 0
+        while (true) {
+            val page = Spotify.playlistTracks(cleanPl, limit = 100, offset = offset).getOrNull() ?: break
+            page.items.forEach { item ->
+                item.track?.id?.let { cleanTrackId(it) }?.takeIf { it.isNotBlank() }?.let(ids::add)
+            }
+            offset += page.items.size
+            if (page.items.isEmpty() || offset >= page.total) break
+        }
         val set = ConcurrentHashMap.newKeySet<String>().apply { addAll(ids) }
         membershipCache[cleanPl] = set
         return set

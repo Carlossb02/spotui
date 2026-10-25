@@ -93,7 +93,7 @@ fun isUserEditableLocalTrack(context: Context, song: SongsModel): Boolean {
         url.startsWith("spotify:local:", ignoreCase = true) ||
         url.startsWith("spotify:track:local_", ignoreCase = true)
 
-    if (spotifyLocal) return true
+    if (spotifyLocal || url.startsWith("yt_local:")) return true
 
     // An earlier, verified local edit is retained across changes to the artist,
     // title, image or search query.
@@ -171,6 +171,7 @@ fun updateLocalTrackMetadata(
     save(context, updatedTracks)
 
     LocalPlaylistPref.updateSongInPlaylists(context, song, newTitle, newArtist, newAlbum, newCoverUri)
+    PlaylistAdditionsPref.updateSong(context, song, newTitle, newArtist, newAlbum, newCoverUri)
     com.music.spotui.di.SongPlayer.updateTrackInQueue(song, newTitle, newArtist, newAlbum, newCoverUri)
     com.music.spotui.data.api.Api.HomeCache.clear()
 }

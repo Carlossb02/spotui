@@ -1,5 +1,7 @@
 package com.music.spotui.ui.components
 
+import com.music.spotui.util.uiLocalized
+
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -142,9 +144,9 @@ fun SavedInSheet(
                     .fillMaxWidth()
                     .padding(20.dp, 4.dp, 20.dp, 12.dp),
             ) {
-                Text("Saved in", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text(uiLocalized("Saved in"), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Text(
-                    "New playlist",
+                    uiLocalized("New playlist"),
                     color = SpotifyGreen,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -162,7 +164,7 @@ fun SavedInSheet(
                     value = newName,
                     onValueChange = { newName = it },
                     singleLine = true,
-                    placeholder = { Text("Playlist name", color = Color.Gray) },
+                    placeholder = { Text(uiLocalized("Playlist name"), color = Color.Gray) },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = { createNow() }),
                     colors = TextFieldDefaults.colors(
@@ -181,7 +183,7 @@ fun SavedInSheet(
                 )
                 Row(modifier = Modifier.padding(20.dp, 4.dp, 20.dp, 12.dp)) {
                     Text(
-                        if (isCreatingPlaylist) "Creating..." else "Create",
+                        if (isCreatingPlaylist) uiLocalized("Creating...") else uiLocalized("Create"),
                         color = if (isCreatingPlaylist) Color.Gray else SpotifyGreen,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
@@ -193,7 +195,7 @@ fun SavedInSheet(
                     )
                     Spacer(Modifier.width(24.dp))
                     Text(
-                        "Cancel",
+                        uiLocalized("Cancel"),
                         color = Color.Gray,
                         fontSize = 14.sp,
                         modifier = Modifier.clickable(
@@ -275,12 +277,18 @@ fun SavedInSheet(
                 val cleanTrackId = SpotifySync.cleanTrackId(song.spotifyTrackId)
                 items(remoteList.size, key = { "remote_${remoteList[it].id}_$it" }) { i ->
                     val pl = remoteList[i]
-                    LaunchedEffect(pl.id, cleanTrackId) {
+                    LaunchedEffect(pl.id, cleanTrackId, song.url) {
                         if (membership[pl.id] == null) {
                             if (cleanTrackId.isNotBlank()) {
                                 membership[pl.id] = withContext(Dispatchers.IO) {
-                                    SpotifySync.playlistTrackIds(context, pl.id).contains(cleanTrackId)
+                                    com.music.spotui.data.preferences.PlaylistSyncedPendingPref.contains(
+                                        context, pl.id, cleanTrackId
+                                    ) || SpotifySync.playlistTrackIds(context, pl.id).contains(cleanTrackId)
                                 }
+                            } else if (song.url.startsWith("yt_local:")) {
+                                // YouTube additions to Spotify playlists exist only in Spotui.
+                                membership[pl.id] = com.music.spotui.data.preferences.PlaylistAdditionsPref
+                                    .tracks(context, pl.id).any { it.url == song.url }
                             } else {
                                 val localMatchingPl = LocalPlaylistPref.getLocalPlaylists(context)
                                     .firstOrNull { it.name.trim().lowercase() == pl.name.trim().lowercase() }
@@ -308,9 +316,34 @@ fun SavedInSheet(
                         },
                     ) {
                         if (cleanTrackId.isNotBlank()) {
+                            // Reflect only confirmed Spotify writes; never show success optimistically.
+                            if (saved) SpotifySync.removeTrackFromPlaylist(context, pl.id, cleanTrackId) { ok ->
+                                if (ok) {
+                                    com.music.spotui.data.preferences.PlaylistSyncedPendingPref.remove(
+                                        context, pl.id, cleanTrackId
+                                    )
+                                    kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch {
+                                        membership[pl.id] = false
+                                    }
+                                }
+                            } else SpotifySync.addTrackToPlaylist(context, pl.id, cleanTrackId) { ok ->
+                                if (ok) {
+                                    com.music.spotui.data.preferences.PlaylistSyncedPendingPref.addConfirmed(
+                                        context, pl.id, song.copy(spotifyTrackId = cleanTrackId)
+                                    )
+                                    kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch {
+                                        membership[pl.id] = true
+                                    }
+                                }
+                            }
+                        } else if (song.url.startsWith("yt_local:")) {
+                            // Local-only track on a Spotify playlist: never send it to Spotify.
+                            if (saved) com.music.spotui.data.preferences.PlaylistAdditionsPref.remove(
+                                context, pl.id, song.url
+                            ) else com.music.spotui.data.preferences.PlaylistAdditionsPref.add(
+                                context, pl.id, song
+                            )
                             membership[pl.id] = !saved
-                            if (saved) SpotifySync.removeTrackFromPlaylist(context, pl.id, cleanTrackId)
-                            else SpotifySync.addTrackToPlaylist(context, pl.id, cleanTrackId)
                         } else {
                             val localPls = LocalPlaylistPref.getLocalPlaylists(context)
                             var targetPl = localPls.firstOrNull { it.name.trim().lowercase() == pl.name.trim().lowercase() }
@@ -368,7 +401,7 @@ private fun SavedInRow(
                 if (isLocal) {
                     Icon(
                         imageVector = Icons.Default.PhoneAndroid,
-                        contentDescription = "Local Storage",
+                        contentDescription = uiLocalized("Local Storage"),
                         tint = SpotifyGreen,
                         modifier = Modifier
                             .size(14.dp)
@@ -381,9 +414,9 @@ private fun SavedInRow(
             }
         }
         if (saved) {
-            Icon(Icons.Default.CheckCircle, contentDescription = "Saved", tint = SpotifyGreen, modifier = Modifier.size(26.dp))
+            Icon(Icons.Default.CheckCircle, contentDescription = uiLocalized("Saved"), tint = SpotifyGreen, modifier = Modifier.size(26.dp))
         } else {
-            Icon(Icons.Default.Add, contentDescription = "Add", tint = Color(0xFFB3B3B3), modifier = Modifier.size(26.dp))
+            Icon(Icons.Default.Add, contentDescription = uiLocalized("Add"), tint = Color(0xFFB3B3B3), modifier = Modifier.size(26.dp))
         }
     }
 }

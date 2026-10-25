@@ -1,5 +1,7 @@
 package com.music.spotui.ui.components
 
+import com.music.spotui.util.uiLocalized
+
 import android.annotation.SuppressLint
 import android.content.Context
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -182,7 +184,7 @@ fun LikedSongsScreen(
                             fontSize = 22.sp,
                             fontWeight = FontWeight.Bold)
                         Text(modifier = Modifier,
-                            text = " ${likedSongs.size} songs",
+                            text = " ${likedSongs.size} ${uiLocalized("songs")}",
                             color = Color.Gray,
                             letterSpacing = 0.sp,
                             fontSize = 12.sp,

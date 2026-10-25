@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.graphics.Bitmap
@@ -83,6 +85,7 @@ private const val SPOTIFY_GREEN = 0xFF1ED760
  * paste option as fallback.
  */
 @SuppressLint("SetJavaScriptEnabled")
+
 @Composable
 fun SpotifyLoginScreen(navController: NavController) {
     val scope = rememberCoroutineScope()
@@ -255,7 +258,7 @@ fun SpotifyLoginScreen(navController: NavController) {
                     verticalArrangement = Arrangement.Center,
                 ) {
                     Text(
-                        text = "Unable to load Spotify login page",
+                        text = uiLocalized("Unable to load Spotify login page"),
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         fontSize = 18.sp,
@@ -283,13 +286,13 @@ fun SpotifyLoginScreen(navController: NavController) {
                         ),
                         shape = RoundedCornerShape(50),
                     ) {
-                        Text("Retry", fontWeight = FontWeight.Bold)
+                        Text(uiLocalized("Retry"), fontWeight = FontWeight.Bold)
                     }
                     Spacer(Modifier.height(12.dp))
                     TextButton(
                         onClick = { showManualCookieDialog = true },
                     ) {
-                        Text("Or Log In with Cookie (sp_dc)", color = Color.White)
+                        Text(uiLocalized("Or Log In with Cookie (sp_dc)"), color = Color.White)
                     }
                 }
             }
@@ -318,7 +321,7 @@ fun SpotifyLoginScreen(navController: NavController) {
                         IconButton(onClick = { navController.popBackStack() }) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
+                                contentDescription = uiLocalized("Back"),
                                 tint = Color.White,
                             )
                         }
@@ -354,7 +357,7 @@ fun SpotifyLoginScreen(navController: NavController) {
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Key,
-                                contentDescription = "Manual cookie login",
+                                contentDescription = uiLocalized("Manual cookie login"),
                                 tint = Color(0xFFB3B3B3),
                             )
                         }
@@ -368,7 +371,7 @@ fun SpotifyLoginScreen(navController: NavController) {
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
-                                contentDescription = "Reload page",
+                                contentDescription = uiLocalized("Reload page"),
                                 tint = Color(0xFFB3B3B3),
                             )
                         }
@@ -427,7 +430,7 @@ private fun ManualCookieDialog(
         containerColor = Color(0xFF1E1E1E),
         title = {
             Text(
-                "Manual Spotify Cookie Login",
+                uiLocalized("Manual Spotify Cookie Login"),
                 color = Color.White,
                 fontWeight = FontWeight.Bold,
                 fontSize = 18.sp,
@@ -436,7 +439,7 @@ private fun ManualCookieDialog(
         text = {
             Column {
                 Text(
-                    "Paste your Spotify 'sp_dc' cookie value from your web browser (inspect cookies on open.spotify.com), or open Spotify in your browser.",
+                    uiLocalized("Paste your Spotify 'sp_dc' cookie value from your web browser (inspect cookies on open.spotify.com), or open Spotify in your browser."),
                     color = Color(0xFFB3B3B3),
                     fontSize = 13.sp,
                 )
@@ -452,14 +455,14 @@ private fun ManualCookieDialog(
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Open Spotify in Browser", color = Color.White, fontSize = 13.sp)
+                    Text(uiLocalized("Open Spotify in Browser"), color = Color.White, fontSize = 13.sp)
                 }
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
                     value = spDcInput,
                     onValueChange = { spDcInput = it },
-                    label = { Text("sp_dc cookie value", color = Color(0xFF8A8A8A)) },
-                    placeholder = { Text("AQB...", color = Color(0xFF555555)) },
+                    label = { Text(uiLocalized("sp_dc cookie value"), color = Color(0xFF8A8A8A)) },
+                    placeholder = { Text(uiLocalized("AQB..."), color = Color(0xFF555555)) },
                     singleLine = false,
                     maxLines = 4,
                     colors = OutlinedTextFieldDefaults.colors(
@@ -486,12 +489,12 @@ private fun ManualCookieDialog(
                     disabledContainerColor = Color(0xFF12863B),
                 ),
             ) {
-                Text("Log In", fontWeight = FontWeight.Bold)
+                Text(uiLocalized("Log In"), fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = Color(0xFFB3B3B3))
+                Text(uiLocalized("Cancel"), color = Color(0xFFB3B3B3))
             }
         },
     )

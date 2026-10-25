@@ -99,6 +99,30 @@ object OfflineCollectionsPref {
         }
     }
 
+    /** Cheap membership snapshot for the Library's Downloaded chip.
+     * Avoid constructing song models, applying metadata or touching cover files. */
+    fun getDownloadedCollectionKeys(context: Context, downloadedIds: Set<String>): Set<String> {
+        if (downloadedIds.isEmpty()) return emptySet()
+        val result = HashSet<String>()
+        val values = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).all.values
+        for (raw in values) {
+            val collection = runCatching { JSONObject(raw as? String ?: return@runCatching null) }.getOrNull() ?: continue
+            val songs = collection.optJSONArray("songs") ?: continue
+            var found = false
+            for (i in 0 until songs.length()) {
+                val song = songs.optJSONObject(i) ?: continue
+                if (song.optString("id") in downloadedIds) { found = true; break }
+            }
+            if (found) {
+                val id = collection.optString("id")
+                val name = collection.optString("name")
+                if (id.isNotBlank()) result.add("id:${com.music.spotui.data.api.Api.cleanId(id)}")
+                if (name.isNotBlank()) result.add("name:${collection.optBoolean("isPlaylist")}:$name".lowercase())
+            }
+        }
+        return result
+    }
+
     fun getOfflineCollections(context: Context): List<OfflineCollection> {
         val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         val allCollections = prefs.all.values.mapNotNull { (it as? String)?.let { json ->

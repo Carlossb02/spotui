@@ -1,10 +1,17 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.util.uiLocalized
+
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import com.music.spotui.ui.components.SongOptionsSheet
 import androidx.compose.foundation.layout.Arrangement
@@ -35,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +53,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.input.pointer.PointerEventPass
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -133,10 +146,54 @@ fun QueueContent(
     val upcoming = if (queue.isNotEmpty()) queue.drop(curIdx + 1) else emptyList()
     val current = queue.getOrNull(curIdx)
 
-    // Drag-to-reorder state: which upcoming row is dragged and its live offset.
+    // The gesture lives on the stable LazyColumn, NOT on a disposable row.
+    // A row can scroll completely out of view while held; its pointerInput would
+    // be cancelled by lazy-list recycling. The parent survives and keeps scrolling.
     var draggingId by remember { mutableIntStateOf(-1) }
-    var dragOffset by remember { mutableFloatStateOf(0f) }
-    val rowHeightPx = with(LocalDensity.current) { 64.dp.toPx() }
+    var pointerViewportY by remember { mutableFloatStateOf(0f) }
+    val density = LocalDensity.current
+    val rowHeightPx = with(density) { 64.dp.toPx() }
+    val edgeDistancePx = with(density) { 82.dp.toPx() }
+    val handleAreaPx = with(density) { 58.dp.toPx() }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val latestUpcoming by rememberUpdatedState(upcoming)
+    val latestHasCurrent by rememberUpdatedState(current != null)
+
+    val reorderAtPointer: () -> Unit = {
+        val q = playerViewModel.queue.value
+        val draggedIndex = q.indexOfFirst { it.id == draggingId }
+        val playingIndex = q.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
+        if (draggedIndex > playingIndex) {
+            val headerCount = (if (current != null) 1 else 0) + (if (upcoming.isNotEmpty()) 1 else 0)
+            val visibleTracks = listState.layoutInfo.visibleItemsInfo.filter {
+                it.index >= headerCount && it.index < headerCount + upcoming.size
+            }
+            val closest = visibleTracks.minByOrNull { abs((it.offset + it.size / 2f) - pointerViewportY) }
+            if (closest != null) {
+                val targetAbsolute = (playingIndex + 1 + closest.index - headerCount)
+                    .coerceIn(playingIndex + 1, q.lastIndex)
+                if (targetAbsolute != draggedIndex) playerViewModel.moveQueueItem(draggedIndex, targetAbsolute)
+            }
+        }
+    }
+    val latestReorder by rememberUpdatedState(reorderAtPointer)
+
+    // Run every frame while near an edge, even when the user's finger stays still.
+    LaunchedEffect(draggingId) {
+        if (draggingId == -1) return@LaunchedEffect
+        while (draggingId != -1) {
+            val height = listState.layoutInfo.viewportSize.height.toFloat()
+            val down = ((pointerViewportY - (height - edgeDistancePx)) / edgeDistancePx).coerceIn(0f, 1f)
+            val up = ((edgeDistancePx - pointerViewportY) / edgeDistancePx).coerceIn(0f, 1f)
+            val velocity = when {
+                down > 0f -> 4f + 24f * down
+                up > 0f -> -(4f + 24f * up)
+                else -> 0f
+            }
+            if (velocity != 0f && listState.scrollBy(velocity) != 0f) latestReorder()
+            kotlinx.coroutines.delay(16L)
+        }
+    }
 
     var menuSong by remember { mutableStateOf<com.music.spotui.data.entity.SongsModel?>(null) }
     menuSong?.let { sel ->
@@ -161,7 +218,7 @@ fun QueueContent(
         ) {
             Icon(
                 imageVector = Icons.Default.KeyboardArrowDown,
-                contentDescription = "Close",
+                contentDescription = uiLocalized("Close"),
                 tint = Color.White,
                 modifier = Modifier
                     .size(28.dp)
@@ -174,13 +231,37 @@ fun QueueContent(
             Text(stringResource(R.string.queue), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
         }
 
-        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
         Box(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier
                     .fillMaxSize()
                     .navigationBarsPadding()
+                    .pointerInput(currentId, queue.size) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                            val headers = (if (latestHasCurrent) 1 else 0) + (if (latestUpcoming.isNotEmpty()) 1 else 0)
+                            val item = listState.layoutInfo.visibleItemsInfo.firstOrNull {
+                                down.position.y >= it.offset && down.position.y < it.offset + it.size &&
+                                    it.index >= headers && it.index < headers + latestUpcoming.size
+                            }
+                            // Only the right-hand reorder grip may begin a drag.
+                            if (item != null && down.position.x >= size.width - handleAreaPx) {
+                                val songId = latestUpcoming[item.index - headers].id
+                                val slop = awaitTouchSlopOrCancellation(down.id) { change, _ -> change.consume() }
+                                if (slop != null) {
+                                    draggingId = songId
+                                    pointerViewportY = slop.position.y
+                                    drag(down.id) { change ->
+                                        change.consume()
+                                        pointerViewportY = change.position.y
+                                        latestReorder()
+                                    }
+                                }
+                            }
+                            draggingId = -1
+                        }
+                    }
             ) {
                 current?.let {
                     item {
@@ -202,7 +283,7 @@ fun QueueContent(
                 if (upcoming.isNotEmpty()) {
                     item {
                         Text(
-                            "Next up",
+                            uiLocalized("Next up"),
                             color = Color.White,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
@@ -233,11 +314,12 @@ fun QueueContent(
                                         .background(Color(0xFF7A1F1F))
                                         .padding(horizontal = 24.dp),
                                 ) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Remove", tint = Color.White)
+                                    Icon(Icons.Default.Delete, contentDescription = uiLocalized("Remove"), tint = Color.White)
                                 }
                             },
+                            gesturesEnabled = draggingId == -1,
                             modifier = Modifier.graphicsLayer {
-                                translationY = if (isDragging) dragOffset else 0f
+                                alpha = if (isDragging) 0.16f else 1f
                             },
                         ) {
                             QueueRow(
@@ -252,43 +334,32 @@ fun QueueContent(
                                     )
                                     SongPlayer.playSong(song.url, context, "song/${song.id}")
                                 },
-                                dragHandle = Modifier.pointerInput(song.id) {
-                                    detectDragGestures(
-                                        onDragStart = {
-                                            draggingId = song.id
-                                            dragOffset = 0f
-                                        },
-                                        onDragEnd = { draggingId = -1; dragOffset = 0f },
-                                        onDragCancel = { draggingId = -1; dragOffset = 0f },
-                                    ) { change, dragAmount ->
-                                        change.consume()
-                                        dragOffset += dragAmount.y
-                                        // Keep the gesture alive when the row moves across
-                                        // several neighbours (keyed by identity, not position).
-                                        val currentQueue = playerViewModel.queue.value
-                                        val currentCurIdx = currentQueue.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
-                                        val abs = currentQueue.indexOfFirst { it.id == song.id }
-                                        val currentUpIdx = currentQueue.drop(currentCurIdx + 1).indexOfFirst { it.id == song.id }
-                                        val upcomingCount = (currentQueue.size - (currentCurIdx + 1)).coerceAtLeast(0)
-                                        if (dragOffset > rowHeightPx / 2 && abs >= 0 && currentUpIdx >= 0 && currentUpIdx < upcomingCount - 1) {
-                                            playerViewModel.moveQueueItem(abs, abs + 1)
-                                            dragOffset -= rowHeightPx
-                                        } else if (dragOffset < -rowHeightPx / 2 && abs >= 0 && currentUpIdx > 0) {
-                                            playerViewModel.moveQueueItem(abs, abs - 1)
-                                            dragOffset += rowHeightPx
-                                        }
-                                    }
-                                },
+                                dragHandle = Modifier,
                             )
                         }
                     }
                 }
                 item { Spacer(modifier = Modifier.height(40.dp)) }
             }
-            com.music.spotui.ui.components.FastScrollbarForLazyList(
-                state = listState,
-                modifier = Modifier.align(Alignment.CenterEnd)
-            )
+            // Floating row stays beneath the finger even when its source item is recycled.
+            if (draggingId != -1) {
+                val ghost = queue.firstOrNull { it.id == draggingId }
+                if (ghost != null) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().offset {
+                            IntOffset(0, (pointerViewportY - rowHeightPx / 2f).roundToInt())
+                        }.graphicsLayer { shadowElevation = 12f * density.density }
+                    ) {
+                        QueueRow(song = ghost, highlight = false, onClick = {}, dragHandle = Modifier)
+                    }
+                }
+            }
+            if (draggingId == -1) {
+                com.music.spotui.ui.components.FastScrollbarForLazyList(
+                    state = listState,
+                    modifier = Modifier.align(Alignment.CenterStart)
+                )
+            }
         }
     }
 }
@@ -343,18 +414,22 @@ private fun QueueRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Text(
-                text = song.singer,
-                color = Color.Gray,
-                fontSize = 13.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
+                Text(
+                    text = song.singer,
+                    color = Color.Gray,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         if (!highlight && dragHandle != null) {
             Icon(
                 imageVector = Icons.Default.Menu,
-                contentDescription = "Reorder",
+                contentDescription = uiLocalized("Reorder"),
                 tint = Color(0xFFB3B3B3),
                 modifier = Modifier
                     .size(28.dp)
