@@ -36,7 +36,3 @@ spotui builds on the work of several open-source projects:
 
 This project is for educational purposes only. Spotify is a trademark of Spotify AB.
 
-
-### 🌟 What's Different in This Fork?
-This fork includes a completely overhauled lossless audio engine, offline caching, and various UI improvements over the main project.
-➡️ **[Click here to read the full list of features and differences](CHANGELOG.md)**
