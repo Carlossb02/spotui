@@ -8,8 +8,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
-import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -146,48 +144,48 @@ fun QueueContent(
     val upcoming = if (queue.isNotEmpty()) queue.drop(curIdx + 1) else emptyList()
     val current = queue.getOrNull(curIdx)
 
-    // The gesture lives on the stable LazyColumn, NOT on a disposable row.
-    // A row can scroll completely out of view while held; its pointerInput would
-    // be cancelled by lazy-list recycling. The parent survives and keeps scrolling.
-    var draggingId by remember { mutableIntStateOf(-1) }
+    // Keep the lazy-list order fixed while dragging. Reordering its key map
+    // while scrollBy() runs makes Compose re-anchor on the relocated row,
+    // causing the flicker/bounce reported at the top. Preview the drop slot
+    // and move the real queue ONCE on pointer-up.
+    data class ReorderEntry(val originalIndex: Int, val song: com.music.spotui.data.entity.SongsModel)
+    var dragOriginalIndex by remember { mutableIntStateOf(-1) }
     var pointerViewportY by remember { mutableFloatStateOf(0f) }
+    var dragTargetIndex by remember { mutableIntStateOf(-1) }
     val density = LocalDensity.current
     val rowHeightPx = with(density) { 64.dp.toPx() }
     val edgeDistancePx = with(density) { 82.dp.toPx() }
     val handleAreaPx = with(density) { 58.dp.toPx() }
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-    val latestUpcoming by rememberUpdatedState(upcoming)
-    val latestHasCurrent by rememberUpdatedState(current != null)
+    val orderedUpcoming = upcoming.mapIndexed { index, song -> ReorderEntry(index, song) }
+    val latestUpcoming by rememberUpdatedState(orderedUpcoming)
+    val latestHeaderCount by rememberUpdatedState((if (current != null) 1 else 0) + (if (upcoming.isNotEmpty()) 1 else 0))
+    val latestCurrentIndex by rememberUpdatedState(curIdx)
 
     val reorderAtPointer: () -> Unit = {
-        val q = playerViewModel.queue.value
-        val draggedIndex = q.indexOfFirst { it.id == draggingId }
-        val playingIndex = q.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
-        if (draggedIndex > playingIndex) {
-            val headerCount = (if (current != null) 1 else 0) + (if (upcoming.isNotEmpty()) 1 else 0)
+        if (dragOriginalIndex >= 0) {
             val visibleTracks = listState.layoutInfo.visibleItemsInfo.filter {
-                it.index >= headerCount && it.index < headerCount + upcoming.size
+                it.index in latestHeaderCount until (latestHeaderCount + latestUpcoming.size)
             }
-            val closest = visibleTracks.minByOrNull { abs((it.offset + it.size / 2f) - pointerViewportY) }
-            if (closest != null) {
-                val targetAbsolute = (playingIndex + 1 + closest.index - headerCount)
-                    .coerceIn(playingIndex + 1, q.lastIndex)
-                if (targetAbsolute != draggedIndex) playerViewModel.moveQueueItem(draggedIndex, targetAbsolute)
-            }
+            val destination = visibleTracks.minByOrNull {
+                abs((it.offset + it.size / 2f) - pointerViewportY)
+            }?.let { it.index - latestHeaderCount }
+            if (destination != null) dragTargetIndex = destination
         }
     }
     val latestReorder by rememberUpdatedState(reorderAtPointer)
 
-    // Run every frame while near an edge, even when the user's finger stays still.
-    LaunchedEffect(draggingId) {
-        if (draggingId == -1) return@LaunchedEffect
-        while (draggingId != -1) {
-            val height = listState.layoutInfo.viewportSize.height.toFloat()
+    // Holding the finger at either edge scrolls continuously even with no new
+    // touch events; the list's child keys remain fixed until drop.
+    LaunchedEffect(dragOriginalIndex) {
+        if (dragOriginalIndex < 0) return@LaunchedEffect
+        while (dragOriginalIndex >= 0) {
+            val height = listState.layoutInfo.viewportEndOffset.toFloat()
             val down = ((pointerViewportY - (height - edgeDistancePx)) / edgeDistancePx).coerceIn(0f, 1f)
             val up = ((edgeDistancePx - pointerViewportY) / edgeDistancePx).coerceIn(0f, 1f)
             val velocity = when {
-                down > 0f -> 4f + 24f * down
-                up > 0f -> -(4f + 24f * up)
+                down > 0f -> 5f + 29f * down
+                up > 0f -> -(5f + 29f * up)
                 else -> 0f
             }
             if (velocity != 0f && listState.scrollBy(velocity) != 0f) latestReorder()
@@ -237,29 +235,50 @@ fun QueueContent(
                 modifier = Modifier
                     .fillMaxSize()
                     .navigationBarsPadding()
-                    .pointerInput(currentId, queue.size) {
+                    .pointerInput(Unit) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                            val headers = (if (latestHasCurrent) 1 else 0) + (if (latestUpcoming.isNotEmpty()) 1 else 0)
-                            val item = listState.layoutInfo.visibleItemsInfo.firstOrNull {
+                            val initialItem = listState.layoutInfo.visibleItemsInfo.firstOrNull {
                                 down.position.y >= it.offset && down.position.y < it.offset + it.size &&
-                                    it.index >= headers && it.index < headers + latestUpcoming.size
+                                    it.index in latestHeaderCount until (latestHeaderCount + latestUpcoming.size)
                             }
-                            // Only the right-hand reorder grip may begin a drag.
-                            if (item != null && down.position.x >= size.width - handleAreaPx) {
-                                val songId = latestUpcoming[item.index - headers].id
-                                val slop = awaitTouchSlopOrCancellation(down.id) { change, _ -> change.consume() }
-                                if (slop != null) {
-                                    draggingId = songId
-                                    pointerViewportY = slop.position.y
-                                    drag(down.id) { change ->
+                            val original = if (down.position.x >= size.width - handleAreaPx) {
+                                initialItem?.let { latestUpcoming.getOrNull(it.index - latestHeaderCount)?.originalIndex }
+                            } else null
+                            if (original != null) {
+                                var dragStarted = false
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (!change.pressed) break
+                                    if (!dragStarted) {
+                                        val deltaY = change.position.y - down.position.y
+                                        val deltaX = change.position.x - down.position.x
+                                        if (abs(deltaY) > viewConfiguration.touchSlop && abs(deltaY) >= abs(deltaX)) {
+                                            dragStarted = true
+                                            // Use occurrence index for duplicate tracks.
+                                            dragTargetIndex = original
+                                            dragOriginalIndex = original
+                                            pointerViewportY = change.position.y
+                                            change.consume()
+                                            latestReorder()
+                                        } else if (abs(deltaX) > viewConfiguration.touchSlop) break
+                                    } else {
                                         change.consume()
                                         pointerViewportY = change.position.y
                                         latestReorder()
                                     }
                                 }
+                                if (dragStarted) {
+                                    val destination = dragTargetIndex
+                                    if (destination >= 0 && destination != original) {
+                                        playerViewModel.moveQueueItem(latestCurrentIndex + 1 + original,
+                                            latestCurrentIndex + 1 + destination)
+                                    }
+                                }
                             }
-                            draggingId = -1
+                            dragOriginalIndex = -1
+                            dragTargetIndex = -1
                         }
                     }
             ) {
@@ -290,12 +309,11 @@ fun QueueContent(
                             modifier = Modifier.padding(16.dp, 18.dp, 16.dp, 6.dp)
                         )
                     }
-                    // Use an occurrence identity independent of position. An index-based key
-                    // disposes the pointerInput coroutine on every swap, ending the drag.
-                    itemsIndexed(upcoming, key = { index, s ->
-                        "${s.id}:${upcoming.take(index).count { it.id == s.id }}"
-                    }) { _, song ->
-                        val isDragging = draggingId == song.id
+                    // Keys stay fixed throughout each gesture; repeated songs can
+                    // appear multiple times without id collisions.
+                    itemsIndexed(orderedUpcoming, key = { _, entry -> entry.originalIndex }) { _, entry ->
+                        val song = entry.song
+                        val isDragging = dragOriginalIndex == entry.originalIndex
                         val dismissState = rememberSwipeToDismissBoxState(
                             confirmValueChange = { value ->
                                 if (value != SwipeToDismissBoxValue.Settled) {
@@ -317,9 +335,9 @@ fun QueueContent(
                                     Icon(Icons.Default.Delete, contentDescription = uiLocalized("Remove"), tint = Color.White)
                                 }
                             },
-                            gesturesEnabled = draggingId == -1,
+                            gesturesEnabled = dragOriginalIndex == -1,
                             modifier = Modifier.graphicsLayer {
-                                alpha = if (isDragging) 0.16f else 1f
+                                alpha = if (isDragging) 0.28f else 1f
                             },
                         ) {
                             QueueRow(
@@ -335,6 +353,8 @@ fun QueueContent(
                                     SongPlayer.playSong(song.url, context, "song/${song.id}")
                                 },
                                 dragHandle = Modifier,
+                                dropTarget = dragOriginalIndex >= 0 &&
+                                    dragTargetIndex == entry.originalIndex && !isDragging,
                             )
                         }
                     }
@@ -342,8 +362,8 @@ fun QueueContent(
                 item { Spacer(modifier = Modifier.height(40.dp)) }
             }
             // Floating row stays beneath the finger even when its source item is recycled.
-            if (draggingId != -1) {
-                val ghost = queue.firstOrNull { it.id == draggingId }
+            if (dragOriginalIndex >= 0) {
+                val ghost = orderedUpcoming.firstOrNull { it.originalIndex == dragOriginalIndex }?.song
                 if (ghost != null) {
                     Box(
                         modifier = Modifier.fillMaxWidth().offset {
@@ -354,7 +374,7 @@ fun QueueContent(
                     }
                 }
             }
-            if (draggingId == -1) {
+            if (dragOriginalIndex == -1) {
                 com.music.spotui.ui.components.FastScrollbarForLazyList(
                     state = listState,
                     modifier = Modifier.align(Alignment.CenterStart)
@@ -372,6 +392,7 @@ private fun QueueRow(
     onClick: () -> Unit,
     onLongClick: () -> Unit = {},
     dragHandle: Modifier? = null,
+    dropTarget: Boolean = false,
 ) {
     val context = LocalContext.current
     Row(
@@ -379,7 +400,7 @@ private fun QueueRow(
         horizontalArrangement = Arrangement.Start,
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF121212))
+            .background(if (dropTarget) Color(0xFF303D34) else Color(0xFF121212))
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,

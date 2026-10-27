@@ -821,12 +821,13 @@ class Api @Inject constructor(
             com.music.spotui.data.entity.LibraryEntry(
                 spotifyId = pl.id,
                 name = pl.name,
-                subtitle = "Local Playlist • ${pl.songs.size} song" + (if (pl.songs.size == 1) "" else "s"),
+                subtitle = "Lista local • ${pl.songs.size} " + (if (pl.songs.size == 1) "canción" else "canciones"),
                 coverUri = pl.coverUri,
                 isPlaylist = true,
                 isLocal = true,
             )
         }
+        val favoriteEntries = com.music.spotui.data.preferences.FavoritePlaylistsPref.entries(context)
         val podcastEntries = com.music.spotui.data.preferences.SubscribedPodcastPref.getSubscribedPodcasts(context).map { pod ->
             com.music.spotui.data.entity.LibraryEntry(
                 spotifyId = pod.id,
@@ -844,7 +845,7 @@ class Api @Inject constructor(
             val nonLocal = HomeCache.library!!.filterNot { it.isLocal || it.isPodcast }
             val likedAndDownloaded = nonLocal.filter { it.spotifyId == LIKED_SONGS_ID || it.spotifyId == DOWNLOADS_ID }
             val restNonLocal = nonLocal.filterNot { it.spotifyId == LIKED_SONGS_ID || it.spotifyId == DOWNLOADS_ID }
-            val updatedLibrary = deduplicateLibraryEntries(likedAndDownloaded + localEntries + podcastEntries + restNonLocal)
+            val updatedLibrary = deduplicateLibraryEntries(likedAndDownloaded + localEntries + favoriteEntries + podcastEntries + restNonLocal)
             HomeCache.library = updatedLibrary
             emit(Response.Success(updatedLibrary))
         } else {
@@ -876,7 +877,7 @@ class Api @Inject constructor(
                         artists = col.artists,
                     )
                 }
-                val offlineLibrary = deduplicateLibraryEntries(listOf(liked, downloaded) + localEntries + podcastEntries + offlineEntries)
+                val offlineLibrary = deduplicateLibraryEntries(listOf(liked, downloaded) + localEntries + favoriteEntries + podcastEntries + offlineEntries)
                 HomeCache.library = offlineLibrary
                 emit(Response.Success(offlineLibrary))
             } else {
@@ -919,7 +920,7 @@ class Api @Inject constructor(
             coverUri = "",
             isPlaylist = true,
         )
-        val merged = listOf(liked, downloaded) + localEntries + podcastEntries + playlists + albums
+        val merged = listOf(liked, downloaded) + localEntries + favoriteEntries + podcastEntries + playlists + albums
         val offlineCollections = com.music.spotui.data.preferences.OfflineCollectionsPref.getOfflineCollections(context)
         val additional = offlineCollections.filter { col ->
             val cleanColId = cleanId(col.id)

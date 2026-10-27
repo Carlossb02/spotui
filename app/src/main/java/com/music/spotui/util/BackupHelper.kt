@@ -7,6 +7,9 @@ import androidx.documentfile.provider.DocumentFile
 import com.music.spotui.data.api.Api
 import com.music.spotui.data.entity.SongsModel
 import com.music.spotui.data.preferences.BackupPref
+import com.music.spotui.data.preferences.DownloadRestorePref
+import com.music.spotui.data.preferences.FavoritePlaylistsPref
+import com.music.spotui.data.preferences.OfflineCollectionsPref
 import com.music.spotui.data.preferences.LocalPlaylist
 import com.music.spotui.data.preferences.LocalPlaylistPref
 import com.music.spotui.data.preferences.LocalTrack
@@ -35,6 +38,11 @@ import com.music.spotui.data.preferences.setUpdateRepoUrl
 import com.music.spotui.data.preferences.setVideoFallbackEnabled
 import com.music.spotui.data.preferences.setWifiQuality
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -46,10 +54,28 @@ object BackupHelper {
     private const val TAG = "BackupHelper"
     private const val AUTO_BACKUP_FILENAME = "spotui_autobackup.json"
 
+    private val autoBackupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val autoBackupLock = Any()
+    private var scheduledBackup: Job? = null
+    @Volatile private var restorationInProgress = false
+
+    /** Coalesce consecutive edits and downloads into one off-main-thread JSON update. */
+    fun scheduleAutoBackup(context: Context) {
+        if (restorationInProgress || !BackupPref.isAutoBackupEnabled(context) || BackupPref.getDirectoryUri(context).isNullOrBlank()) return
+        val app = context.applicationContext
+        synchronized(autoBackupLock) {
+            scheduledBackup?.cancel()
+            scheduledBackup = autoBackupScope.launch {
+                delay(4000L)
+                performAutoBackup(app)
+            }
+        }
+    }
+
     fun createBackupJson(context: Context): String {
         val root = JSONObject().apply {
             put("app", "spotui")
-            put("version", 1)
+            put("version", 2)
             put("type", "spotui_backup")
             put("timestamp", System.currentTimeMillis())
 
@@ -72,6 +98,7 @@ object BackupHelper {
                                 put("coverUri", song.coverUri)
                                 put("url", song.url)
                                 put("spotifyTrackId", song.spotifyTrackId)
+                                put("isLocalSpotifyTrack", song.isLocalSpotifyTrack)
                                 put("explicit", song.explicit)
                                 put("durationMs", song.durationMs)
                                 put("artistIds", song.artistIds)
@@ -151,6 +178,30 @@ object BackupHelper {
                     })
                 }
                 put("customMetadata", overridesObj)
+
+                // 8. External Spotify playlist favorites (read-only shortcuts).
+                put("favoriteExternalPlaylists", FavoritePlaylistsPref.exportBackup(context))
+
+                // 9. Download manifest: metadata only. Audio is NOT embedded in this JSON.
+                // Keep pending restores in subsequent backups too, until redownload succeeds.
+                put("downloadedTracks", DownloadRestorePref.exportManifest(context))
+                put("downloadedTracksIncludeAudio", false)
+
+                // 10. Groupings for downloaded albums/playlists, also metadata only.
+                val offlineGroups = JSONArray()
+                OfflineCollectionsPref.getStoredCollections(context).forEach { collection ->
+                    offlineGroups.put(JSONObject().apply {
+                        put("id", collection.id)
+                        put("name", collection.name)
+                        put("coverUri", collection.coverUri)
+                        put("artists", collection.artists)
+                        put("isPlaylist", collection.isPlaylist)
+                        val songsArray = JSONArray()
+                        collection.songs.forEach { songsArray.put(DownloadRestorePref.encodeSong(it)) }
+                        put("songs", songsArray)
+                    })
+                }
+                put("offlineCollections", offlineGroups)
             }
             put("data", data)
         }
@@ -167,7 +218,7 @@ object BackupHelper {
             val app = root.optString("app")
             val type = root.optString("type")
             val version = root.optInt("version", -1)
-            if (app == "spotui" && type == "spotui_backup" && version >= 1 && root.has("data")) {
+            if (app == "spotui" && type == "spotui_backup" && version in 1..2 && root.optJSONObject("data") != null) {
                 root
             } else {
                 null
@@ -191,7 +242,8 @@ object BackupHelper {
             }
             if (file == null) return false
 
-            context.contentResolver.openOutputStream(file.uri, "wt")?.use { os ->
+            val stream = context.contentResolver.openOutputStream(file.uri, "wt") ?: return false
+            stream.use { os ->
                 os.write(jsonString.toByteArray(Charsets.UTF_8))
                 os.flush()
             }
@@ -247,6 +299,8 @@ object BackupHelper {
         val root = validateBackupJson(jsonString)
             ?: return@withContext Pair(false, "Invalid backup file: Not a valid Spotui backup")
 
+        restorationInProgress = true
+        val result = try {
         runCatching {
             val data = root.getJSONObject("data")
             var restoredPlaylists = 0
@@ -269,6 +323,7 @@ object BackupHelper {
                             coverUri = s.optString("coverUri"),
                             url = s.getString("url"),
                             spotifyTrackId = s.optString("spotifyTrackId"),
+                            isLocalSpotifyTrack = s.optBoolean("isLocalSpotifyTrack", false),
                             explicit = s.optBoolean("explicit", false),
                             durationMs = s.optInt("durationMs", 0),
                             artistIds = s.optString("artistIds", ""),
@@ -404,13 +459,54 @@ object BackupHelper {
                 }
             }
 
+            // v2 fields are optional: old v1 backups restore exactly as before.
+            var restoredFavoritePlaylists = 0
+            data.optJSONArray("favoriteExternalPlaylists")?.let { entries ->
+                restoredFavoritePlaylists = FavoritePlaylistsPref.restoreBackup(context, entries)
+            }
+
+            var availableAudio = 0
+            var missingAudio = 0
+            data.optJSONArray("downloadedTracks")?.let { manifest ->
+                val counts = DownloadRestorePref.restoreManifest(context, manifest)
+                availableAudio = counts.first
+                missingAudio = counts.second
+            }
+
+            var restoredGroups = 0
+            data.optJSONArray("offlineCollections")?.let { groups ->
+                for (i in 0 until groups.length()) {
+                    val entry = groups.optJSONObject(i) ?: continue
+                    val id = entry.optString("id")
+                    if (id.isBlank()) continue
+                    val songsArray = entry.optJSONArray("songs") ?: JSONArray()
+                    val groupSongs = (0 until songsArray.length()).mapNotNull { index ->
+                        songsArray.optJSONObject(index)?.let(DownloadRestorePref::decodeSong)
+                    }
+                    OfflineCollectionsPref.saveCollection(
+                        context, id, entry.optString("name"),
+                        entry.optString("coverUri"), entry.optString("artists"),
+                        entry.optBoolean("isPlaylist", true), groupSongs,
+                    )
+                    restoredGroups++
+                }
+            }
+
             Api.HomeCache.clear()
-            Pair(true, "Restored $restoredPlaylists playlist(s), $restoredLiked liked song(s), $restoredPodcasts podcast(s), $restoredAltStreams alternative stream(s), $restoredLocalTracks local track(s), and $restoredCustomMeta custom metadata override(s)!")
+            Pair(true, "Restored $restoredPlaylists playlists, $restoredLiked liked songs, " +
+                "$restoredFavoritePlaylists saved external playlists, $restoredGroups offline groups, " +
+                "$availableAudio existing downloads, and $missingAudio tracks awaiting redownload. " +
+                "Audio is not contained in the JSON backup; open Downloaded to redownload missing songs.")
 
         }.getOrElse { e ->
             Log.e(TAG, "Error restoring backup", e)
             Pair(false, "Failed to restore backup: ${e.message}")
         }
+        } finally {
+            restorationInProgress = false
+        }
+        if (result.first) scheduleAutoBackup(context)
+        result
     }
 
     fun getFolderDisplayName(context: Context, dirUriStr: String?): String {

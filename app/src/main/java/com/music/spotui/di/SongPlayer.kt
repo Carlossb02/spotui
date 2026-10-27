@@ -30,6 +30,14 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.text.Normalizer
 import kotlin.math.abs
 import kotlin.math.PI
@@ -1790,12 +1798,46 @@ object SongPlayer {
     private val downloadingSongs =
         java.util.concurrent.ConcurrentHashMap<String, com.music.spotui.data.entity.SongsModel>()
 
+    enum class DownloadStage { QUEUED, DOWNLOADING }
+    data class DownloadQueueEntry(
+        val song: com.music.spotui.data.entity.SongsModel,
+        val progress: Int,
+        val stage: DownloadStage,
+    )
+
+    private val downloadLock = Any()
+    private val queuedDownloads = LinkedHashMap<String, DownloadQueueEntry>()
+    private val downloadJobs = HashMap<String, Job>()
+    private val activeDownloadConnections = java.util.concurrent.ConcurrentHashMap<String, java.net.HttpURLConnection>()
+    private val _downloadQueue = MutableStateFlow<List<DownloadQueueEntry>>(emptyList())
+    /** Includes both active transfers and songs waiting for the two download slots. */
+    val downloadQueue = _downloadQueue.asStateFlow()
+
+    private fun updateDownloadEntry(query: String, transform: (DownloadQueueEntry) -> DownloadQueueEntry) {
+        synchronized(downloadLock) {
+            val existing = queuedDownloads[query] ?: return
+            val next = transform(existing)
+            if (next != existing) {
+                queuedDownloads[query] = next
+                _downloadQueue.value = queuedDownloads.values.toList()
+            }
+        }
+    }
+
     fun isDownloading(query: String): Boolean = downloading.contains(query)
 
     fun downloadProgress(query: String): Int = downloadProgress[query] ?: -1
 
     fun downloadingSnapshot(): List<Pair<com.music.spotui.data.entity.SongsModel, Int>> =
-        downloadingSongs.entries.map { (q, song) -> song to (downloadProgress[q] ?: 0) }
+        downloadQueue.value.map { it.song to it.progress }
+
+    /** Cancels an active transfer or removes a waiting track without affecting others. */
+    fun cancelDownload(query: String) {
+        val job = synchronized(downloadLock) { downloadJobs[query] }
+        job?.cancel(CancellationException("Download cancelled by user"))
+        // Disconnect the HTTP stream so a blocked read can finish promptly.
+        activeDownloadConnections[query]?.disconnect()
+    }
 
     @Volatile var lastDownloadError: String? = null
 
@@ -1811,7 +1853,7 @@ object SongPlayer {
             )
         }
 
-    private fun httpDownloadRanged(url: String, tmpFile: java.io.File, query: String): Boolean {
+    private suspend fun httpDownloadRanged(url: String, tmpFile: java.io.File, query: String): Boolean {
         val chunk = 8L * 1024 * 1024 // 8 MB
         var total = -1L
         var position = 0L
@@ -1819,12 +1861,15 @@ object SongPlayer {
         try {
             java.io.BufferedOutputStream(tmpFile.outputStream()).use { output ->
                 outer@ while (true) {
+                    currentCoroutineContext().ensureActive()
                     val end = if (total > 0) minOf(position + chunk - 1, total - 1) else position + chunk - 1
                     var attempt = 0
                     var fullBody = false
                     while (true) {
+                        currentCoroutineContext().ensureActive()
                         attempt++
                         val conn = openDownloadConn(url)
+                        activeDownloadConnections[query] = conn
                         conn.setRequestProperty("Range", "bytes=$position-$end")
                         try {
                             val code = conn.responseCode
@@ -1841,7 +1886,9 @@ object SongPlayer {
                             conn.inputStream.use { input ->
                                 val buf = ByteArray(64 * 1024)
                                 while (true) {
+                                    currentCoroutineContext().ensureActive()
                                     val r = input.read(buf)
+                                    currentCoroutineContext().ensureActive()
                                     if (r < 0) break
                                     output.write(buf, 0, r)
                                     position += r
@@ -1849,19 +1896,24 @@ object SongPlayer {
                                         val pct = ((position * 100) / total).toInt().coerceIn(0, 100)
                                         if (downloadProgress[query] != pct) {
                                             downloadProgress[query] = pct
+                                            updateDownloadEntry(query) { it.copy(progress = pct) }
                                             onDownloadsChanged?.invoke()
                                         }
                                     }
                                 }
                             }
                             break
+                        } catch (e: CancellationException) {
+                            throw e
                         } catch (e: Exception) {
+                            currentCoroutineContext().ensureActive()
                             Log.w(TAG, "chunk @${position} failed (attempt $attempt): ${e.message}")
                             if (attempt >= 4) {
                                 lastDownloadError = e.message ?: "Connection reset"
                                 return false
                             }
                         } finally {
+                            activeDownloadConnections.remove(query, conn)
                             conn.disconnect()
                         }
                     }
@@ -1870,9 +1922,14 @@ object SongPlayer {
                     if (total < 0) break@outer
                 }
             }
+            currentCoroutineContext().ensureActive()
             downloadProgress[query] = 100
+            updateDownloadEntry(query) { it.copy(progress = 100) }
             return total <= 0 || position >= total
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
             lastDownloadError = e.message ?: "Download error"
             return false
         }
@@ -1882,15 +1939,74 @@ object SongPlayer {
 
     fun downloadAll(songs: List<com.music.spotui.data.entity.SongsModel>, context: Context) {
         val appContext = context.applicationContext
-        scope.launch {
-            songs.forEach { song ->
-                launch {
+        // Register every track immediately, before waiting on the semaphore.
+        // This makes the entire playlist's download queue visible and cancellable.
+        songs.forEach { enqueueDownload(it, appContext) }
+    }
+
+    private fun enqueueDownload(
+        song: com.music.spotui.data.entity.SongsModel,
+        appContext: Context,
+        onComplete: (Boolean) -> Unit = {},
+    ) {
+        val query = song.url
+        if (query.isBlank()) {
+            mainHandler.post { onComplete(false) }
+            return
+        }
+        if (com.music.spotui.data.preferences.isDownloaded(appContext, song.id.toString())) {
+            mainHandler.post { onComplete(true) }
+            return
+        }
+        synchronized(downloadLock) {
+            if (!downloading.add(query)) return // Already queued or downloading
+            downloadingSongs[query] = song
+            downloadProgress[query] = 0
+            queuedDownloads[query] = DownloadQueueEntry(song, 0, DownloadStage.QUEUED)
+            _downloadQueue.value = queuedDownloads.values.toList()
+
+            val job = scope.launch(start = CoroutineStart.LAZY) {
+                var ok = false
+                var cancelled = false
+                try {
                     downloadSemaphore.withPermit {
-                        downloadSongSuspend(song, appContext)
+                        currentCoroutineContext().ensureActive()
+                        updateDownloadEntry(query) { it.copy(stage = DownloadStage.DOWNLOADING) }
+                        ok = downloadSongSuspend(song, appContext)
+                    }
+                } catch (e: CancellationException) {
+                    cancelled = true
+                    Log.d(TAG, "Download cancelled: ${song.title}")
+                } catch (e: Exception) {
+                    lastDownloadError = e.message ?: "Unexpected download error"
+                    Log.e(TAG, "Download failed: ${song.title}", e)
+                } finally {
+                    activeDownloadConnections.remove(query)?.disconnect()
+                    downloading.remove(query)
+                    downloadingSongs.remove(query)
+                    downloadProgress.remove(query)
+                    synchronized(downloadLock) {
+                        downloadJobs.remove(query)
+                        queuedDownloads.remove(query)
+                        _downloadQueue.value = queuedDownloads.values.toList()
+                    }
+                    onDownloadsChanged?.invoke()
+                    withContext(NonCancellable + Dispatchers.Main) {
+                        if (!ok && !cancelled) {
+                            android.widget.Toast.makeText(
+                                appContext,
+                                "Download failed: ${lastDownloadError ?: "unknown reason"}",
+                                android.widget.Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                        onComplete(ok)
                     }
                 }
             }
+            downloadJobs[query] = job
+            job.start()
         }
+        onDownloadsChanged?.invoke()
     }
 
     fun allDownloaded(
@@ -1908,42 +2024,31 @@ object SongPlayer {
         song: com.music.spotui.data.entity.SongsModel,
         appContext: Context,
     ): Boolean {
-        val query = song.url
-        if (query.isBlank() ||
-            com.music.spotui.data.preferences.isDownloaded(appContext, song.id.toString()) ||
-            !downloading.add(query)
-        ) return true
-        downloadingSongs[query] = song
-        downloadProgress[query] = 0
-        onDownloadsChanged?.invoke()
         lastDownloadError = null
-
         var ok = false
         var attempt = 0
-        while (attempt < 3 && !ok) {
-            attempt++
-            ok = runCatching { downloadToFile(song, appContext) }
-                .onFailure { lastDownloadError = it.message ?: "Unexpected error" }
-                .getOrDefault(false)
-            if (!ok && attempt < 3) {
-                delay(1000L)
+        try {
+            while (attempt < 3 && !ok) {
+                currentCoroutineContext().ensureActive()
+                attempt++
+                try {
+                    ok = downloadToFile(song, appContext)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    lastDownloadError = e.message ?: "Unexpected error"
+                }
+                if (!ok && attempt < 3) delay(1000L)
             }
-        }
-
-        downloading.remove(query)
-        downloadProgress.remove(query)
-        downloadingSongs.remove(query)
-        withContext(Dispatchers.Main) {
+            return ok
+        } finally {
+            // A failed or cancelled transfer must not leave a partial download.
             if (!ok) {
-                android.widget.Toast.makeText(
-                    appContext,
-                    "Download failed: ${lastDownloadError ?: "unknown reason"}",
-                    android.widget.Toast.LENGTH_LONG,
-                ).show()
+                val dir = java.io.File(appContext.filesDir, "downloads")
+                listOf("${song.id}.part", "${song.id}.flacpart", "${song.id}.mp3part")
+                    .forEach { name -> runCatching { java.io.File(dir, name).delete() } }
             }
-            onDownloadsChanged?.invoke()
         }
-        return ok
     }
 
     fun downloadSong(
@@ -1951,13 +2056,7 @@ object SongPlayer {
         context: Context,
         onComplete: (Boolean) -> Unit = {},
     ) {
-        val appContext = context.applicationContext
-        scope.launch {
-            val ok = downloadSemaphore.withPermit {
-                downloadSongSuspend(song, appContext)
-            }
-            onComplete(ok)
-        }
+        enqueueDownload(song, context.applicationContext, onComplete)
     }
 
     private suspend fun downloadToFile(
@@ -1971,6 +2070,7 @@ object SongPlayer {
             val flacOk = kotlinx.coroutines.withTimeoutOrNull(45_000) {
                 runCatching { downloadLosslessTrackToFile(song, appContext) }.getOrDefault(false)
             } ?: false
+            currentCoroutineContext().ensureActive()
             if (flacOk) return true
         }
 
@@ -2003,6 +2103,7 @@ object SongPlayer {
                 return false
             }
 
+            currentCoroutineContext().ensureActive()
             if (!tmpFile.renameTo(outFile)) {
                 lastDownloadError = "Couldn't save local alternative file"
                 runCatching { tmpFile.delete() }
@@ -2024,6 +2125,7 @@ object SongPlayer {
             runCatching { tmpFile.delete() }
             return false
         }
+        currentCoroutineContext().ensureActive()
         if (!tmpFile.renameTo(outFile)) {
             lastDownloadError = "Couldn't save file"
             runCatching { tmpFile.delete() }
@@ -2085,11 +2187,13 @@ object SongPlayer {
         } else {
             httpDownloadRanged(streamUrl, tmpFile, song.url)
         }
+        currentCoroutineContext().ensureActive()
         if (!ok) {
             Log.e(TAG, "Lossless download failed for ${song.title}: $lastDownloadError")
             runCatching { tmpFile.delete() }
             return false
         }
+        currentCoroutineContext().ensureActive()
         if (!tmpFile.renameTo(outFile)) {
             runCatching { tmpFile.delete() }
             return false

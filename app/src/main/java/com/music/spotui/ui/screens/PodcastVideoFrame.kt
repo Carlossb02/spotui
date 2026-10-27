@@ -17,6 +17,8 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,6 +27,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material.icons.filled.Forward
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material3.CircularProgressIndicator
@@ -43,6 +47,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import com.music.spotui.MainActivity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -169,10 +174,12 @@ private object PodcastVideoStreams {
 @OptIn(UnstableApi::class)
 object PodcastVideoSession {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
     var activeVideoId by mutableStateOf<String?>(null)
         private set
-    // This is the SAME ExoPlayer instance already owned by SongPlayer/MediaSession.
-    // Never allocate, mute, seek, or release a second decoder here.
+    /** Activity-wide UI state: rotation and a change between mini / expanded player
+     * must never destroy the fullscreen dialog or restart its decoder. */
+    var fullscreen by mutableStateOf(false)
     var player by mutableStateOf<ExoPlayer?>(null)
         private set
     var isLoading by mutableStateOf(false)
@@ -183,41 +190,38 @@ object PodcastVideoSession {
         private set
     var selectedQuality by mutableStateOf("")
         private set
-    // Avoid attaching the intermediate mini/lateral surface when the fullscreen
-    // dialog is transitioning directly into Android's PiP window.
     var enteringPictureInPicture by mutableStateOf(false)
         private set
 
-    fun beginPipHandoff() { enteringPictureInPicture = true }
+    private var resolveJob: Job? = null
+    private var videoClockJob: Job? = null
+    private var surfaceHandoffJob: Job? = null
+    private var appContext: Context? = null
+    private var attachedView: PlayerView? = null
+    private val visibleTargets = LinkedHashMap<PlayerView, Int>()
+    private var isForeground = true
+
+    fun isActive(videoId: String?): Boolean = videoId != null && activeVideoId == videoId
+
+    fun beginPipHandoff() {
+        enteringPictureInPicture = true
+        fullscreen = false
+    }
     fun finishPipHandoff() {
         enteringPictureInPicture = false
         updateSurface()
     }
-    private var resolveJob: Job? = null
-    private var appContext: Context? = null
-    private var attachedView: PlayerView? = null
-    private val visibleTargets = LinkedHashMap<PlayerView, Int>()
-    // Briefly having no surface during fullscreen/mini/PiP hand-off is NOT a
-    // request to disable the video track. Track disabling changes renderer
-    // selection and may rebuffer the *same* ExoPlayer's podcast audio.
-    private var surfaceHandoffJob: Job? = null
-    private var videoTrackIdleJob: Job? = null
-    private var isForeground = true
-    private var videoTrackEnabled: Boolean? = null
-
-    fun isActive(videoId: String?): Boolean = videoId != null && activeVideoId == videoId
 
     fun setEnabled(context: Context, videoId: String, enabled: Boolean) {
         if (!enabled) { stop(); return }
         if (activeVideoId == videoId && (player != null || isLoading)) return
         stop()
         activeVideoId = videoId
-        isLoading = true
-        error = null
         appContext = context.applicationContext
+        isLoading = true
         resolveJob = scope.launch {
             val streams = runCatching { PodcastVideoStreams.resolve(videoId) }
-                .onFailure { Log.w("SpotuiPodcastVideo", "Stream resolution failed", it) }
+                .onFailure { Log.w("SpotuiPodcastVideo", "Video lookup failed", it) }
                 .getOrNull().orEmpty()
             if (activeVideoId != videoId) return@launch
             isLoading = false
@@ -226,9 +230,6 @@ object PodcastVideoSession {
                 return@launch
             }
             qualities = streams
-            // 720p is the HD default on unmetered networks; 480p on cellular.
-            // Higher available renditions (1080p etc.) remain in Settings.
-            // Never limit the whole session to the first 360p muxed URL.
             val metered = runCatching {
                 (appContext?.getSystemService(Context.CONNECTIVITY_SERVICE)
                     as? android.net.ConnectivityManager)?.isActiveNetworkMetered ?: true
@@ -238,29 +239,110 @@ object PodcastVideoSession {
                 ?: streams.filter { it.height in 480..preferred }.maxByOrNull { it.height }
                 ?: streams.firstOrNull { it.height > preferred }
                 ?: streams.maxByOrNull { it.height } ?: return@launch
-            if (!applyQuality(initial)) {
-                error = "No se puede activar el vídeo de este episodio"
-            }
+            if (!applyQuality(initial)) error = "No se puede activar el vídeo de este episodio"
         }
     }
 
+    /**
+     * Video has its OWN muted decoder. The podcast soundtrack is not modified:
+     * do NOT call SongPlayer.setMediaItem/setMediaSource/prepare/seek here.
+     * Switching video mode therefore cannot rebuffer or interrupt podcast audio.
+     * The only clock we follow is SongPlayer's already-running podcast timeline.
+     */
     private fun applyQuality(quality: PodcastVideoQuality): Boolean {
         val context = appContext ?: return false
-        val ok = SongPlayer.enablePodcastVideo(
-            context, quality.url, quality.mimeType, quality.muxed
-        )
-        if (!ok) return false
-        selectedQuality = quality.label
-        player = SongPlayer.exoPlayer
-        videoTrackEnabled = null // New source resets track availability.
-        updateSurface()
-        return true
+        return runCatching {
+            // Use the same YouTube-compatible HTTP identity as the existing
+            // SongPlayer resolver, but never share/reset its audio pipeline.
+            val http = androidx.media3.datasource.DefaultHttpDataSource.Factory()
+                .setUserAgent("com.google.ios.youtube/21.03.1 (iPhone16,2; U; CPU iOS 18_2 like Mac OS X;)")
+                .setAllowCrossProtocolRedirects(true)
+            val companion = player ?: ExoPlayer.Builder(context)
+                .setMediaSourceFactory(
+                    androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+                        androidx.media3.datasource.DefaultDataSource.Factory(context, http)
+                    )
+                )
+                .build().apply {
+                    volume = 0f
+                    trackSelectionParameters = trackSelectionParameters.buildUpon()
+                        .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, true)
+                        .build()
+                    addListener(object : Player.Listener {
+                        override fun onPlayerError(failure: PlaybackException) {
+                            Log.w("SpotuiPodcastVideo", "Video-only playback failed", failure)
+                            PodcastVideoSession.error = "Vídeo no disponible; el audio sigue reproduciéndose"
+                        }
+                    })
+                }.also { player = it }
+            error = null
+            companion.setMediaItem(
+                MediaItem.Builder().setUri(quality.url).setMimeType(quality.mimeType).build()
+            )
+            // ExoPlayer permits an initial seek while the new video is preparing.
+            companion.seekTo(SongPlayer.getCurrentPosition().coerceAtLeast(0L))
+            companion.prepare()
+            companion.playWhenReady = SongPlayer.isPlaying()
+            selectedQuality = quality.label
+            startClockSync()
+            updateSurface()
+            true
+        }.onFailure { Log.e("SpotuiPodcastVideo", "Could not prepare video", it) }
+            .getOrDefault(false)
+    }
+
+    private var lastSeekTimestamp = 0L
+
+    private fun startClockSync() {
+        videoClockJob?.cancel()
+        videoClockJob = scope.launch {
+            while (isActive(activeVideoId)) {
+                val companion = player ?: break
+                val shouldPlay = SongPlayer.isPlaying() &&
+                    (isForeground || PodcastVideoPipState.isInPictureInPicture)
+                if (companion.playWhenReady != shouldPlay) companion.playWhenReady = shouldPlay
+
+                if (companion.playbackState == Player.STATE_READY) {
+                    val audioTime = SongPlayer.getCurrentPosition().coerceAtLeast(0L)
+                    val videoTime = companion.currentPosition.coerceAtLeast(0L)
+                    val diff = audioTime - videoTime
+                    val absDiff = kotlin.math.abs(diff)
+                    val now = android.os.SystemClock.elapsedRealtime()
+
+                    // Only hard seek if drift is massive (>1500ms) AND we haven't seeked in the last 1200ms.
+                    if (absDiff > 1500L && (now - lastSeekTimestamp > 1200L)) {
+                        lastSeekTimestamp = now
+                        if (companion.playbackParameters.speed != 1.0f) {
+                            companion.playbackParameters = androidx.media3.common.PlaybackParameters(1.0f)
+                        }
+                        companion.seekTo(audioTime)
+                    } else if (absDiff > 60L && shouldPlay) {
+                        val speed = when {
+                            diff > 400L -> 1.08f
+                            diff > 150L -> 1.05f
+                            diff > 60L -> 1.03f
+                            diff < -400L -> 0.92f
+                            diff < -150L -> 0.95f
+                            else -> 0.97f
+                        }
+                        if (companion.playbackParameters.speed != speed) {
+                            companion.playbackParameters = androidx.media3.common.PlaybackParameters(speed)
+                        }
+                    } else {
+                        if (companion.playbackParameters.speed != 1.0f) {
+                            companion.playbackParameters = androidx.media3.common.PlaybackParameters(1.0f)
+                        }
+                    }
+                }
+                delay(120L)
+            }
+        }
     }
 
     fun selectQuality(height: Int) {
         val target = qualities.firstOrNull { it.height == height } ?: return
         if (target.label == selectedQuality) return
-        if (!applyQuality(target)) error = "No se pudo cambiar la calidad"
+        if (!applyQuality(target)) error = "No se pudo cambiar la calidad de vídeo"
     }
 
     fun stopIfDifferent(currentPodcastId: String?) {
@@ -268,17 +350,17 @@ object PodcastVideoSession {
     }
 
     fun stop() {
-        resolveJob?.cancel()
-        resolveJob = null
-        surfaceHandoffJob?.cancel()
-        videoTrackIdleJob?.cancel()
+        resolveJob?.cancel(); resolveJob = null
+        videoClockJob?.cancel(); videoClockJob = null
+        surfaceHandoffJob?.cancel(); surfaceHandoffJob = null
         attachedView?.player = null
         attachedView = null
         visibleTargets.clear()
-        videoTrackEnabled = null
+        player?.release()
         player = null
-        SongPlayer.disablePodcastVideo()
+        // Do NOT reset SongPlayer's audio media source on video disable.
         activeVideoId = null
+        fullscreen = false
         isLoading = false
         error = null
         qualities = emptyList()
@@ -289,7 +371,9 @@ object PodcastVideoSession {
 
     fun sync(foreground: Boolean) {
         isForeground = foreground
-        updateTrackState()
+        if (!foreground && !PodcastVideoPipState.isInPictureInPicture) {
+            player?.playWhenReady = false
+        }
     }
 
     fun attach(view: PlayerView, priority: Int) {
@@ -304,60 +388,22 @@ object PodcastVideoSession {
             updateSurface()
             return
         }
-        // A destination surface generally appears a frame or two after its
-        // predecessor is disposed. Retain the old target briefly rather than
-        // tearing down the decoder midway through a navigation animation.
         surfaceHandoffJob?.cancel()
-        if (visibleTargets.isNotEmpty()) {
+        if (visibleTargets.isNotEmpty()) updateSurface()
+        else surfaceHandoffJob = scope.launch {
+            delay(220L)
             updateSurface()
-        } else {
-            surfaceHandoffJob = scope.launch {
-                delay(220L)
-                updateSurface()
-            }
         }
     }
 
     private fun updateSurface() {
         val target = visibleTargets.entries.maxByOrNull { it.value }?.key
-        val commonPlayer = player ?: return
+        val companion = player ?: return
         if (target !== attachedView) {
-            // Media3 binds the *new* target before detaching the old one.
-            PlayerView.switchTargetView(commonPlayer, attachedView, target)
+            PlayerView.switchTargetView(companion, attachedView, target)
             attachedView = target
         }
-        updateTrackState()
     }
-
-    private fun updateTrackState() {
-        if (player == null) return
-        val hasSurface = visibleTargets.isNotEmpty() || attachedView != null ||
-            PodcastVideoPipState.isInPictureInPicture
-        val shouldEnable = hasSurface && (isForeground || PodcastVideoPipState.isInPictureInPicture)
-        if (shouldEnable) {
-            videoTrackIdleJob?.cancel()
-            videoTrackIdleJob = null
-            setVideoTrackIfChanged(true)
-        } else if (videoTrackEnabled != false && videoTrackIdleJob == null) {
-            // Keep the selected video track throughout UI transitions; only
-            // disable it once playback is genuinely offscreen for 1.5 seconds.
-            videoTrackIdleJob = scope.launch {
-                delay(1_500L)
-                videoTrackIdleJob = null
-                if ((!isForeground && !PodcastVideoPipState.isInPictureInPicture) ||
-                    (visibleTargets.isEmpty() && attachedView == null)) {
-                    setVideoTrackIfChanged(false)
-                }
-            }
-        }
-    }
-
-    private fun setVideoTrackIfChanged(enabled: Boolean) {
-        if (videoTrackEnabled == enabled) return
-        videoTrackEnabled = enabled
-        SongPlayer.enablePodcastVideoTrack(enabled)
-    }
-
 }
 
 /** Display surface only: creating or destroying this composable never restarts the video. */
@@ -378,7 +424,7 @@ private fun VideoSurface(modifier: Modifier = Modifier, priority: Int = 1) {
             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
             setArtworkDisplayMode(PlayerView.ARTWORK_DISPLAY_MODE_OFF)
-            setBackgroundColor(android.graphics.Color.BLACK)
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
         }
     }
     // AndroidView must attach to its parent *before* Media3 receives its
@@ -401,17 +447,6 @@ fun PodcastVideoFrame(
 ) {
     val error = PodcastVideoSession.error
     val active = PodcastVideoSession.isActive(videoId)
-    var fullscreen by remember(videoId) { mutableStateOf(false) }
-    var fullscreenContentVisible by remember(videoId) { mutableStateOf(false) }
-    val fullscreenTransitionScope = rememberCoroutineScope()
-    fun dismissFullscreen() {
-        fullscreenContentVisible = false
-        fullscreenTransitionScope.launch {
-            delay(230L) // Let the exit fade finish before removing the video view.
-            fullscreen = false
-        }
-    }
-    val activity = LocalContext.current.spotuiActivity()
     Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
         when {
             !active -> Unit
@@ -421,223 +456,304 @@ fun PodcastVideoFrame(
                     TextButton(onClick = onUseAudio) { Text(uiLocalized("Continuar solo con audio")) }
                 }
             }
-            fullscreen || PodcastVideoSession.enteringPictureInPicture -> Unit
-                // Do not briefly attach the mini/lateral view between fullscreen and PiP.
-            else -> VideoSurface(Modifier.fillMaxSize(), priority = if (compact) 0 else surfacePriority)
+            PodcastVideoSession.fullscreen || PodcastVideoSession.enteringPictureInPicture -> Unit
+            else -> VideoSurface(
+                Modifier.fillMaxSize(), priority = if (compact) 0 else surfacePriority
+            )
         }
-        if (active && !compact && error == null) {
+        if (active && !compact && error == null && !PodcastVideoSession.fullscreen) {
             IconButton(
-                onClick = { fullscreen = true },
+                onClick = { PodcastVideoSession.fullscreen = true },
                 modifier = Modifier.align(Alignment.BottomEnd)
-                    .background(Color.Black.copy(alpha = 0.42f), RoundedCornerShape(8.dp))
-            ) { Icon(Icons.Default.Fullscreen, contentDescription = uiLocalized("Vídeo a pantalla completa"), tint = Color.White) }
+                    .background(Color.Black.copy(alpha = 0.50f), RoundedCornerShape(12.dp))
+            ) {
+                Icon(Icons.Default.Fullscreen,
+                    contentDescription = uiLocalized("Vídeo a pantalla completa"), tint = Color.White)
+            }
         }
     }
-    if (fullscreen && active && !PodcastVideoPipState.isInPictureInPicture) {
-        LaunchedEffect(videoId) {
-            // Allow the dialog window to be attached before animating the content.
-            withFrameNanos { }
-            fullscreenContentVisible = true
+}
+
+/** Hosted ONCE at the activity root, not inside a portrait/landscape player branch.
+ * Recomposition on rotation cannot close or relaunch this fullscreen player. */
+@Composable
+fun PodcastFullscreenOverlay() {
+    val videoId = PodcastVideoSession.activeVideoId ?: return
+    if (!PodcastVideoSession.fullscreen || PodcastVideoPipState.isInPictureInPicture) return
+
+    val activity = LocalContext.current.spotuiActivity()
+    var positionMs by remember(videoId) { mutableLongStateOf(0L) }
+    var durationMs by remember(videoId) { mutableLongStateOf(0L) }
+    var audioPlaying by remember(videoId) { mutableStateOf(false) }
+    var controlsVisible by remember(videoId) { mutableStateOf(true) }
+    var scrubbing by remember(videoId) { mutableStateOf(false) }
+    var scrubFraction by remember(videoId) { mutableFloatStateOf(0f) }
+    var qualityMenuOpen by remember(videoId) { mutableStateOf(false) }
+    var interactionCount by remember(videoId) { mutableIntStateOf(0) }
+    var tapDirection by remember(videoId) { mutableIntStateOf(0) }
+    var tapSequence by remember(videoId) { mutableIntStateOf(0) }
+    val glass = Color(0xFF24272B).copy(alpha = 0.76f)
+    val lime = Color(0xFF1ED760)
+
+    fun showControls() { controlsVisible = true; interactionCount++ }
+    fun skip(ms: Long) {
+        val current = SongPlayer.getCurrentPosition().coerceAtLeast(0L)
+        val duration = SongPlayer.getDuration()
+        val next = (current + ms).coerceAtLeast(0L)
+        SongPlayer.seekTo(if (duration > 0) next.coerceAtMost(duration) else next)
+        showControls()
+    }
+
+    LaunchedEffect(controlsVisible, interactionCount, scrubbing, qualityMenuOpen) {
+        if (controlsVisible && !scrubbing && !qualityMenuOpen) {
+            delay(3_500L)
+            controlsVisible = false
         }
-        // Controls operate on the *same* Media3 A/V timeline. The surface
-        // hand-off must never pause/reseek the underlying session.
-        var positionMs by remember(videoId) { mutableLongStateOf(0L) }
-        var durationMs by remember(videoId) { mutableLongStateOf(0L) }
-        var audioPlaying by remember(videoId) { mutableStateOf(false) }
-        var scrubbing by remember(videoId) { mutableStateOf(false) }
-        var scrubFraction by remember(videoId) { mutableFloatStateOf(0f) }
-        var controlsVisible by remember(videoId) { mutableStateOf(true) }
-        var qualityMenuOpen by remember(videoId) { mutableStateOf(false) }
-        var interactionCount by remember(videoId) { mutableIntStateOf(0) }
-        fun refreshControls() { controlsVisible = true; interactionCount++ }
-        // Time out only after the LAST user interaction; scrubbing never hides controls.
-        LaunchedEffect(controlsVisible, interactionCount, scrubbing) {
-            if (controlsVisible && !scrubbing) {
-                delay(3_000L)
-                controlsVisible = false
-            }
+    }
+    LaunchedEffect(tapSequence) {
+        if (tapSequence > 0) {
+            delay(700L)
+            tapDirection = 0
         }
-        LaunchedEffect(fullscreen, active, videoId) {
-            while (fullscreen && active) {
-                positionMs = SongPlayer.getCurrentPosition().coerceAtLeast(0L)
-                durationMs = SongPlayer.getDuration().coerceAtLeast(0L)
-                audioPlaying = SongPlayer.isPlaying()
-                delay(350L)
-            }
+    }
+    LaunchedEffect(videoId) {
+        while (PodcastVideoSession.isActive(videoId) && PodcastVideoSession.fullscreen) {
+            positionMs = SongPlayer.getCurrentPosition().coerceAtLeast(0L)
+            durationMs = SongPlayer.getDuration().coerceAtLeast(0L)
+            audioPlaying = SongPlayer.isPlaying()
+            delay(250L)
         }
-        Dialog(
-            onDismissRequest = { dismissFullscreen() },
-            properties = DialogProperties(
-                usePlatformDefaultWidth = false,
-                decorFitsSystemWindows = false
-            )
-        ) {
-            // Keep the dialog window at a fixed size during its fade/scale.
-            Box(Modifier.fillMaxSize().background(Color.Black)) {
-            AnimatedVisibility(
-                visible = fullscreenContentVisible,
-                modifier = Modifier.fillMaxSize(),
-                enter = fadeIn(tween(220)) + scaleIn(
-                    initialScale = 0.985f,
-                    animationSpec = tween(270, easing = FastOutSlowInEasing)
-                ),
-                exit = fadeOut(tween(210)) + scaleOut(
-                    targetScale = 0.985f,
-                    animationSpec = tween(220, easing = FastOutSlowInEasing)
-                )
-            ) {
-            // BoxWithConstraints uses BOTH available dimensions and safe drawing
-            // insets, so 16:9 episodes never overflow tall/narrow devices.
-            BoxWithConstraints(
-                modifier = Modifier.fillMaxSize().background(Color.Black).safeDrawingPadding(),
-                contentAlignment = Alignment.Center
-            ) {
-                val videoSize = PodcastVideoSession.player?.videoSize
-                val videoRatio = if (videoSize != null && videoSize.width > 0 && videoSize.height > 0) {
-                    (videoSize.width.toFloat() / videoSize.height.toFloat() *
-                        videoSize.pixelWidthHeightRatio).coerceIn(0.35f, 3.5f)
-                } else 16f / 9f
-                val fittedWidth = minOf(maxWidth, maxHeight * videoRatio)
-                val fittedHeight = fittedWidth / videoRatio
-                Box(
-                    modifier = Modifier.width(fittedWidth).height(fittedHeight),
-                    contentAlignment = Alignment.Center
-                ) {
-                    // Reattach the ONE persistent ExoPlayer surface at priority 3.
-                    // The session and playback position survive dialog dismissal.
-                    VideoSurface(Modifier.fillMaxSize(), priority = 3)
+    }
+
+    Dialog(
+        onDismissRequest = { PodcastVideoSession.fullscreen = false },
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        // Fullscreen is restricted to this dialog. Restore app system bars on exit.
+        val view = androidx.compose.ui.platform.LocalView.current
+        androidx.compose.runtime.DisposableEffect(view, activity) {
+            // The DialogWindowProvider may be several parents above LocalView.
+            var dialogWindow: android.view.Window? = null
+            var node: android.view.View? = view
+            while (node != null && dialogWindow == null) {
+                if (node is androidx.compose.ui.window.DialogWindowProvider) {
+                    dialogWindow = node.window
+                    break
                 }
-                // A transparent layer above AndroidView catches taps even when
-                // PlayerView consumes MotionEvents. Buttons sit above this layer.
-                Box(
-                    Modifier.fillMaxSize().clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {
-                        controlsVisible = !controlsVisible
-                        interactionCount++
-                    }
+                val parent = node.parent
+                if (parent is androidx.compose.ui.window.DialogWindowProvider) {
+                    dialogWindow = parent.window
+                    break
+                }
+                node = parent as? android.view.View
+            }
+            dialogWindow?.addFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            dialogWindow?.let { androidx.core.view.WindowCompat.setDecorFitsSystemWindows(it, false) }
+            activity?.let {
+                androidx.core.view.WindowInsetsControllerCompat(it.window, it.window.decorView)
+                    .hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+            }
+            onDispose {
+                dialogWindow?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                activity?.let {
+                    androidx.core.view.WindowInsetsControllerCompat(it.window, it.window.decorView)
+                        .show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+                }
+            }
+        }
+
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            // Media3's FIT resize mode maximizes 16:9 inside any orientation
+            // without cropping; no safeDrawingPadding shrinks the video image.
+            VideoSurface(Modifier.fillMaxSize(), priority = 3)
+
+            // The transparent gesture layer sits ABOVE AndroidView to receive
+            // single and double taps. Buttons and slider are on top of it.
+            Box(
+                Modifier.fillMaxSize().pointerInput(videoId) {
+                    detectTapGestures(
+                        onTap = {
+                            controlsVisible = !controlsVisible
+                            interactionCount++
+                        },
+                        onDoubleTap = { offset ->
+                            val backwards = offset.x < size.width / 2f
+                            skip(if (backwards) -15_000L else 15_000L)
+                            tapDirection = if (backwards) -1 else 1
+                            tapSequence++
+                        }
+                    )
+                }
+            )
+
+            AnimatedVisibility(
+                visible = tapDirection != 0,
+                enter = fadeIn(tween(130)), exit = fadeOut(tween(270)),
+                modifier = Modifier.align(
+                    if (tapDirection < 0) Alignment.CenterStart else Alignment.CenterEnd
                 )
-                AnimatedVisibility(
-                    visible = controlsVisible,
-                    enter = fadeIn(animationSpec = tween(260)),
-                    exit = fadeOut(animationSpec = tween(260)),
-                    modifier = Modifier.align(Alignment.TopEnd)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 24.dp)
+                        .background(glass, RoundedCornerShape(32.dp))
+                        .padding(horizontal = 19.dp, vertical = 13.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        painter = painterResource(id = if (tapDirection < 0) R.drawable.ic_replay_15 else R.drawable.ic_forward_15),
+                        contentDescription = null, tint = lime, modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("15 s", color = Color.White, fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            AnimatedVisibility(
+                visible = controlsVisible,
+                enter = fadeIn(tween(180)), exit = fadeOut(tween(200)),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Box(Modifier.fillMaxSize()) {
+                    // Readable floating controls, not an opaque controls panel.
+                    Box(
+                        Modifier.fillMaxWidth().height(110.dp)
+                            .background(Brush.verticalGradient(
+                                listOf(Color.Black.copy(alpha = .57f), Color.Transparent)
+                            ))
+                            .align(Alignment.TopCenter)
+                    )
+                    Row(
+                        Modifier.align(Alignment.TopEnd)
+                            .padding(top = 14.dp, end = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
                         Box {
-                            IconButton(onClick = { qualityMenuOpen = true; refreshControls() },
-                                modifier = Modifier.background(Color.Black.copy(alpha = 0.68f), CircleShape)) {
-                                Icon(Icons.Default.Settings,
-                                    contentDescription = "Calidad de vídeo: ${PodcastVideoSession.selectedQuality}",
-                                    tint = Color.White)
+                            IconButton(
+                                onClick = { qualityMenuOpen = true; showControls() },
+                                modifier = Modifier.background(glass, CircleShape)
+                            ) {
+                                Icon(Icons.Default.Settings, "Calidad de vídeo", tint = Color.White)
                             }
-                            DropdownMenu(expanded = qualityMenuOpen, onDismissRequest = { qualityMenuOpen = false }) {
+                            DropdownMenu(
+                                expanded = qualityMenuOpen,
+                                onDismissRequest = { qualityMenuOpen = false },
+                                modifier = Modifier.background(Color(0xFF24272B))
+                            ) {
                                 PodcastVideoSession.qualities.forEach { quality ->
                                     DropdownMenuItem(
-                                        text = { Text(quality.label + if (quality.label == PodcastVideoSession.selectedQuality) " ✓" else "") },
+                                        text = {
+                                            Text(
+                                                quality.label + if (quality.label == PodcastVideoSession.selectedQuality) " ✓" else "",
+                                                color = Color.White
+                                            )
+                                        },
                                         onClick = {
                                             PodcastVideoSession.selectQuality(quality.height)
                                             qualityMenuOpen = false
-                                            refreshControls()
+                                            showControls()
                                         }
                                     )
                                 }
                             }
                         }
-                        Spacer(Modifier.width(8.dp))
                         if (activity != null && PodcastVideoSession.player != null) {
                             IconButton(
                                 onClick = {
-                                    refreshControls()
-                                    // Dismiss the separate Dialog window before Android
-                                    // switches the Activity into its PiP task window.
-                                    PodcastVideoSession.beginPipHandoff()
-                                    fullscreenContentVisible = false
-                                    fullscreen = false
-                                    activity.window.decorView.post {
-                                        activity.enterPodcastPictureInPicture()
-                                    }
+                                    activity.enterPodcastPictureInPicture()
                                 },
-                                modifier = Modifier.background(Color.Black.copy(alpha = 0.68f), CircleShape)
+                                modifier = Modifier.background(glass, CircleShape)
                             ) {
                                 Icon(Icons.Default.PictureInPictureAlt,
-                                    contentDescription = uiLocalized("Picture-in-Picture"), tint = Color.White)
+                                    contentDescription = "Picture-in-Picture", tint = Color.White)
                             }
-                            Spacer(Modifier.width(8.dp))
                         }
                         IconButton(
-                            onClick = { dismissFullscreen() },
-                            modifier = Modifier.background(Color.Black.copy(alpha = 0.68f), CircleShape)
+                            onClick = { PodcastVideoSession.fullscreen = false },
+                            modifier = Modifier.background(glass, CircleShape)
                         ) {
-                            Icon(Icons.Default.Close, contentDescription = uiLocalized("Cerrar vídeo a pantalla completa"), tint = Color.White)
+                            Icon(Icons.Default.Close,
+                                contentDescription = "Salir de pantalla completa", tint = Color.White)
                         }
                     }
-                }
-                AnimatedVisibility(
-                    visible = controlsVisible,
-                    enter = fadeIn(animationSpec = tween(260)),
-                    exit = fadeOut(animationSpec = tween(260)),
-                    modifier = Modifier.align(Alignment.BottomCenter)
-                ) {
-                Column(
-                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                        .background(Brush.verticalGradient(
-                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.86f), Color.Black)
-                        ))
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    val validDuration = durationMs > 0L
-                    val fraction = if (scrubbing) scrubFraction else if (validDuration)
-                        (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-                    else 0f
-                    Slider(
-                        value = fraction,
-                        onValueChange = { scrubFraction = it; scrubbing = true; refreshControls() },
-                        onValueChangeFinished = {
-                            if (validDuration) SongPlayer.seekTo((scrubFraction * durationMs).toLong())
-                            refreshControls()
-                            scrubbing = false
-                        },
-                        enabled = validDuration,
-                        modifier = Modifier.fillMaxWidth().height(35.dp)
-                    )
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(formatPodcastTime(if (scrubbing) (scrubFraction * durationMs).toLong() else positionMs),
-                            color = Color.White, fontSize = 12.sp)
-                        Text(formatPodcastTime(durationMs), color = Color.White, fontSize = 12.sp)
-                    }
+
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
+                        Modifier.align(Alignment.Center)
+                            .padding(horizontal = 20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(26.dp)
                     ) {
-                        TextButton(onClick = { refreshControls(); SongPlayer.seekTo((SongPlayer.getCurrentPosition() - 15_000L).coerceAtLeast(0L)) }) {
-                            Text(uiLocalized("↶15"), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                        IconButton(onClick = { skip(-15_000L) },
+                            modifier = Modifier.size(58.dp).background(glass, CircleShape)) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_replay_15),
+                                contentDescription = "Retroceder 15 segundos",
+                                tint = Color.White, modifier = Modifier.size(28.dp)
+                            )
                         }
                         IconButton(
-                            onClick = { refreshControls(); SongPlayer.togglePlay() },
-                            modifier = Modifier.size(56.dp).background(Color.White, CircleShape)
+                            onClick = { SongPlayer.togglePlay(); showControls() },
+                            modifier = Modifier.size(74.dp)
+                                .background(Color.White.copy(alpha = 0.94f), CircleShape)
                         ) {
-                            Icon(if (audioPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (audioPlaying) "Pausar episodio" else "Reanudar episodio",
-                                tint = Color.Black, modifier = Modifier.size(32.dp))
+                            Icon(
+                                if (audioPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = if (audioPlaying) "Pausar" else "Reproducir",
+                                tint = Color.Black, modifier = Modifier.size(38.dp)
+                            )
                         }
-                        TextButton(onClick = {
-                            refreshControls()
-                            val end = SongPlayer.getDuration()
-                            val next = SongPlayer.getCurrentPosition() + 15_000L
-                            SongPlayer.seekTo(if (end > 0L) next.coerceAtMost(end) else next)
-                        }) {
-                            Text(uiLocalized("15↷"), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                        IconButton(onClick = { skip(15_000L) },
+                            modifier = Modifier.size(58.dp).background(glass, CircleShape)) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_forward_15),
+                                contentDescription = "Avanzar 15 segundos",
+                                tint = Color.White, modifier = Modifier.size(28.dp)
+                            )
                         }
                     }
-                }
+
+                    Column(
+                        Modifier.align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .background(Brush.verticalGradient(
+                                listOf(Color.Transparent, Color.Black.copy(alpha = .75f))
+                            ))
+                            .navigationBarsPadding()
+                            .padding(start = 22.dp, end = 22.dp, top = 18.dp, bottom = 12.dp)
+                    ) {
+                        val validDuration = durationMs > 0L
+                        val fraction = if (scrubbing) scrubFraction else if (validDuration)
+                            (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
+                        Slider(
+                            value = fraction,
+                            onValueChange = { scrubFraction = it; scrubbing = true; showControls() },
+                            onValueChangeFinished = {
+                                if (validDuration) SongPlayer.seekTo((scrubFraction * durationMs).toLong())
+                                scrubbing = false
+                                showControls()
+                            },
+                            enabled = validDuration,
+                            modifier = Modifier.fillMaxWidth().height(32.dp),
+                            colors = androidx.compose.material3.SliderDefaults.colors(
+                                thumbColor = lime, activeTrackColor = lime,
+                                inactiveTrackColor = Color.White.copy(alpha = .35f)
+                            )
+                        )
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(formatPodcastTime(if (scrubbing) (scrubFraction * durationMs).toLong() else positionMs),
+                                color = Color.White, fontSize = 12.sp)
+                            Text(formatPodcastTime(durationMs),
+                                color = Color.White.copy(alpha = .8f), fontSize = 12.sp)
+                        }
+                    }
                 }
             }
-            } // AnimatedVisibility
-            } // Fixed-size dialog container
         }
     }
 }

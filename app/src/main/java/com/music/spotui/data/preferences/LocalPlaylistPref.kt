@@ -82,6 +82,18 @@ object LocalPlaylistPref {
         return playlist
     }
 
+    /** Create a local playlist with the supplied tracks. No Spotify write requests. */
+    fun createPlaylistWithSongs(context: Context, name: String, songs: List<SongsModel>): LocalPlaylist {
+        val playlist = LocalPlaylist(
+            id = "local_pl_" + System.currentTimeMillis(),
+            name = name,
+            coverUri = songs.firstOrNull()?.coverUri.orEmpty(),
+            songs = songs,
+        )
+        savePlaylist(context, playlist)
+        return playlist
+    }
+
     fun savePlaylist(context: Context, playlist: LocalPlaylist) {
         val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         val existingIds = getPlaylistIds(context).toMutableList()
@@ -90,6 +102,7 @@ object LocalPlaylistPref {
             savePlaylistIds(context, existingIds)
         }
         prefs.edit().putString(playlist.id, playlist.toJson()).apply()
+        com.music.spotui.util.BackupHelper.scheduleAutoBackup(context)
     }
 
     fun getLocalPlaylists(context: Context): List<LocalPlaylist> {
@@ -196,6 +209,7 @@ object LocalPlaylistPref {
         val existingIds = getPlaylistIds(context).toMutableList()
         existingIds.remove(playlistId)
         savePlaylistIds(context, existingIds)
+        com.music.spotui.util.BackupHelper.scheduleAutoBackup(context)
     }
 
     fun updateSongInPlaylists(context: Context, targetSong: SongsModel, newTitle: String, newArtist: String, newAlbum: String, newCoverUri: String) {

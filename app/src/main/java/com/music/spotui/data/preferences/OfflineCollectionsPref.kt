@@ -123,6 +123,11 @@ object OfflineCollectionsPref {
         return result
     }
 
+    /** Saved grouping metadata, including groups with no audio currently on disk. */
+    fun getStoredCollections(context: Context): List<OfflineCollection> =
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE).all.values
+            .mapNotNull { (it as? String)?.let(::parseCollection) }
+
     fun getOfflineCollections(context: Context): List<OfflineCollection> {
         val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         val allCollections = prefs.all.values.mapNotNull { (it as? String)?.let { json ->

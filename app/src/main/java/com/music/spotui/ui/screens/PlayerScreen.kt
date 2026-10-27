@@ -26,6 +26,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -53,11 +54,23 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AddCircle
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.PlaylistAdd
+import androidx.compose.material.icons.outlined.QueueMusic
+import androidx.compose.material.icons.outlined.Album
+import androidx.compose.material.icons.outlined.People
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Favorite
@@ -68,6 +81,7 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
@@ -107,6 +121,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalDensity
@@ -2292,14 +2307,38 @@ fun PlayerOptionsSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF1A1A1A),
-        dragHandle = null
+        sheetGesturesEnabled = false,
+        containerColor = Color(0xFF1D1D1D),
+        shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+        dragHandle = {
+            var downwardDrag = 0f
+            Box(Modifier.fillMaxWidth()
+                .pointerInput(onDismiss) {
+                    detectVerticalDragGestures(
+                        onDragStart = { downwardDrag = 0f },
+                        onDragEnd = { if (downwardDrag > 60f) onDismiss() },
+                        onVerticalDrag = { change, amount ->
+                            downwardDrag += amount
+                            change.consume()
+                        },
+                    )
+                }
+                .clickable { onDismiss() }
+                .padding(top = 9.dp, bottom = 10.dp),
+                contentAlignment = Alignment.Center) {
+                Box(Modifier.width(32.dp).height(4.dp).clip(RoundedCornerShape(3.dp))
+                    .background(Color(0xFF666666)))
+            }
+        }
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.86f).dp)
+                .then(if (!showYouTubeSearch && !showAlternativeStream)
+                    Modifier.verticalScroll(rememberScrollState()) else Modifier)
                 .navigationBarsPadding()
-                .padding(bottom = 12.dp)
+                .padding(bottom = 28.dp)
         ) {
             if (showYouTubeSearch) {
                 YouTubeSearchView(
@@ -2368,12 +2407,12 @@ fun PlayerOptionsSheet(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp)
+                        .padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 22.dp)
                 ) {
                     GlideImage(
                         modifier = Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(4.dp)),
+                            .size(60.dp)
+                            .clip(RoundedCornerShape(5.dp)),
                         model = cover,
                         contentScale = ContentScale.Crop,
                         contentDescription = ""
@@ -2383,24 +2422,24 @@ fun PlayerOptionsSheet(
                         Text(
                             title,
                             color = Color.White,
-                            fontSize = 15.sp,
+                            fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                         Text(
                             singer,
-                            color = Color.Gray,
-                            fontSize = 13.sp,
+                            color = Color(0xFFB3B3B3),
+                            fontSize = 15.sp,
                             maxLines = 1,
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                     }
                 }
-                androidx.compose.material3.HorizontalDivider(color = Color(0xFF2A2A2A))
+                androidx.compose.material3.HorizontalDivider(color = Color(0xFF343434))
 
                 PlayerMenuRow(
-                    icon = Icons.Default.Share,
+                    icon = Icons.Outlined.Share,
                     label = uiLocalized("Share")
                 ) {
                     val shareText = currentSong?.spotifyTrackId?.takeIf { it.isNotBlank() }
@@ -2412,6 +2451,53 @@ fun PlayerOptionsSheet(
                     }
                     context.startActivity(Intent.createChooser(send, "Share"))
                     onDismiss()
+                }
+                PlayerMenuRow(
+                    icon = Icons.Outlined.AddCircle,
+                    label = uiLocalized("Add to playlist"),
+                    enabled = currentSong != null,
+                    trailingArrow = true,
+                ) {
+                    showSavedIn = true
+                }
+                PlayerMenuRow(
+                    icon = Icons.Outlined.PlaylistAdd,
+                    label = uiLocalized("Add to queue"),
+                    enabled = currentSong != null
+                ) {
+                    currentSong?.let { playerViewModel.addToQueue(it) }
+                    onDismiss()
+                }
+                PlayerMenuRow(
+                    icon = Icons.Outlined.QueueMusic,
+                    label = uiLocalized("View queue")
+                ) {
+                    onDismiss()
+                    onOpenQueue()
+                }
+                // Use the track's REAL album (currentSongAlbum is the playing
+                // context — a playlist name would resolve to garbage).
+                val realAlbum = currentSong?.album?.ifBlank { null } ?: album
+                PlayerMenuRow(
+                    icon = Icons.Outlined.Album,
+                    label = uiLocalized("Go to album"),
+                    enabled = realAlbum.isNotBlank()
+                ) {
+                    onDismiss()
+                    navController.navigate(albumRoute(realAlbum, singer))
+                }
+                PlayerMenuRow(
+                    icon = Icons.Outlined.People,
+                    label = uiLocalized("Go to artist"),
+                    enabled = singer.isNotBlank()
+                ) {
+                    onDismiss()
+                    playerViewModel.goToArtist(
+                        currentSong?.spotifyTrackId.orEmpty(),
+                        singer
+                    ) { route ->
+                        navController.navigate(route)
+                    }
                 }
                 PlayerMenuRow(
                     icon = if (downloaded) Icons.Default.CheckCircle else ImageVector.vectorResource(
@@ -2427,11 +2513,12 @@ fun PlayerOptionsSheet(
                 ) {
                     val song = currentSong ?: return@PlayerMenuRow
                     if (downloaded) {
-                        com.music.spotui.data.preferences.removeDownload(
+                        val removed = com.music.spotui.data.preferences.removeDownload(
                             context,
                             song.id.toString()
                         )
-                        downloaded = false
+                        if (removed) downloaded = false
+                        else android.widget.Toast.makeText(context, "Could not delete audio file", android.widget.Toast.LENGTH_SHORT).show()
                     } else {
                         downloadingNow = true
                         SongPlayer.downloadSong(song, context) { ok ->
@@ -2439,24 +2526,6 @@ fun PlayerOptionsSheet(
                             downloaded = ok
                         }
                     }
-                }
-                PlayerMenuRow(
-                    icon = Icons.Default.PlayArrow,
-                    iconTint = if (currentAlternative != null) Color(AppPalette.toArgb()) else Color.White,
-                    label = if (currentAlternative == null) "Alternative stream" else "Alternative stream set",
-                    enabled = currentSong != null,
-                    trailingArrow = true,
-                ) {
-                    showAlternativeStream = true
-                }
-                PlayerMenuRow(
-                    icon = Icons.Default.Refresh,
-                    label = uiLocalized("Invalidate cache"),
-                    enabled = currentSong != null,
-                ) {
-                    val song = currentSong ?: return@PlayerMenuRow
-                    onDismiss()
-                    SongPlayer.invalidateSongCache(song, context, reloadIfPlaying = true)
                 }
                 PlayerMenuRow(
                     icon = if (isLiked.value) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
@@ -2476,46 +2545,25 @@ fun PlayerOptionsSheet(
                     onDismiss()
                 }
                 PlayerMenuRow(
-                    icon = Icons.Default.Add,
-                    label = uiLocalized("Add to playlist"),
+                    icon = Icons.Outlined.PlayArrow,
+                    iconTint = if (currentAlternative != null) Color(AppPalette.toArgb()) else Color.White,
+                    label = if (currentAlternative == null) "Alternative stream" else "Alternative stream set",
                     enabled = currentSong != null,
                     trailingArrow = true,
                 ) {
-                    showSavedIn = true
+                    showAlternativeStream = true
                 }
                 PlayerMenuRow(
-                    icon = Icons.AutoMirrored.Filled.List,
-                    label = uiLocalized("View queue")
+                    icon = Icons.Outlined.Refresh,
+                    label = uiLocalized("Invalidate cache"),
+                    enabled = currentSong != null,
                 ) {
+                    val song = currentSong ?: return@PlayerMenuRow
                     onDismiss()
-                    onOpenQueue()
-                }
-                // Use the track's REAL album (currentSongAlbum is the playing
-                // context — a playlist name would resolve to garbage).
-                val realAlbum = currentSong?.album?.ifBlank { null } ?: album
-                PlayerMenuRow(
-                    icon = Icons.Default.PlayArrow,
-                    label = uiLocalized("Go to album"),
-                    enabled = realAlbum.isNotBlank()
-                ) {
-                    onDismiss()
-                    navController.navigate(albumRoute(realAlbum, singer))
+                    SongPlayer.invalidateSongCache(song, context, reloadIfPlaying = true)
                 }
                 PlayerMenuRow(
-                    icon = Icons.Default.Person,
-                    label = uiLocalized("Go to artist"),
-                    enabled = singer.isNotBlank()
-                ) {
-                    onDismiss()
-                    playerViewModel.goToArtist(
-                        currentSong?.spotifyTrackId.orEmpty(),
-                        singer
-                    ) { route ->
-                        navController.navigate(route)
-                    }
-                }
-                PlayerMenuRow(
-                    icon = Icons.Default.Notifications,
+                    icon = Icons.Outlined.Notifications,
                     label = stringResource(R.string.sleep_timer),
                     subtitle = if (minutesLeft > 0) "$minutesLeft min left" else null,
                     trailingArrow = true
@@ -2935,7 +2983,7 @@ fun PlayerMenuRow(
     icon: ImageVector,
     label: String,
     subtitle: String? = null,
-    iconTint: Color = Color.White,
+    iconTint: Color = Color(0xFFB8B8B8),
     enabled: Boolean = true,
     trailingArrow: Boolean = false,
     onClick: () -> Unit
@@ -2945,20 +2993,20 @@ fun PlayerMenuRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = enabled) { onClick() }
-            .padding(horizontal = 20.dp, vertical = 14.dp)
+            .padding(horizontal = 24.dp, vertical = 16.dp)
     ) {
         Icon(
             imageVector = icon,
             tint = if (enabled) iconTint else Color.Gray,
-            modifier = Modifier.size(22.dp),
+            modifier = Modifier.size(26.dp),
             contentDescription = null
         )
-        Spacer(modifier = Modifier.width(20.dp))
+        Spacer(modifier = Modifier.width(22.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = label,
                 color = if (enabled) Color.White else Color.Gray,
-                fontSize = 15.sp,
+                fontSize = 16.sp,
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
             )

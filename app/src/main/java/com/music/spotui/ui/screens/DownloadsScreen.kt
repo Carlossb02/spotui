@@ -50,6 +50,13 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import com.music.spotui.data.preferences.downloadsVersion
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -75,6 +82,7 @@ import com.bumptech.glide.integration.compose.ExperimentalGlideComposeApi
 import com.bumptech.glide.integration.compose.GlideImage
 import com.bumptech.glide.integration.compose.placeholder
 import com.music.spotui.R
+import com.music.spotui.data.preferences.DownloadRestorePref
 import com.music.spotui.data.preferences.DownloadSortOption
 import com.music.spotui.data.preferences.getDownloadedSongs
 import com.music.spotui.data.preferences.getDownloadsSortOption
@@ -105,31 +113,25 @@ fun DownloadsScreen(navController: NavController) {
 
     val playerViewModel: PlayerViewModel = hiltViewModel()
     val context = LocalContext.current
+    val uiScope = rememberCoroutineScope()
 
-    // Completed downloads (from prefs) + live in-progress ones (from SongPlayer). Poll
-    // while the screen is open so a track appears here the moment its download starts,
-    // shows a live percentage, and moves into the list when it finishes.
-    var songs by remember { mutableStateOf(getDownloadedSongs(context)) }
-    var inProgress by remember {
-        mutableStateOf(com.music.spotui.di.SongPlayer.downloadingSnapshot())
-    }
+    // Observe both the saved catalogue and the COMPLETE active/pending queue.
+    // Pref reading, sorting and artwork loading never run on the UI thread.
+    var songs by remember { mutableStateOf(emptyList<com.music.spotui.data.entity.SongsModel>()) }
+    var restorePending by remember { mutableStateOf(emptyList<com.music.spotui.data.entity.SongsModel>()) }
+    val downloadRevision by downloadsVersion.collectAsState()
+    val inProgress by SongPlayer.downloadQueue.collectAsState()
     var showSortSheet by remember { mutableStateOf(false) }
     var showClearConfirmDialog by remember { mutableStateOf(false) }
     var currentSort by remember { mutableStateOf(getDownloadsSortOption(context)) }
     var isDescending by remember { mutableStateOf(isDownloadsSortDescending(context)) }
 
-    androidx.compose.runtime.LaunchedEffect(currentSort, isDescending) {
-        songs = getDownloadedSongs(context)
-    }
-
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        while (true) {
-            val snap = com.music.spotui.di.SongPlayer.downloadingSnapshot()
-            // A download leaving the snapshot means it finished → refresh the saved list.
-            if (snap.size != inProgress.size) songs = getDownloadedSongs(context)
-            inProgress = snap
-            kotlinx.coroutines.delay(400)
+    LaunchedEffect(downloadRevision, currentSort, isDescending) {
+        val snapshot = withContext(Dispatchers.IO) {
+            getDownloadedSongs(context) to DownloadRestorePref.pending(context)
         }
+        songs = snapshot.first
+        restorePending = snapshot.second
     }
 
     var menuSong by remember { mutableStateOf<com.music.spotui.data.entity.SongsModel?>(null) }
@@ -285,7 +287,7 @@ fun DownloadsScreen(navController: NavController) {
                         Spacer(modifier = Modifier.width(1.dp))
                     }
 
-                    if (songs.isNotEmpty() && searchQuery.isBlank()) {
+                    if ((songs.isNotEmpty() || restorePending.isNotEmpty()) && searchQuery.isBlank()) {
                         Text(
                             text = uiLocalized("Clear all"),
                             color = Color(0xFFE57373),
@@ -302,13 +304,38 @@ fun DownloadsScreen(navController: NavController) {
                     }
                 }
 
-                // ── In-progress downloads (with live progress bar) ──
-                inProgress.forEach { (song, pct) ->
+                // ── Full download queue: active + waiting, with per-track cancel ──
+                if (inProgress.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "${uiLocalized("Download queue")} (${inProgress.size})",
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            text = uiLocalized("Cancel all pending"),
+                            color = Color(0xFFE57373),
+                            fontSize = 12.sp,
+                            modifier = Modifier.clickable {
+                                inProgress.forEach { SongPlayer.cancelDownload(it.song.url) }
+                            }.padding(6.dp),
+                        )
+                    }
+                }
+                inProgress.forEach { task ->
+                    val song = task.song
+                    val pct = task.progress
+                    val queued = task.stage == SongPlayer.DownloadStage.QUEUED
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(20.dp, 8.dp),
+                            .padding(start = 20.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
                     ) {
                         GlideImage(
                             modifier = Modifier
@@ -334,38 +361,98 @@ fun DownloadsScreen(navController: NavController) {
                                     color = Color.White,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Medium,
-                                    maxLines = 1
+                                    maxLines = 1,
                                 )
                             }
                             Spacer(modifier = Modifier.height(4.dp))
-                            androidx.compose.material3.LinearProgressIndicator(
-                                progress = { (pct.coerceIn(0, 100)) / 100f },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(4.dp)
-                                    .clip(RoundedCornerShape(2.dp)),
-                                color = accent,
-                                trackColor = Color(0xFF333333),
-                            )
+                            if (queued) {
+                                Text(uiLocalized("Waiting to download"), color = Color.Gray, fontSize = 12.sp)
+                            } else {
+                                androidx.compose.material3.LinearProgressIndicator(
+                                    progress = { pct.coerceIn(0, 100) / 100f },
+                                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                    color = accent,
+                                    trackColor = Color(0xFF333333),
+                                )
+                            }
                         }
                         Text(
-                            text = "$pct%",
+                            text = if (queued) uiLocalized("Queued") else "$pct%",
                             color = Color.Gray,
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(start = 12.dp),
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "${uiLocalized("Cancel download")}: ${song.title}",
+                            tint = Color(0xFFB3B3B3),
+                            modifier = Modifier
+                                .padding(start = 8.dp)
+                                .size(32.dp)
+                                .clip(RoundedCornerShape(50))
+                                .clickable { SongPlayer.cancelDownload(song.url) }
+                                .padding(6.dp),
                         )
                     }
                 }
 
-                if (songs.isEmpty() && inProgress.isEmpty()) {
+                // Metadata restored from a backup is not mistaken for available offline audio.
+                // Users explicitly choose when to redownload (avoids unexpected mobile data use).
+                val waitingForRestore = restorePending.filter { saved ->
+                    songs.none { it.id == saved.id } && inProgress.none { it.song.id == saved.id }
+                }
+                if (waitingForRestore.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Recover from backup (${waitingForRestore.size})", color = Color.White,
+                            fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text("Download all", color = accent, fontSize = 13.sp,
+                            modifier = Modifier.clickable { SongPlayer.downloadAll(waitingForRestore, context) }.padding(6.dp))
+                    }
+                    Text("Your backup saved these songs, not the audio files. Download again to listen offline.",
+                        color = Color.Gray, fontSize = 12.sp,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp))
+                }
+                waitingForRestore.forEach { song ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        GlideImage(
+                            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)),
+                            model = song.coverUri, failure = placeholder(R.drawable.placeholder),
+                            contentScale = ContentScale.Crop, contentDescription = "",
+                        )
+                        Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
+                            Text(song.title, color = Color.White, fontSize = 14.sp, maxLines = 1)
+                            Text(song.singer, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+                        }
+                        Text("Download", color = accent, fontSize = 12.sp,
+                            modifier = Modifier.clickable { SongPlayer.downloadSong(song, context) }.padding(8.dp))
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Remove from recovery list",
+                            tint = Color.LightGray,
+                            modifier = Modifier.size(30.dp).clickable {
+                                uiScope.launch(Dispatchers.IO) {
+                                    DownloadRestorePref.removePending(context, song.id.toString())
+                                }
+                            }.padding(5.dp),
+                        )
+                    }
+                }
+
+                if (songs.isEmpty() && inProgress.isEmpty() && waitingForRestore.isEmpty()) {
                     Text(
                         text = uiLocalized("No downloads yet. Tap ⋯ on a track and choose Download."),
                         color = Color.Gray,
                         fontSize = 14.sp,
                         modifier = Modifier.padding(20.dp),
                     )
-                } else if (displayedSongs.isEmpty() && inProgress.isEmpty()) {
+                } else if (displayedSongs.isEmpty() && inProgress.isEmpty() && waitingForRestore.isEmpty()) {
                     Text(
                         text = "${uiLocalized("No matches found for")} \"$searchQuery\"",
                         color = Color.Gray,
@@ -538,14 +625,16 @@ fun DownloadsScreen(navController: NavController) {
                         text = { Text(text = uiLocalized("Are you sure you want to remove all downloaded songs? This action cannot be undone."), color = Color(0xFFB3B3B3)) },
                         confirmButton = {
                             TextButton(onClick = {
-                                val n =
-                                    com.music.spotui.data.preferences.clearAllDownloads(context)
-                                songs = getDownloadedSongs(context)
                                 showClearConfirmDialog = false
-                                android.widget.Toast.makeText(
-                                    context, "Removed $n download${if (n == 1) "" else "s"}",
-                                    android.widget.Toast.LENGTH_SHORT,
-                                ).show()
+                                uiScope.launch {
+                                    val n = withContext(Dispatchers.IO) {
+                                        com.music.spotui.data.preferences.clearAllDownloads(context)
+                                    }
+                                    android.widget.Toast.makeText(
+                                        context, "Removed $n download${if (n == 1) "" else "s"}",
+                                        android.widget.Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
                             }) {
                                 Text(com.music.spotui.util.AppLang.get(context, "clear"), color = Color(0xFFE57373))
                             }

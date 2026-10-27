@@ -47,6 +47,8 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -144,10 +146,21 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         }
     }
 
+    var playlistAccess by remember(playlistId) {
+        mutableStateOf(com.music.spotui.data.api.PlaylistAccessInfo(
+            canEdit = playlistId.startsWith("local_pl_"),
+            available = playlistId.startsWith("local_pl_"),
+        ))
+    }
     LaunchedEffect(playlistId) {
         playlistViewModel.loadPlaylist(playlistId)
+        playlistAccess = com.music.spotui.data.api.PlaylistAccess.load(context, playlistId)
     }
-
+    val canEditPlaylist = playlistAccess.canEdit
+    val externalReadOnly = !playlistId.startsWith("local_pl_") && !canEditPlaylist
+    var favoritePlaylist by remember(playlistId) {
+        mutableStateOf(com.music.spotui.data.preferences.FavoritePlaylistsPref.isFavorite(context, playlistId))
+    }
     var addedSongsRevision by remember(playlistId) { mutableStateOf(0) }
     val originalSongs = (songsResp as? Response.Success)?.data.orEmpty()
     val localAdditions = remember(playlistId, addedSongsRevision, songsResp) {
@@ -174,6 +187,17 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             time = "",
         )
 
+    val togglePlaylistFavorite: () -> Unit = {
+        favoritePlaylist = com.music.spotui.data.preferences.FavoritePlaylistsPref.toggle(
+            context, playlistId, playlist.name.ifBlank { playlistName }, playlist.coverUri,
+            playlistAccess.ownerName.ifBlank { playlist.artists }
+        )
+        android.widget.Toast.makeText(context,
+            if (favoritePlaylist) "Playlist añadida a tu biblioteca" else "Playlist quitada de tu biblioteca",
+            android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+
     LaunchedEffect(songs, playlist, songsResp, playlistResp) {
         if (songsResp is Response.Success && playlistResp is Response.Success && songs.isNotEmpty() && playlist != null) {
             com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollection(
@@ -199,8 +223,9 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     var isDescending by remember(playlistId) { mutableStateOf(isPlaylistSortDescending(context, playlistId)) }
     var showSortSheet by remember { mutableStateOf(false) }
     var showPlaylistActions by remember { mutableStateOf(false) }
+    var showCopyPlaylist by remember { mutableStateOf(false) }
     var showAddMusic by remember { mutableStateOf(false) }
-    if (showAddMusic) {
+    if (showAddMusic && canEditPlaylist) {
         com.music.spotui.ui.components.PlaylistAddMusicSheet(
             playlistId = playlistId,
             onDismiss = { showAddMusic = false },
@@ -209,6 +234,15 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                 com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(playlistId)
                 playlistViewModel.reloadPlaylist(playlistId)
             }
+        )
+    }
+
+    if (showCopyPlaylist) {
+        com.music.spotui.ui.components.PlaylistCopySheet(
+            context = context,
+            sourceName = playlist.name.ifBlank { playlistName },
+            songs = songs,
+            onDismiss = { showCopyPlaylist = false },
         )
     }
 
@@ -361,6 +395,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             navController = navController,
             context = context,
             currentPlaylistId = playlistId,
+            canEditCurrentPlaylist = canEditPlaylist,
             onSongRemovedFromPlaylist = {
                 addedSongsRevision++
                 com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(playlistId)
@@ -538,27 +573,52 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 modifier = Modifier.padding(horizontal = 20.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (isLocalPlaylist) {
+                                if (isLocalPlaylist && playlistAccess.ownerName.isBlank()) {
                                     Icon(Icons.Default.PhoneAndroid, contentDescription = null,
                                         tint = Color(0xFF1ED760), modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(5.dp))
-                                    Text(uiLocalized("Lista local"), color = Color.White,
+                                    Text("Lista local · Solo en Spotui", color = Color.White,
                                         fontWeight = FontWeight.Medium, fontSize = 13.sp)
-                                } else if (playlist.artists.isNotBlank()) {
+                                } else {
+                                    // Only identities reported by Spotify are shown. Unknown
+                                    // collaborators are never represented with fake profiles.
+                                    val profiles = buildList {
+                                        if (playlistAccess.ownerName.isNotBlank()) add(
+                                            playlistAccess.ownerName to playlistAccess.ownerImage
+                                        )
+                                        playlistAccess.contributors.forEach {
+                                            add(it.displayName to it.imageUrl)
+                                        }
+                                    }.distinctBy { it.first }.take(4)
+                                    if (profiles.isNotEmpty()) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy((-7).dp),
+                                            verticalAlignment = Alignment.CenterVertically) {
+                                            profiles.forEach { (profileName, photo) ->
+                                                Box(Modifier.size(29.dp).border(2.dp, Color(0xFF202020), CircleShape)
+                                                    .clip(CircleShape).background(Color(0xFF494949)),
+                                                    contentAlignment = Alignment.Center) {
+                                                    if (!photo.isNullOrBlank()) {
+                                                        GlideImage(model = photo, contentDescription = profileName,
+                                                            contentScale = ContentScale.Crop,
+                                                            modifier = Modifier.fillMaxSize().clip(CircleShape))
+                                                    } else {
+                                                        Text(profileName.take(1).uppercase(), color = Color.White,
+                                                            fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Spacer(Modifier.width(14.dp))
+                                    }
                                     Text(
-                                        text = playlist.artists,
+                                        text = (listOf(playlistAccess.ownerName.ifBlank { playlist.artists }) +
+                                            playlistAccess.contributors.map { it.displayName })
+                                            .filter { it.isNotBlank() }.distinct().joinToString(" · "),
                                         color = Color.White,
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 13.sp,
                                         maxLines = 1,
                                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                        modifier = Modifier.clickable {
-                                            if (playlistArtistList.size == 1) {
-                                                navController.navigate(artistRoute(playlistArtistList[0]))
-                                            } else if (playlistArtistList.size > 1) {
-                                                showArtistSheet = true
-                                            }
-                                        }
                                     )
                                 }
                             }
@@ -595,6 +655,15 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier.weight(1f)
                                     ) {
+                                        if (externalReadOnly) {
+                                            Icon(
+                                                imageVector = if (favoritePlaylist) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                                tint = if (favoritePlaylist) Color(0xFF1ED760) else Color.White,
+                                                contentDescription = if (favoritePlaylist) "Quitar de tu biblioteca" else "Guardar en tu biblioteca",
+                                                modifier = Modifier.size(27.dp).clickable { togglePlaylistFavorite() },
+                                            )
+                                            Spacer(Modifier.width(18.dp))
+                                        }
                                         if (songs.isNotEmpty()) {
                                             // Add all playlist tracks to the queue.
                                             Icon(
@@ -768,7 +837,18 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                         }
                     }
 
-                    item(key = "add_music_to_playlist") {
+                    if (!canEditPlaylist && !playlistId.startsWith("local_pl_")) item(key = "playlist_read_only") {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Add, null, tint = Color(0xFF1ED760),
+                                modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Text("Copiar o añadir canciones a otra lista",
+                                color = Color.White, fontSize = 14.sp,
+                                modifier = Modifier.clickable { showCopyPlaylist = true })
+                        }
+                    }
+                    if (canEditPlaylist) item(key = "add_music_to_playlist") {
                         Row(
                             modifier = Modifier.fillMaxWidth()
                                 .background(Color(AppBackground.toArgb()))
@@ -905,6 +985,32 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                     Text(uiLocalized("Opciones de la lista"), color = Color.White,
                         fontWeight = FontWeight.Bold, fontSize = 20.sp,
                         modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 18.dp))
+                    if (externalReadOnly) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                showPlaylistActions = false
+                                togglePlaylistFavorite()
+                            }.padding(horizontal = 24.dp, vertical = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(if (favoritePlaylist) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                contentDescription = null, tint = if (favoritePlaylist) Color(0xFF1ED760) else Color.White)
+                            Spacer(Modifier.width(20.dp))
+                            Text(if (favoritePlaylist) "Quitar de tu biblioteca" else "Guardar en tu biblioteca",
+                                color = Color.White, fontSize = 16.sp)
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            showPlaylistActions = false
+                            showCopyPlaylist = true
+                        }.padding(horizontal = 24.dp, vertical = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Add, null, tint = Color.White)
+                        Spacer(Modifier.width(20.dp))
+                        Text(uiLocalized("Copiar o añadir a otra lista"), color = Color.White, fontSize = 16.sp)
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth().clickable {
                             showPlaylistActions = false

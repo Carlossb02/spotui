@@ -284,7 +284,7 @@ fun LibraryScreen(navController: NavController) {
         AlertDialog(
             onDismissRequest = { showCreateDialog = false },
             containerColor = Color(0xFF282828),
-            title = { Text(uiLocalized("Create Local Playlist"), color = Color.White, fontWeight = FontWeight.Bold) },
+            title = { Text(uiLocalized("Create Playlist"), color = Color.White, fontWeight = FontWeight.Bold) },
             text = {
                 TextField(
                     value = playlistNameInput,
@@ -315,6 +315,7 @@ fun LibraryScreen(navController: NavController) {
                         .clickable {
                             val name = playlistNameInput.trim().ifBlank { "My Playlist" }
                             val created = LocalPlaylistPref.createPlaylist(context, name)
+                            android.widget.Toast.makeText(context, "Lista creada y guardada en Spotui", android.widget.Toast.LENGTH_SHORT).show()
                             Api.HomeCache.library = null
                             libraryViewModel.load()
                             showCreateDialog = false

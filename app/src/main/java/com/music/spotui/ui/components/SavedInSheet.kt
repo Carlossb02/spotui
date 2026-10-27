@@ -88,6 +88,7 @@ fun SavedInSheet(
     var liked by remember { mutableStateOf(isSongLiked(context, song.id.toString())) }
     var localPlaylists by remember { mutableStateOf<List<LocalPlaylist>>(emptyList()) }
     var remotePlaylists by remember { mutableStateOf<List<SpotifyPlaylist>?>(null) }
+    val writableRemoteIds = remember { mutableStateMapOf<String, Boolean>() }
     // playlistId → does it contain this track (filled lazily/locally per row).
     val membership = remember { mutableStateMapOf<String, Boolean>() }
     var creating by remember { mutableStateOf(false) }
@@ -118,6 +119,19 @@ fun SavedInSheet(
         }
     }
 
+    LaunchedEffect(remotePlaylists) {
+        val listings = remotePlaylists.orEmpty()
+        if (listings.isEmpty()) return@LaunchedEffect
+        val me = withContext(Dispatchers.IO) { Spotify.me().getOrNull()?.id.orEmpty() }
+        listings.forEach { pl ->
+            if (pl.owner?.id == me && me.isNotBlank()) writableRemoteIds[pl.id] = true
+            else launch {
+                val editable = com.music.spotui.data.api.PlaylistAccess.load(context, pl.id).canEdit
+                writableRemoteIds[pl.id] = editable
+            }
+        }
+    }
+
     fun createNow() {
         val name = newName.trim().ifBlank { "My Playlist" }
         isCreatingPlaylist = true
@@ -126,7 +140,7 @@ fun SavedInSheet(
         localPlaylists = LocalPlaylistPref.getLocalPlaylists(context)
         membership[created.id] = true
         Api.HomeCache.library = null
-        android.widget.Toast.makeText(context, "Playlist '$name' created", android.widget.Toast.LENGTH_SHORT).show()
+        android.widget.Toast.makeText(context, "Playlist creada y guardada en Spotui", android.widget.Toast.LENGTH_SHORT).show()
         creating = false
         isCreatingPlaylist = false
     }
@@ -273,7 +287,7 @@ fun SavedInSheet(
                 }
 
                 // ── Remote Spotify Playlists ──
-                val remoteList = remotePlaylists.orEmpty()
+                val remoteList = remotePlaylists.orEmpty().filter { writableRemoteIds[it.id] == true }
                 val cleanTrackId = SpotifySync.cleanTrackId(song.spotifyTrackId)
                 items(remoteList.size, key = { "remote_${remoteList[it].id}_$it" }) { i ->
                     val pl = remoteList[i]

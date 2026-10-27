@@ -24,6 +24,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
@@ -96,6 +97,42 @@ object Spotify {
             }
             expectSuccess = false
         }
+    }
+
+    // The app uses Spotify Web Player session tokens, not developer OAuth
+    // tokens. REST /v1/me/playlists may reject those tokens (often with 429).
+    // spclient is the matching web-player playlist write endpoint.
+    private val playlistWriteClient by lazy {
+        HttpClient(OkHttp) {
+            defaultRequest {
+                header("User-Agent", randomUserAgent())
+                header("app-platform", "WebPlayer")
+                header("Origin", "https://open.spotify.com")
+                header("Referer", "https://open.spotify.com/")
+                header("Accept", "application/json")
+            }
+            expectSuccess = false
+        }
+    }
+
+    private suspend fun playlistWrite(url: String, payload: JsonObject): JsonObject {
+        val token = accessToken ?: throw SpotifyException(401, "Spotify session expired")
+        val response = playlistWriteClient.post(url) {
+            header("Authorization", "Bearer $token")
+            setBody(TextContent(payload.toString(), ContentType.Application.Json))
+        }
+        val body = response.bodyAsText()
+        if (response.status.value !in 200..299) {
+            log("W", "Playlist write HTTP ${response.status.value}: ${body.take(250)}")
+            throw SpotifyException(response.status.value, "Spotify playlist write HTTP ${response.status.value}: ${body.take(150)}")
+        }
+        val jsonBody = runCatching { json.parseToJsonElement(body).jsonObject }.getOrElse {
+            throw SpotifyException(502, "Spotify returned an invalid playlist response")
+        }
+        if (jsonBody.obj("error") != null || jsonBody.arr("errors") != null) {
+            throw SpotifyException(502, "Spotify rejected playlist change: ${body.take(160)}")
+        }
+        return jsonBody
     }
 
     private val gqlClient by lazy {
@@ -466,6 +503,12 @@ object Spotify {
                 authenticatedGet<SpotifyUser>("me")
             }
         }
+
+    /** Profile avatars for real playlist owners and contributors. */
+    suspend fun user(userId: String): Result<SpotifyUser> = runCatching {
+        require(userId.isNotBlank()) { "Empty Spotify user ID" }
+        authenticatedGet<SpotifyUser>("users/${java.net.URLEncoder.encode(userId, "UTF-8")}")
+    }
 
     // ── Lyrics (color-lyrics — the official synced lyrics endpoint) ─────
 
@@ -898,10 +941,26 @@ object Spotify {
             val ownerData = playlist.obj("ownerV2")?.obj("data")
             val ownerUri = ownerData?.str("uri") ?: ""
 
-            val images =
-                playlist.obj("images")?.arr("items")?.firstOrNull()?.let {
-                    parseGqlImages(it.jsonObject.arr("sources"))
-                } ?: emptyList()
+            val images = parseGqlPlaylistImages(playlist.obj("images"))
+            // Spotify does not guarantee that the members array is complete. Show
+            // only real identities supplied by the response; never synthesize collaborators.
+            val contributors = playlist.obj("members")?.arr("items")?.mapNotNull { entry ->
+                val wrapper = runCatching { entry.jsonObject }.getOrNull()
+                    ?: return@mapNotNull null
+                val data = wrapper.obj("userV2")?.obj("data")
+                    ?: wrapper.obj("user")?.obj("data")
+                    ?: wrapper.obj("user")
+                    ?: wrapper.obj("data")?.obj("userV2")?.obj("data")
+                    ?: wrapper.obj("data") ?: wrapper
+                val uri = data.str("uri") ?: data.str("_uri") ?: ""
+                val memberId = uri.substringAfterLast(":").ifBlank { data.str("id") ?: "" }
+                if (memberId.isBlank()) null else com.metrolist.spotify.models.SpotifyPlaylistContributor(
+                    id = memberId,
+                    displayName = data.str("name") ?: data.str("display_name") ?: memberId,
+                    imageUrl = parseGqlImages(data.obj("avatar")?.arr("sources")
+                        ?: data.obj("visuals")?.obj("avatarImage")?.arr("sources")).firstOrNull()?.url,
+                )
+            }?.distinctBy { it.id } ?: emptyList()
 
             SpotifyPlaylist(
                 id = playlistId,
@@ -913,9 +972,12 @@ object Spotify {
                         id = ownerUri.substringAfterLast(":"),
                         displayName = ownerData?.str("name"),
                         uri = ownerUri.ifEmpty { null },
+                        imageUrl = parseGqlImages(ownerData?.obj("avatar")?.arr("sources")
+                            ?: ownerData?.obj("visuals")?.obj("avatarImage")?.arr("sources")).firstOrNull()?.url,
                     ),
                 tracks = SpotifyPlaylistTracksRef(total = playlist.obj("content")?.int("totalCount") ?: 0),
-                collaborative = (playlist.obj("members")?.arr("items")?.size ?: 0) > 1,
+                collaborative = playlist.str("collaborative")?.toBooleanStrictOrNull() == true || contributors.size > 1,
+                contributors = contributors,
             )
         }
 
@@ -965,71 +1027,87 @@ object Spotify {
 
     // ── Playlist Mutations (GQL) ──────────────────────────────────────
 
-    /**
-     * Adds tracks to a Spotify playlist via GQL mutation.
-     * @param playlistId Playlist ID (without the `spotify:playlist:` prefix).
-     * @param trackUris Full Spotify URIs, e.g. `["spotify:track:abc123"]`.
+    /** Write through the Web Player endpoint used by our sp_dc session token.
+     * No silent success: HTTP failures and malformed responses propagate.
      */
     suspend fun addTracksToPlaylist(
         playlistId: String,
         trackUris: List<String>,
-    ): Result<Unit> =
-        runCatching {
-            val vars = buildJsonObject {
-                put("playlistUri", "spotify:playlist:$playlistId")
-                putJsonArray("playlistItemUris") {
-                    trackUris.forEach { add(it) }
-                }
-                putJsonObject("newPosition") {
-                    put("moveType", "BOTTOM_OF_PLAYLIST")
-                    put("fromUid", JsonNull)
-                }
+    ): Result<Unit> = runCatching {
+        if (trackUris.isEmpty()) return@runCatching
+        val payload = buildJsonObject {
+            putJsonArray("deltas") {
+                add(buildJsonObject {
+                    putJsonArray("ops") {
+                        add(buildJsonObject {
+                            put("kind", "ADD")
+                            putJsonObject("add") {
+                                putJsonArray("items") {
+                                    trackUris.forEach { uri -> add(buildJsonObject { put("uri", uri) }) }
+                                }
+                                put("addLast", true)
+                            }
+                        })
+                    }
+                    putJsonObject("info") {
+                        putJsonObject("source") { put("client", "WEBPLAYER") }
+                    }
+                })
             }
-            log("D", "addTracksToPlaylist: sending mutation for $playlistId with ${trackUris.size} tracks, vars=$vars")
-            kotlinx.coroutines.withTimeout(20_000L) {
-                graphqlPost(
-                    operationName = "addToPlaylist",
-                    variables = vars,
-                )
-            }
-            log("D", "addTracksToPlaylist: added ${trackUris.size} tracks to $playlistId")
         }
+        playlistWrite("https://spclient.wg.spotify.com/playlist/v2/playlist/$playlistId/changes", payload)
+        Unit
+    }
 
-    /**
-     * Creates a new playlist for the current user via the REST API
-     * and returns it. The web-player token carries the playlist-modify scopes.
+    /** Create the actual remote playlist from the existing Spotify Web session.
+     * The previous REST /me/playlists call was not compatible with this token.
      */
-    suspend fun createPlaylist(name: String, public: Boolean = false): Result<SpotifyPlaylist> =
-        runCatching {
-            val token = accessToken ?: throw SpotifyException(401, "Not authenticated")
-            val body = buildJsonObject {
-                put("name", name)
-                put("public", public)
+    suspend fun createPlaylist(name: String, public: Boolean = false): Result<SpotifyPlaylist> = runCatching {
+        require(name.isNotBlank()) { "Playlist name must not be blank" }
+        val payload = buildJsonObject {
+            putJsonArray("ops") {
+                add(buildJsonObject {
+                    put("kind", "UPDATE_LIST_ATTRIBUTES")
+                    putJsonObject("updateListAttributes") {
+                        putJsonObject("newAttributes") {
+                            putJsonObject("values") { put("name", name) }
+                        }
+                    }
+                })
             }
-            var response: io.ktor.client.statement.HttpResponse? = null
-            val maxRetries = 3
-            for (attempt in 0 until maxRetries) {
-                response = restClient.post("me/playlists") {
-                    header("Authorization", "Bearer $token")
-                    setBody(TextContent(body.toString(), ContentType.Application.Json))
-                }
-                if (response.status == HttpStatusCode.TooManyRequests) {
-                    val retryAfter = response.headers["Retry-After"]?.toLongOrNull() ?: (2L * (attempt + 1))
-                    log("W", "createPlaylist -> 429, waiting ${retryAfter}s (attempt ${attempt + 1}/$maxRetries)")
-                    delay(retryAfter * 1000)
-                    continue
-                }
-                break
-            }
-            val resp = response ?: throw SpotifyException(500, "No response from createPlaylist")
-            if (resp.status.value !in 200..299) {
-                log("W", "createPlaylist($name) HTTP ${resp.status.value}: ${resp.bodyAsText().take(200)}")
-                throw SpotifyException(resp.status.value, "createPlaylist HTTP ${resp.status.value}")
-            }
-            val playlist = json.decodeFromString<SpotifyPlaylist>(resp.bodyAsText())
-            log("D", "createPlaylist($name, public=$public) OK — ${playlist.id}")
-            playlist
         }
+        val result = playlistWrite("https://spclient.wg.spotify.com/playlist/v2/playlist", payload)
+        val uri = result.str("uri") ?: throw SpotifyException(502, "Spotify did not return a playlist URI")
+        val id = uri.removePrefix("spotify:playlist:")
+        if (id.isBlank() || id == uri) throw SpotifyException(502, "Invalid Spotify playlist URI")
+        log("D", "createPlaylist($name) OK: $id")
+        SpotifyPlaylist(id = id, uri = uri, name = name, public = false)
+    }
+
+    /** Rename a mirrored playlist with the same web player session. */
+    suspend fun renamePlaylist(playlistId: String, name: String): Result<Unit> = runCatching {
+        val payload = buildJsonObject {
+            putJsonArray("deltas") {
+                add(buildJsonObject {
+                    putJsonArray("ops") {
+                        add(buildJsonObject {
+                            put("kind", "UPDATE_LIST_ATTRIBUTES")
+                            putJsonObject("updateListAttributes") {
+                                putJsonObject("newAttributes") {
+                                    putJsonObject("values") { put("name", name) }
+                                }
+                            }
+                        })
+                    }
+                    putJsonObject("info") {
+                        putJsonObject("source") { put("client", "WEBPLAYER") }
+                    }
+                })
+            }
+        }
+        playlistWrite("https://spclient.wg.spotify.com/playlist/v2/playlist/$playlistId/changes", payload)
+        Unit
+    }
 
     /**
      * Removes tracks from a Spotify playlist via GQL mutation.

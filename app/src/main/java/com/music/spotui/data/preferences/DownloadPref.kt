@@ -25,13 +25,29 @@ private const val KEY_DL_DESC = "download_sort_desc"
 /** One lightweight invalidation stream shared by all song lists. */
 private val _downloadsVersion = MutableStateFlow(0L)
 val downloadsVersion = _downloadsVersion.asStateFlow()
-private fun notifyDownloadsChanged() { _downloadsVersion.update { it + 1L } }
+internal fun notifyDownloadsChanged() { _downloadsVersion.update { it + 1L } }
 
-/** Just the keys; unlike getDownloadedSongs this never decodes covers/metadata. */
+/** Downloads reside in private, persistent filesDir/downloads, never in cacheDir or Music/.
+ * The folder survives normal app updates and Android deletes it on uninstall.
+ */
+fun privateDownloadsDir(context: Context): File = File(context.filesDir, "downloads").apply { mkdirs() }
+
+private fun validDownloadFile(context: Context, path: String): File? = runCatching {
+    if (path.isBlank()) return@runCatching null
+    val file = File(path).canonicalFile
+    if (file.parentFile != privateDownloadsDir(context).canonicalFile) return@runCatching null
+    if (file.extension.lowercase() !in setOf("m4a", "flac", "mp3")) return@runCatching null
+    file.takeIf { it.isFile && it.length() > 0L }
+}.getOrNull()
+
+/** Only actual, playable files count as downloaded; restored metadata alone does not. */
 fun getDownloadedSongIds(context: Context): Set<String> =
     context.getSharedPreferences(PREF, Context.MODE_PRIVATE).all
-        .filter { (key, value) -> key.toIntOrNull() != null && value is String }
-        .keys
+        .mapNotNull { (key, value) ->
+            if (key.toIntOrNull() == null) return@mapNotNull null
+            val path = (value as? String)?.let(::parse)?.second ?: return@mapNotNull null
+            key.takeIf { validDownloadFile(context, path) != null }
+        }.toSet()
 
 enum class DownloadSortOption(val label: String) {
     DATE("Added"),
@@ -90,26 +106,43 @@ private fun parse(json: String): Pair<SongsModel, String>? = runCatching {
 }.getOrNull()
 
 fun addDownload(context: Context, song: SongsModel, filePath: String) {
+    val file = validDownloadFile(context, filePath)
+        ?: throw IllegalArgumentException("Only complete downloads under filesDir/downloads may be registered")
     context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
-        .putString(song.id.toString(), song.toJson(filePath))
-        .apply()
+        .putString(song.id.toString(), song.toJson(file.absolutePath))
+        .commit()
+    DownloadRestorePref.removePending(context, song.id.toString())
     notifyDownloadsChanged()
+    com.music.spotui.util.BackupHelper.scheduleAutoBackup(context)
 }
 
-fun removeDownload(context: Context, songId: String) {
+/** Delete the real audio and cached cover, not merely the Downloads preference. */
+fun removeDownload(context: Context, songId: String): Boolean {
+    if (songId.toIntOrNull() == null) return false
     val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-    prefs.getString(songId, null)?.let { json ->
-        parse(json)?.second?.let { path -> runCatching { File(path).delete() } }
+    val registeredPath = prefs.getString(songId, null)?.let(::parse)?.second
+    val dir = privateDownloadsDir(context)
+    // Remove every format that may remain if the track was previously replaced.
+    val audioFiles = listOf("m4a", "mp3", "flac").map { File(dir, "$songId.$it") }
+    val registeredFile = registeredPath?.let { validDownloadFile(context, it) }
+    val candidates = (audioFiles + listOfNotNull(registeredFile)).distinctBy { it.absolutePath }
+    val removed = candidates.map { !it.exists() || it.delete() }.all { it }
+    if (!removed) return false // Do not claim deletion when the file remains on disk.
+    listOf("${songId}_cover.jpg", "${songId}.jpg").forEach { name ->
+        runCatching { File(dir, name).delete() }
     }
-    val dir = File(context.filesDir, "downloads")
-    runCatching { File(dir, "${songId}_cover.jpg").delete() }
-    runCatching { File(dir, "${songId}.jpg").delete() }
-    prefs.edit().remove(songId).apply()
+    prefs.edit().remove(songId).commit()
+    DownloadRestorePref.removePending(context, songId)
     notifyDownloadsChanged()
+    com.music.spotui.util.BackupHelper.scheduleAutoBackup(context)
+    return true
 }
 
-fun isDownloaded(context: Context, songId: String): Boolean =
-    context.getSharedPreferences(PREF, Context.MODE_PRIVATE).contains(songId)
+fun isDownloaded(context: Context, songId: String): Boolean {
+    val json = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(songId, null) ?: return false
+    val path = parse(json)?.second ?: return false
+    return validDownloadFile(context, path) != null
+}
 
 fun getDownloadedSongs(context: Context): List<SongsModel> {
     val entries = getDownloadedEntries(context)
@@ -130,7 +163,7 @@ fun downloadedPathForQuery(context: Context, query: String): String? {
     val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
     for (v in prefs.all.values) {
         val (song, path) = (v as? String)?.let(::parse) ?: continue
-        if (song.url == query && path.isNotBlank() && File(path).exists()) {
+        if (song.url == query && validDownloadFile(context, path) != null) {
             com.music.spotui.util.ArtworkHelper.ensureDownloadedCover(context, song)
             return path
         }
@@ -138,28 +171,31 @@ fun downloadedPathForQuery(context: Context, query: String): String? {
     return null
 }
 
-/** Every downloaded track paired with its on-disk file path. */
+/** Every verified downloaded track paired with its private on-disk audio file. */
 fun getDownloadedEntries(context: Context): List<Pair<SongsModel, String>> =
     context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-        .all.values.mapNotNull { (it as? String)?.let(::parse) }
+        .all.values.mapNotNull { value ->
+            val (song, path) = (value as? String)?.let(::parse) ?: return@mapNotNull null
+            val file = validDownloadFile(context, path) ?: return@mapNotNull null
+            song to file.absolutePath
+        }
 
-/** Delete every downloaded file and forget all download entries. Returns count removed. */
+/** Remove actual private audio, including any unused format, then update its metadata.
+ * Active downloads are cancelled first so they cannot recreate deleted files.
+ */
 fun clearAllDownloads(context: Context): Int {
-    val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-    val entries = getDownloadedEntries(context)
-    entries.forEach { (song, path) ->
-        if (path.isNotBlank()) runCatching { File(path).delete() }
-        val dir = File(context.filesDir, "downloads")
-        runCatching { File(dir, "${song.id}_cover.jpg").delete() }
-        runCatching { File(dir, "${song.id}.jpg").delete() }
+    com.music.spotui.di.SongPlayer.downloadQueue.value.forEach { task ->
+        com.music.spotui.di.SongPlayer.cancelDownload(task.song.url)
     }
-    val currentSort = getDownloadsSortOption(context)
-    val currentDesc = isDownloadsSortDescending(context)
-    prefs.edit().clear().apply()
-    setDownloadsSortOption(context, currentSort, currentDesc)
-    OfflineCollectionsPref.clearAll(context)
-    notifyDownloadsChanged()
-    return entries.size
+    val ids = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).all.keys
+        .filter { it.toIntOrNull() != null }
+    var removed = 0
+    ids.forEach { if (removeDownload(context, it)) removed++ }
+    if (removed == ids.size) {
+        OfflineCollectionsPref.clearAll(context)
+        DownloadRestorePref.clearPending(context)
+    }
+    return removed
 }
 
 private fun sanitizeFileName(name: String): String =

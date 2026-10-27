@@ -56,18 +56,19 @@ class MainActivity : ComponentActivity() {
             PodcastVideoSession.activeVideoId != null &&
             PodcastVideoSession.player != null
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     private fun refreshPodcastPipParams() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
             !packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return
-        // Automatic background PiP only when playing; the explicit PiP control
-        // also works while paused, showing the last decoded video frame.
         val canEnter = canEnterPodcastPip() && SongPlayer.isPlaying()
-        val size = PodcastVideoSession.player?.videoSize?.let { it.width to it.height }
-        if (canEnter == pipAutoEnterEnabled && size == lastPipVideoSize) return
-        val w = size?.first ?: 16
-        val h = size?.second ?: 9
-        val ratio = (if (w > 0 && h > 0) w.toFloat() / h else 16f / 9f)
-            .coerceIn(0.45f, 2.2f)
+        val player = PodcastVideoSession.player
+        val w = player?.videoSize?.width?.takeIf { it > 0 }
+            ?: player?.videoFormat?.width?.takeIf { it > 0 } ?: 16
+        val h = player?.videoSize?.height?.takeIf { it > 0 }
+            ?: player?.videoFormat?.height?.takeIf { it > 0 } ?: 9
+        val pair = w to h
+        if (canEnter == pipAutoEnterEnabled && pair == lastPipVideoSize) return
+        val ratio = (w.toFloat() / h.toFloat()).coerceIn(0.45f, 2.22f)
         val builder = PictureInPictureParams.Builder()
             .setAspectRatio(Rational((ratio * 1000).toInt(), 1000))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -78,7 +79,7 @@ class MainActivity : ComponentActivity() {
         runCatching { setPictureInPictureParams(builder.build()) }
             .onSuccess {
                 pipAutoEnterEnabled = canEnter
-                lastPipVideoSize = size
+                lastPipVideoSize = pair
             }
             .onFailure { android.util.Log.w("SpotuiPiP", "Could not configure PiP", it) }
     }
@@ -89,14 +90,26 @@ class MainActivity : ComponentActivity() {
             PodcastVideoSession.finishPipHandoff()
             return
         }
+        PodcastVideoSession.beginPipHandoff()
         PodcastVideoPipState.isInPictureInPicture = true
         refreshPodcastPipParams()
-        val entered = runCatching { enterPictureInPictureMode() }
-            .onFailure { android.util.Log.w("SpotuiPiP", "Unable to enter PiP", it) }
-            .isSuccess
-        if (!entered) {
-            PodcastVideoPipState.isInPictureInPicture = false
-            PodcastVideoSession.finishPipHandoff()
+        // Wait for the window decorView to repaint so Compose renders PodcastPipContent
+        // and dismisses the fullscreen dialog before entering Picture-in-Picture mode.
+        window.decorView.post {
+            window.decorView.post {
+                if (canEnterPodcastPip()) {
+                    val entered = runCatching { enterPictureInPictureMode() }
+                        .onFailure { android.util.Log.w("SpotuiPiP", "Unable to enter PiP", it) }
+                        .isSuccess
+                    if (!entered) {
+                        PodcastVideoPipState.isInPictureInPicture = false
+                        PodcastVideoSession.finishPipHandoff()
+                    }
+                } else {
+                    PodcastVideoPipState.isInPictureInPicture = false
+                    PodcastVideoSession.finishPipHandoff()
+                }
+            }
         }
     }
 
@@ -181,6 +194,11 @@ class MainActivity : ComponentActivity() {
                     Box(Modifier.fillMaxSize().graphicsLayer {
                         alpha = if (PodcastVideoPipState.isInPictureInPicture) 0f else 1f
                     }) { App() }
+                    // Activity-level fullscreen survives configuration changes and
+                    // changes between the mobile/tablet and mini/expanded layouts.
+                    if (!PodcastVideoPipState.isInPictureInPicture) {
+                        com.music.spotui.ui.screens.PodcastFullscreenOverlay()
+                    }
                     if (PodcastVideoPipState.isInPictureInPicture) {
                         // PiP displays video regardless of current mini/lateral/full layout.
                         Box(Modifier.fillMaxSize().background(Color.Black)) {
