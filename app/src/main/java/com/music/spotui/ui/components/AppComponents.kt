@@ -231,17 +231,22 @@ fun MiniPlayer(
                         onUseAudio = { PodcastVideoSession.stop() }
                     )
                 } else {
-                    GlideImage(
-                        model = songCoverUri,
-                        contentDescription = "Carátula de reproducción",
-                        contentScale = ContentScale.Crop,
-                        failure = placeholder(R.drawable.placeholder),
-                        loading = placeholder(R.drawable.placeholder),
-                        modifier = (if (podcastVideoId != null) {
-                            Modifier.padding(start = 7.dp, top = 5.dp, bottom = 5.dp)
-                                .width(88.dp).fillMaxHeight().clip(RoundedCornerShape(7.dp))
-                        } else Modifier.padding(start = 7.dp).size(45.dp).clip(RoundedCornerShape(7.dp)))
-                    )
+                    val coverModifier = if (podcastVideoId != null) {
+                        Modifier.padding(start = 7.dp, top = 5.dp, bottom = 5.dp)
+                            .width(88.dp).fillMaxHeight()
+                    } else Modifier.padding(start = 7.dp).size(45.dp)
+                    if (currentTrack != null && com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(currentTrack.url)) {
+                        EpisodeArtwork(episode = currentTrack, modifier = coverModifier, radius = 7.dp)
+                    } else {
+                        GlideImage(
+                            model = songCoverUri,
+                            contentDescription = "Carátula de reproducción",
+                            contentScale = ContentScale.Crop,
+                            failure = placeholder(R.drawable.placeholder),
+                            loading = placeholder(R.drawable.placeholder),
+                            modifier = coverModifier.clip(RoundedCornerShape(7.dp))
+                        )
+                    }
                 }
                 Column(Modifier.weight(1f).padding(start = 11.dp, end = 6.dp)) {
                     Text(songTitle, fontSize = 14.sp, fontWeight = FontWeight.Bold,
@@ -459,15 +464,20 @@ fun MiniPlayer(
                         onUseAudio = { PodcastVideoSession.stop() }
                     )
                 } else {
-                    GlideImage(
-                        modifier = Modifier.padding(end = 10.dp).size(42.dp)
-                            .clip(RoundedCornerShape(6.dp)),
-                        model = songCoverUri,
-                        contentScale = ContentScale.Crop,
-                        failure = placeholder(R.drawable.placeholder),
-                        loading = placeholder(R.drawable.placeholder),
-                        contentDescription = ""
-                    )
+                    if (currentTrack != null && com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(currentTrack.url)) {
+                        EpisodeArtwork(episode = currentTrack,
+                            modifier = Modifier.padding(end = 10.dp).size(42.dp), radius = 6.dp)
+                    } else {
+                        GlideImage(
+                            modifier = Modifier.padding(end = 10.dp).size(42.dp)
+                                .clip(RoundedCornerShape(6.dp)),
+                            model = songCoverUri,
+                            contentScale = ContentScale.Crop,
+                            failure = placeholder(R.drawable.placeholder),
+                            loading = placeholder(R.drawable.placeholder),
+                            contentDescription = ""
+                        )
+                    }
                 }
                 Column(
                     modifier = Modifier

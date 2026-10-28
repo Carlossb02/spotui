@@ -7,4 +7,5 @@ data class SearchResults(
     val artists: List<ArtistsModel> = emptyList(),
     val shows: List<PodcastModel> = emptyList(),
     val episodes: List<SongsModel> = emptyList(),
+    val playlists: List<LibraryEntry> = emptyList(),
 )

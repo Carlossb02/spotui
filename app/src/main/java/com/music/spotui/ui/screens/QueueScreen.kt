@@ -409,16 +409,18 @@ private fun QueueRow(
             )
             .padding(16.dp, 8.dp)
     ) {
-        GlideImage(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(4.dp)),
-            model = com.music.spotui.ui.notification.PodcastCover.preferredUri(context, song),
-            contentScale = ContentScale.Crop,
-            loading = placeholder(R.drawable.placeholder),
-            failure = placeholder(R.drawable.placeholder),
-            contentDescription = ""
-        )
+        if (com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(song.url)) {
+            com.music.spotui.ui.components.EpisodeArtwork(
+                episode = song, modifier = Modifier.size(48.dp), radius = 4.dp)
+        } else {
+            GlideImage(
+                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)),
+                model = com.music.spotui.ui.notification.PodcastCover.preferredUri(context, song),
+                contentScale = ContentScale.Crop,
+                loading = placeholder(R.drawable.placeholder),
+                failure = placeholder(R.drawable.placeholder), contentDescription = ""
+            )
+        }
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

@@ -523,15 +523,11 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 // Episode Thumbnail
-                                GlideImage(
-                                    model = com.music.spotui.ui.notification.PodcastCover.preferredUri(context, ep)
-                                        .ifBlank { show?.coverUri.orEmpty() },
-                                    contentScale = ContentScale.Crop,
-                                    failure = placeholder(R.drawable.placeholder),
-                                    modifier = Modifier
-                                        .size(56.dp)
-                                        .clip(RoundedCornerShape(8.dp)),
-                                    contentDescription = null,
+                                com.music.spotui.ui.components.EpisodeArtwork(
+                                    episode = ep,
+                                    modifier = Modifier.size(56.dp),
+                                    imageOverride = com.music.spotui.ui.notification.PodcastCover.preferredUri(context, ep)
+                                        .ifBlank { show?.coverUri.orEmpty() }
                                 )
 
                                 Column(

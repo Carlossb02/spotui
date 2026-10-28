@@ -1123,6 +1123,7 @@ private fun HomePodcastsFeedContent(
     onTrackOptions: (SongsModel) -> Unit = {},
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val resumePlayer: PlayerViewModel = hiltViewModel()
 
     val feed = (podcastFeedResult as? Response.Success)?.data
     val sections = feed?.sections.orEmpty()
@@ -1184,6 +1185,17 @@ private fun HomePodcastsFeedContent(
                         modifier = Modifier.clickable { homeViewModel.retryPodcasts() }.padding(6.dp)
                     )
                 }
+            }
+        }
+
+        // This is collected inside its own composable so one-second progress ticks
+        // never recompose the entire remote podcast feed or reset its scroll state.
+        if (!isFollowingOnly) {
+            item(key = "podcasts_continue_listening") {
+                ContinueListeningCarousel(
+                    resumePlayer = resumePlayer,
+                    onTrackOptions = onTrackOptions,
+                )
             }
         }
 
@@ -1397,6 +1409,154 @@ private fun HomePodcastsFeedContent(
     }
     } // fixed Home header
 
+}
+
+/** Independent state collection: remote cards/rows do not re-render on each progress tick. */
+@Composable
+private fun ContinueListeningCarousel(
+    resumePlayer: PlayerViewModel,
+    onTrackOptions: (SongsModel) -> Unit,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(Unit) {
+        com.music.spotui.data.preferences.PodcastResumeStore.ensureLoaded(context)
+    }
+    val pendingKeys by com.music.spotui.data.preferences.PodcastResumeStore.visibleKeys.collectAsState()
+    Column(modifier = Modifier.padding(bottom = 24.dp)) {
+        Text(
+            text = uiLocalized("Seguir escuchando"), color = Color.White,
+            fontSize = 21.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp)
+        )
+        if (pendingKeys.isEmpty()) {
+            Text(
+                text = uiLocalized("Los episodios que dejes a medias aparecerán aquí."),
+                color = Color(0xFFB3B3B3), fontSize = 13.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+            )
+        } else {
+            LazyRow(
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                items(pendingKeys.size, key = { index -> pendingKeys[index] }) { index ->
+                    val key = pendingKeys[index]
+                    val entry by remember(key) {
+                        com.music.spotui.data.preferences.PodcastResumeStore.observeEpisode(key)
+                    }.collectAsState()
+                    if (entry == null) return@items
+                    val currentEntry = entry ?: return@items
+                    ContinuePodcastCard(
+                        entry = currentEntry,
+                        onPlay = {
+                            val episode = currentEntry.episode
+                            resumePlayer.updateQueue(listOf(episode), isManualEdit = true)
+                            resumePlayer.updateSongState(episode.coverUri, episode.title, episode.singer,
+                                true, episode.id, 0, episode.album)
+                            com.music.spotui.ui.notification.PodcastCover.preserve(context, episode)
+                            SongPlayer.setRestorePoint(episode.url, currentEntry.positionMs)
+                            SongPlayer.playSong(episode.url, context, "song/${episode.id}")
+                        },
+                        onAdd = { resumePlayer.addToQueue(currentEntry.episode) },
+                        onOptions = { onTrackOptions(currentEntry.episode) },
+                        onMarkSeen = {
+                            com.music.spotui.data.preferences.PodcastResumeStore.markAsSeen(
+                                context, currentEntry.episode.url)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Compact 16:9 video-first card, visually aligned with the provided reference. */
+@Composable
+private fun ContinuePodcastCard(
+    entry: com.music.spotui.data.preferences.PodcastResumeEntry,
+    onPlay: () -> Unit,
+    onAdd: () -> Unit,
+    onOptions: () -> Unit,
+    onMarkSeen: () -> Unit,
+) {
+    val episode = entry.episode
+    var menuExpanded by remember(episode.url) { mutableStateOf(false) }
+    Column(
+        modifier = Modifier.width(330.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color(0xFF242424))
+            .padding(14.dp)
+    ) {
+        com.music.spotui.ui.components.ContinuePodcastPreview(
+            entry = entry,
+            modifier = Modifier.fillMaxWidth().height(170.dp),
+            radius = 12.dp,
+            onTap = onPlay,
+        )
+        Spacer(Modifier.height(14.dp))
+        Text(episode.title,
+            modifier = Modifier.clickable(onClick = onPlay),
+            color = Color.White, fontSize = 18.sp,
+            fontWeight = FontWeight.Bold, maxLines = 2,
+            lineHeight = 23.sp, minLines = 2)
+        Spacer(Modifier.height(7.dp))
+        Text("Episodio · ${episode.album.ifBlank { episode.singer }}",
+            color = Color(0xFFB6B6B6), fontSize = 13.sp, maxLines = 1)
+        Spacer(Modifier.height(16.dp))
+        val description = episode.description.takeIf {
+            it.isNotBlank() && it != episode.title
+        } ?: "Continúa escuchando este episodio donde lo dejaste."
+        Text(description, color = Color(0xFFC5C5C5), fontSize = 13.sp,
+            lineHeight = 19.sp, minLines = 3, maxLines = 3)
+        Spacer(Modifier.height(17.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.AddCircleOutline,
+                    contentDescription = uiLocalized("Añadir a la cola"),
+                    modifier = Modifier.size(27.dp).clickable(onClick = onAdd),
+                    tint = Color(0xFFD5D5D5))
+                Spacer(Modifier.width(16.dp))
+                Box {
+                    Icon(Icons.Default.MoreVert,
+                        contentDescription = uiLocalized("Más opciones"),
+                        modifier = Modifier.size(27.dp).clickable { menuExpanded = true },
+                        tint = Color(0xFFD5D5D5))
+                    androidx.compose.material3.DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false }
+                    ) {
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text(uiLocalized("Marcar como visto")) },
+                            onClick = { menuExpanded = false; onMarkSeen() },
+                            leadingIcon = { Icon(Icons.Default.CheckCircle, contentDescription = null) }
+                        )
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text(uiLocalized("Opciones del episodio")) },
+                            onClick = { menuExpanded = false; onOptions() }
+                        )
+                    }
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val minsLeft = ((entry.durationMs - entry.positionMs).coerceAtLeast(0L) + 59_999L) / 60_000L
+                Text("${minsLeft} min", color = Color(0xFFC4C4C4), fontSize = 13.sp)
+                Spacer(Modifier.width(12.dp))
+                Box(
+                    modifier = Modifier.size(48.dp).clip(CircleShape)
+                        .background(Color.White).clickable(onClick = onPlay),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.PlayArrow,
+                        contentDescription = uiLocalized("Continuar reproducción"),
+                        tint = Color.Black, modifier = Modifier.size(33.dp))
+                }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalGlideComposeApi::class)

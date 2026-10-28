@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -35,6 +36,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -90,7 +92,18 @@ import com.music.spotui.data.preferences.removeLikedAlbumId
 import com.music.spotui.data.preferences.removeLikedSongId
 import com.music.spotui.di.Palette
 import com.music.spotui.di.SongPlayer
-import com.music.spotui.ui.components.AppSearchBar
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import com.music.spotui.ui.components.CollectionPullSearch
+import com.music.spotui.ui.components.CollectionSortRow
+import com.music.spotui.ui.components.rememberCollectionSearchState
 import com.music.spotui.ui.components.LikedSongsScreen
 import com.music.spotui.ui.components.Loader
 import com.music.spotui.ui.components.SavedInSheet
@@ -273,18 +286,50 @@ fun SumUpAlbumScreen(
 
 
     Log.d("color", dominentColor.toString())
+    val listState = rememberLazyListState()
+    val searchReveal = rememberCollectionSearchState(listState, albumName)
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    BackHandler(enabled = (searchReveal.expanded || searchQuery.isNotBlank()) && !keyboardVisible) {
+        searchQuery = ""
+        searchReveal.close()
+        keyboard?.hide()
+        focusManager.clearFocus()
+    }
+    searchReveal.onDismissByScroll = {
+        searchQuery = ""
+        keyboard?.hide()
+        focusManager.clearFocus()
+    }
+    LaunchedEffect(keyboardVisible) { if (keyboardVisible) listState.scrollToItem(0) }
+    val albumBackground = remember(dominentColor) {
+        Brush.verticalGradient(
+            colors = listOf(dominentColor, Color(AppBackground.toArgb()), Color(AppBackground.toArgb())),
+            startY = 0f, endY = 2100f
+        )
+    }
     Scaffold(
+        modifier = Modifier.fillMaxSize().background(albumBackground),
+        containerColor = Color.Transparent,
         topBar = {
             CenterAlignedTopAppBar(
-                modifier = Modifier.padding(16.dp, 0.dp),
+                modifier = Modifier.padding(horizontal = 12.dp),
                 navigationIcon = {
                     Icon(
-                        modifier = Modifier.clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {
-                            navController.navigateUp()
-                        },
+                        modifier = Modifier.size(42.dp).clip(RoundedCornerShape(50))
+                            .background(Color.Black.copy(alpha = 0.35f))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                            if (searchReveal.expanded || searchQuery.isNotBlank()) {
+                                searchQuery = ""
+                                searchReveal.close()
+                                keyboard?.hide()
+                                focusManager.clearFocus()
+                            } else navController.navigateUp()
+                        }.padding(9.dp),
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "",
                         tint = Color.White)
@@ -298,175 +343,91 @@ fun SumUpAlbumScreen(
                 }
             )
         }
-    ){
-
-        val scrollState = androidx.compose.foundation.rememberScrollState()
-        Box(modifier = Modifier.fillMaxSize()) {
-            Column(modifier = Modifier
-                .fillMaxSize()
-                .background(Color(AppBackground.toArgb()))
-                .verticalScroll(scrollState)
+    ) { innerPadding ->
+        Box(modifier = Modifier.fillMaxSize()
+            .padding(top = innerPadding.calculateTopPadding())) {
+            LazyColumn(
+                state = listState,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 138.dp),
+                modifier = Modifier.fillMaxSize()
+                    .nestedScroll(searchReveal.nestedScrollConnection)
             ) {
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(if (tabletCollectionLayout) 300.dp else 460.dp)
-                    .background(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(dominentColor, Color(AppBackground.toArgb())),
-                            startY = -100f,
-
-                            ),
-
-                        )
-                ,
-                verticalArrangement = Arrangement.Center,
-               // horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                if (tabletCollectionLayout) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(22.dp)
-                    ) {
+                item(key = "album_pull_search") {
+                    CollectionPullSearch(
+                        state = searchReveal, query = searchQuery,
+                        onQueryChange = { searchQuery = it },
+                        placeholder = uiLocalized("Buscar en el álbum")
+                    )
+                }
+                item(key = "album_content") {
+                    Column {
+            if (!keyboardVisible && !searchReveal.expanded && searchQuery.isBlank()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth()
+                        .heightIn(min = if (tabletCollectionLayout) 260.dp else 440.dp)
+                        .padding(bottom = 8.dp),
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    // Identical image alignment, dimensions and spacing to the playlist header.
+                    Spacer(modifier = Modifier.height(if (tabletCollectionLayout) 14.dp else 24.dp))
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                         GlideImage(
-                            modifier = Modifier.size(182.dp).clip(RoundedCornerShape(6.dp)),
+                            modifier = Modifier.size(if (tabletCollectionLayout) 212.dp else 230.dp)
+                                .clip(RoundedCornerShape(5.dp)),
                             model = album[0].coverUri,
                             contentScale = ContentScale.Crop,
                             failure = placeholder(R.drawable.placeholder),
                             contentDescription = uiLocalized("Carátula del álbum")
                         )
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(uiLocalized("ÁLBUM"), fontSize = 11.sp, color = Color(0xFFDDDDDD),
-                                fontWeight = FontWeight.SemiBold)
-                            Spacer(Modifier.height(8.dp))
-                Text(modifier = Modifier
-                    .padding(20.dp, 5.dp, 0.dp, 0.dp),
-                    text = albumName,
-                    color = Color.White,
-                    fontSize = 23.sp,
-                    fontWeight = FontWeight.Bold)
-                if (albumArtists.isNotBlank()) {
-                    Text(
-                        modifier = Modifier
-                            .padding(20.dp, 0.dp, 0.dp, 0.dp)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                            ) {
-                                if (albumArtistList.size == 1) {
-                                    navController.navigate(artistRoute(albumArtistList[0]))
-                                } else if (albumArtistList.size > 1) {
-                                    showArtistSheet = true
-                                }
-                            },
-                        text = albumArtists,
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-                Text(modifier = Modifier
-                    .padding(20.dp, 0.dp, 0.dp, 0.dp),
-                    text = "Album : ${album[0].time}",
-                    color = Color.Gray,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium
-                )
-
-                        }
                     }
-                } else {
-                Spacer(modifier = Modifier.padding(25.dp))
-
-                Box(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    GlideImage(
-                        modifier = Modifier.size(230.dp),
-                        model = album[0].coverUri,
-                        failure = placeholder(R.drawable.placeholder),
-                        //loading = placeholder(R.drawable.album),
-                        //contentScale = ContentScale.Crop,
-                        contentDescription = "",
-                    )
-                }
-                Spacer(modifier = Modifier.padding(5.dp))
-                Text(modifier = Modifier
-                    .padding(20.dp, 5.dp, 0.dp, 0.dp),
-                    text = albumName,
-                    color = Color.White,
-                    fontSize = 23.sp,
-                    fontWeight = FontWeight.Bold)
-                if (albumArtists.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(17.dp))
                     Text(
-                        modifier = Modifier
-                            .padding(20.dp, 0.dp, 0.dp, 0.dp)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                            ) {
-                                if (albumArtistList.size == 1) {
-                                    navController.navigate(artistRoute(albumArtistList[0]))
-                                } else if (albumArtistList.size > 1) {
-                                    showArtistSheet = true
-                                }
-                            },
-                        text = albumArtists,
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
+                        text = albumName, color = Color.White, fontSize = 30.sp,
+                        fontWeight = FontWeight.Bold, maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 20.dp)
                     )
-                }
-                Text(modifier = Modifier
-                    .padding(20.dp, 0.dp, 0.dp, 0.dp),
-                    text = "Album : ${album[0].time}",
-                    color = Color.Gray,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium
-                )
-
-                }
-                Row(horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp)
-                        .padding(20.dp, 0.dp)
-                ){
-
-                    if (snackbarVisible){
-                            Snackbar(showMessage = snackbarMessage)
+                    Spacer(modifier = Modifier.height(13.dp))
+                    Text(
+                        text = albumArtists, color = Color.White,
+                        fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 20.dp).clickable {
+                            if (albumArtistList.size == 1) navController.navigate(artistRoute(albumArtistList[0]))
+                            else if (albumArtistList.size > 1) showArtistSheet = true
                         }
-                    else{
-                        // Let the action icons take their natural width — a fixed
-                        // 75dp squeezed the add + download buttons together.
-                        Row(horizontalArrangement = Arrangement.spacedBy(18.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-
-                            GlideImage(
-                                modifier = Modifier
-                                    .height(60.dp)
-                                    .width(32.dp)
-                                    .padding(0.dp, 5.dp)
-                                    .clip(RoundedCornerShape(5.dp))
-                                ,
-                                model = album[0].coverUri,
-                                failure = placeholder(R.drawable.placeholder),
-                                //loading = placeholder(R.drawable.album),
-                                contentScale = ContentScale.Crop,
-                                contentDescription = "",
-                            )
-                            Icon(
-                                modifier = Modifier
-                                    .size(23.dp)
-                                    .clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null
-                                    ) {
+                    )
+                    Spacer(modifier = Modifier.height(7.dp))
+                    Text(
+                        text = "${albumSongs.size} canciones" +
+                            if (album[0].time.isNotBlank()) " • ${album[0].time}" else "",
+                        color = Color(0xFFB3B3B3), fontSize = 12.sp,
+                        modifier = Modifier.padding(horizontal = 20.dp)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().height(52.dp)
+                            .padding(horizontal = 20.dp)
+                    ) {
+                        if (snackbarVisible) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                Snackbar(showMessage = snackbarMessage)
+                            }
+                        } else {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    painter = if (isAlbumLiked) painterResource(R.drawable.added)
+                                        else painterResource(R.drawable.ic_add),
+                                    contentDescription = uiLocalized("Guardar álbum"),
+                                    tint = if (isAlbumLiked) Color(AppPalette.toArgb()) else Color.White,
+                                    modifier = Modifier.size(27.dp).clickable {
                                         if (isAlbumLiked) {
                                             removeLikedAlbumId(context, album[0].id.toString())
                                             snackbarMessage = "Removed from Library"
@@ -476,204 +437,94 @@ fun SumUpAlbumScreen(
                                         }
                                         isAlbumLiked = isAlbumLiked(context, album[0].id.toString())
                                         snackbarVisible = true
-
-                                    },
-                                painter = if (isAlbumLiked){
-                                    painterResource(id = R.drawable.added)
-                                }
-                                else{
-                                    painterResource(id = R.drawable.ic_add)
-                                }
-                                ,
-                                tint = if (isAlbumLiked){
-                                    Color(AppPalette.toArgb())
-                                }
-                                else{
-                                    Color.White
-                                },
-                                contentDescription = ""
-                            )
-                            // Download the whole album (all tracks) for offline playback.
-                            var albumDownloaded by remember(albumSongs) {
-                                mutableStateOf(SongPlayer.allDownloaded(albumSongs, context))
-                            }
-                            Icon(
-                                imageVector = if (albumDownloaded)
-                                    Icons.Default.CheckCircle else ImageVector.vectorResource(R.drawable.ic_download),
-                                tint = if (albumDownloaded) Color(AppPalette.toArgb()) else Color.White,
-                                modifier = Modifier
-                                    .size(24.dp)
-                                    .clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null,
-                                    ) {
-                                        if (albumSongs.isNotEmpty()) {
-                                            val currentAlbum = album.firstOrNull()
+                                    }
+                                )
+                                if (albumSongs.isNotEmpty()) {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_queue_add),
+                                        tint = Color.White,
+                                        modifier = Modifier.size(24.dp).clickable {
+                                            playerViewModel.addAllToQueue(albumSongs)
+                                            android.widget.Toast.makeText(context,
+                                                "${albumSongs.size} track(s) added to queue",
+                                                android.widget.Toast.LENGTH_SHORT).show()
+                                        },
+                                        contentDescription = uiLocalized("Add to queue")
+                                    )
+                                    var albumDownloaded by remember(albumSongs) {
+                                        mutableStateOf(SongPlayer.allDownloaded(albumSongs, context))
+                                    }
+                                    Icon(
+                                        imageVector = if (albumDownloaded) Icons.Default.CheckCircle
+                                            else ImageVector.vectorResource(R.drawable.ic_download),
+                                        tint = if (albumDownloaded) Color(AppPalette.toArgb()) else Color.White,
+                                        modifier = Modifier.size(24.dp).clickable {
                                             com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollection(
-                                                context = context,
-                                                id = "album:$albumName|$artist",
-                                                name = albumName,
-                                                coverUri = currentAlbum?.coverUri ?: albumSongs.firstOrNull()?.coverUri ?: "",
-                                                artists = currentAlbum?.artists ?: albumSongs.firstOrNull()?.singer ?: artist,
-                                                isPlaylist = false,
+                                                context = context, id = "album:$albumName|$artist",
+                                                name = albumName, coverUri = album[0].coverUri,
+                                                artists = album[0].artists, isPlaylist = false,
                                                 songs = albumSongs
                                             )
                                             if (!albumDownloaded) {
                                                 SongPlayer.downloadAll(albumSongs, context)
                                                 snackbarMessage = "Downloading ${albumSongs.size} tracks…"
-                                                snackbarVisible = true
-                                            } else {
-                                                snackbarMessage = "Album added to offline library"
-                                                snackbarVisible = true
-                                            }
-                                        }
-                                    },
-                                contentDescription = uiLocalized("Download album"),
-                            )
-                            Spacer(modifier = Modifier.width(16.dp))
-                            if (albumSongs.isNotEmpty()) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_queue_add),
-                                    tint = Color.White,
-                                    modifier = Modifier
-                                        .size(24.dp)
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null,
-                                        ) {
-                                            playerViewModel.addAllToQueue(albumSongs)
-                                            android.widget.Toast.makeText(
-                                                context,
-                                                "${albumSongs.size} track(s) added to queue",
-                                                android.widget.Toast.LENGTH_SHORT,
-                                            ).show()
+                                            } else snackbarMessage = "Album added to offline library"
+                                            snackbarVisible = true
                                         },
-                                    contentDescription = uiLocalized("Add to queue"),
-                                )
-                                Spacer(modifier = Modifier.width(16.dp))
+                                        contentDescription = uiLocalized("Download album")
+                                    )
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_player_shuffle),
+                                        tint = Color.White,
+                                        modifier = Modifier.size(24.dp).clickable {
+                                            albumViewModel.startShuffled(albumSongs)?.let { first ->
+                                                albumViewModel.updateSongState(
+                                                    first.coverUri, first.title, first.singer, true,
+                                                    first.id, 0, albumName)
+                                                SongPlayer.playSong(first.url, context, "song/${first.id}")
+                                            }
+                                        },
+                                        contentDescription = uiLocalized("Shuffle play")
+                                    )
+                                }
                             }
-                            // Shuffle-play: start the album in random order.
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_player_shuffle),
-                                tint = Color.White,
-                                modifier = Modifier
-                                    .size(24.dp)
-                                    .clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null,
-                                    ) {
-                                        albumViewModel.startShuffled(albumSongs)?.let { first ->
-                                            albumViewModel.updateSongState(
-                                                first.coverUri,
-                                                first.title,
-                                                first.singer,
-                                                true,
-                                                first.id,
-                                                0,
-                                                albumName,
-                                            )
-                                            SongPlayer.playSong(first.url, context, "song/${first.id}")
-                                        }
-                                    },
-                                contentDescription = uiLocalized("Shuffle play"),
-                            )
                         }
-
-
-                        // Always visible: pause when playing, resume when this
-                        // album's track is paused, otherwise start from the top.
                         if (albumSongs.isNotEmpty()) {
                             val playing = albumViewModel.currentSongPlayingState.value
                             val currentInList = albumSongs.any { it.id == albumViewModel.currentSongId.value }
-                            androidx.compose.foundation.layout.Box(
+                            Box(
                                 contentAlignment = Alignment.Center,
-                                modifier = Modifier
-                                    .size(52.dp)
-                                    .clip(RoundedCornerShape(100.dp))
-                                    .background(Color.White)
-                                    .clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null
-                                    ) {
-                                        when {
-                                            currentInList -> albumViewModel.setPlaying(!playing)
-                                            else -> {
-                                                albumViewModel.updateQueue(albumSongs)
-                                                albumViewModel.updateSongState(
-                                                    albumSongs[0].coverUri,
-                                                    albumSongs[0].title,
-                                                    albumSongs[0].singer,
-                                                    true,
-                                                    albumSongs[0].id,
-                                                    0,
-                                                    albumName
-                                                )
-                                                SongPlayer.playSong(albumSongs[0].url, context, "song/${albumSongs[0].id}")
-                                            }
+                                modifier = Modifier.size(52.dp).clip(RoundedCornerShape(100.dp))
+                                    .background(Color(0xFF1ED760)).clickable {
+                                        if (currentInList) albumViewModel.setPlaying(!playing)
+                                        else {
+                                            val first = filteredSongs.firstOrNull() ?: albumSongs.first()
+                                            albumViewModel.updateQueue(filteredSongs.ifEmpty { albumSongs })
+                                            albumViewModel.updateSongState(
+                                                first.coverUri, first.title, first.singer, true,
+                                                first.id, 0, albumName)
+                                            SongPlayer.playSong(first.url, context, "song/${first.id}")
                                         }
                                     }
                             ) {
                                 Icon(
-                                    modifier = Modifier
-                                        .size(25.dp),
-                                    tint = Color.Black,
+                                    modifier = Modifier.size(25.dp), tint = Color.Black,
                                     painter = painterResource(
-                                        id = if (currentInList && playing) R.drawable.ic_playing else R.drawable.play_svgrepo_com,
-                                    ),
-                                    contentDescription = if (currentInList && playing) "Pause" else "Play")
+                                        if (currentInList && playing) R.drawable.ic_playing
+                                        else R.drawable.play_svgrepo_com),
+                                    contentDescription = if (currentInList && playing) "Pause" else "Play"
+                                )
                             }
                         }
                     }
-
-
-
-
                 }
-
             }
 
-//            Spacer(modifier = Modifier.padding(25.dp))
-
             if (albumSongs.isNotEmpty()) {
-                // Search Bar
-                AppSearchBar(
-                    query = searchQuery,
-                    onQueryChange = { searchQuery = it },
-                    modifier = Modifier.padding(20.dp, 8.dp),
-                    placeholder = uiLocalized("Search in album"),
+                CollectionSortRow(
+                    label = currentSort.getDescriptiveLabel(isDescending),
+                    onClick = { showSortSheet = true }
                 )
-
-                // Sort action button
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp, 0.dp, 20.dp, 8.dp),
-                    horizontalArrangement = Arrangement.Start
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(Color(0xFF2A2A30))
-                            .clickable { showSortSheet = true }
-                            .padding(horizontal = 14.dp, vertical = 8.dp)
-                    ) {
-                        Text(
-                            text = currentSort.getDescriptiveLabel(isDescending),
-                            color = Color.White,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowDown,
-                            contentDescription = uiLocalized("Sort Options"),
-                            tint = Color.White,
-                            modifier = Modifier
-                                .size(16.dp)
-                                .padding(start = 4.dp)
-                        )
-                    }
-                }
 
                 if (filteredSongs.isEmpty() && searchQuery.isNotBlank()) {
                     Column(
@@ -820,9 +671,11 @@ fun SumUpAlbumScreen(
             }
 
             Spacer(modifier = Modifier.height(220.dp))
-        }
-        com.music.spotui.ui.components.FastScrollbarForScrollState(
-            state = scrollState,
+                    } // album content column
+                } // album content item
+            } // lazy album list
+        com.music.spotui.ui.components.FastScrollbarForLazyList(
+            state = listState,
             modifier = Modifier.align(androidx.compose.ui.Alignment.CenterEnd)
         )
     }

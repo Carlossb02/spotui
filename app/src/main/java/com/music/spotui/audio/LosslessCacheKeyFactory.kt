@@ -9,25 +9,35 @@ object LosslessCacheKeyFactory : CacheKeyFactory {
 
     fun buildCacheKey(spotifyTrackId: String?, url: String): String {
         val cleanId = spotifyTrackId?.removePrefix(SPOTIFY_PREFIX)?.substringBefore('|')?.trim()
-        if (!cleanId.isNullOrBlank()) {
-            return "spotui-flac:$cleanId"
-        }
-
         val uri = Uri.parse(url)
-        val host = uri.host.orEmpty()
+        val host = uri.host.orEmpty().lowercase()
         val path = uri.path.orEmpty()
-
+        // YouTube audio: docid + itag identifies the immutable encoded resource.
+        // Expiry, signatures, CDN host and PoToken change between resolutions.
         if (host.contains("googlevideo.com") || host.contains("youtube.com")) {
-            val videoId = uri.getQueryParameter("docid")
-                ?: uri.getQueryParameter("id")
+            val videoId = uri.getQueryParameter("docid") ?: uri.getQueryParameter("id")
                 ?: uri.getQueryParameter("v")
-            if (!videoId.isNullOrBlank()) {
-                return "spotui-yt:$videoId:$path"
-            }
+            val itag = uri.getQueryParameter("itag") ?: "unknown"
+            // Multilingual audio tracks can share itag! Distinguish original
+            // Spanish tracks from auto-dubs by stable language/content hints.
+            val variant = listOf(
+                uri.getQueryParameter("xtags").orEmpty(),
+                uri.getQueryParameter("lang").orEmpty(),
+                uri.getQueryParameter("acont").orEmpty(),
+            ).joinToString("|")
+            val variantHash = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(variant.toByteArray(Charsets.UTF_8)).take(5)
+                .joinToString("") { "%02x".format(it) }
+            if (!videoId.isNullOrBlank()) return "spotui-yt-v3:$videoId:$itag:$variantHash"
         }
-
-        val urlHash = java.util.zip.CRC32().apply { update(url.toByteArray()) }.value
-        return "spotui-raw:$urlHash"
+        // Lossless and lossy providers must not share cached bytes with one another.
+        // Keep an exact URL fingerprint for providers without immutable asset ids.
+        // A new signed URL can miss the cache but can never return the wrong codec.
+        val fingerprint = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(url.toByteArray(Charsets.UTF_8))
+            .take(12).joinToString("") { "%02x".format(it) }
+        return if (!cleanId.isNullOrBlank()) "spotui-track-v2:$cleanId:$fingerprint"
+            else "spotui-media-v2:$fingerprint"
     }
 
     override fun buildCacheKey(dataSpec: DataSpec): String {

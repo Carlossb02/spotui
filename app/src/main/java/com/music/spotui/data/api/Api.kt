@@ -327,7 +327,7 @@ class Api @Inject constructor(
         coroutineScope {
             val spotifyJob = launch {
                 val spotifyRes = runCatching {
-                    Spotify.search(query, types = listOf("track", "album", "artist"), limit = 20).getOrNull()
+                    Spotify.search(query, types = listOf("track", "album", "artist", "playlist"), limit = 20).getOrNull()
                 }.getOrNull()
                 if (spotifyRes != null) {
                     synchronized(this@channelFlow) {
@@ -335,6 +335,15 @@ class Api @Inject constructor(
                             songs = spotifyRes.tracks?.items.orEmpty().map { it.toSongModel() },
                             albums = spotifyRes.albums?.items.orEmpty().map { it.toAlbumModel() },
                             artists = spotifyRes.artists?.items.orEmpty().map { it.toArtistModel() },
+                            playlists = spotifyRes.playlists?.items.orEmpty().filter { it.id.isNotBlank() }.map { p ->
+                                com.music.spotui.data.entity.LibraryEntry(
+                                    spotifyId = p.id,
+                                    name = p.name,
+                                    subtitle = "Playlist" + (p.owner?.displayName?.let { " • $it" } ?: ""),
+                                    coverUri = p.images.firstOrNull()?.url.orEmpty(),
+                                    isPlaylist = true
+                                )
+                            }.distinctBy { it.spotifyId },
                         )
                     }
                     send(Response.Loading(currentResults))

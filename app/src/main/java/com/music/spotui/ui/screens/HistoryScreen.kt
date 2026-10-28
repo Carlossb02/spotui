@@ -713,16 +713,23 @@ private fun HistoryRow(
                 onClick = onClick,
             ),
     ) {
-        GlideImage(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(4.dp)),
-            model = entry.image,
-            contentScale = ContentScale.Crop,
-            failure = placeholder(R.drawable.placeholder),
-            loading = placeholder(R.drawable.placeholder),
-            contentDescription = "",
-        )
+        if (com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(entry.url)) {
+            com.music.spotui.ui.components.EpisodeArtwork(
+                episode = com.music.spotui.data.entity.SongsModel(
+                    id = entry.songId, title = entry.title, album = entry.album,
+                    singer = entry.singer, coverUri = entry.image, url = entry.url
+                ),
+                modifier = Modifier.size(44.dp), radius = 4.dp
+            )
+        } else {
+            GlideImage(
+                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(4.dp)),
+                model = entry.image, contentScale = ContentScale.Crop,
+                failure = placeholder(R.drawable.placeholder),
+                loading = placeholder(R.drawable.placeholder),
+                contentDescription = "",
+            )
+        }
         Column(
             modifier = Modifier
                 .weight(1f)

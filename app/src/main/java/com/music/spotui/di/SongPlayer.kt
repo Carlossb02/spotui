@@ -208,6 +208,13 @@ object SongPlayer {
     private val videoCandidatesCache = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
     // When a cached stream URL was last confirmed valid. Fresh URLs skip the network re-validation.
     private val streamValidatedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    // Signed CDN URLs must never outlive their actual expiry. The disk cache is
+    // independently time-bounded by StreamCachePref; this protects session memory.
+    private val streamExpiresAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    @Volatile private var spotifyWebPlaybackSelected = false
+    // A seek while a network URL is being resolved is an intent, not a no-op.
+    @Volatile private var pendingSeekQuery: String? = null
+    @Volatile private var pendingSeekMs: Long = 0L
     private const val STREAM_REVALIDATE_MS = 5 * 60_000L
     // Cache of track integrated loudness (in dB relative to -14 LUFS) for volume normalization
     private val loudnessCache = java.util.concurrent.ConcurrentHashMap<String, Double>()
@@ -222,6 +229,7 @@ object SongPlayer {
         qualityTierCache.clear()
         videoCandidatesCache.clear()
         streamValidatedAt.clear()
+        streamExpiresAt.clear()
         loudnessCache.clear()
         inFlightResolutions.values.forEach { runCatching { it.cancel() } }
         inFlightResolutions.clear()
@@ -551,6 +559,7 @@ object SongPlayer {
         qualityCache.remove(song)
         qualityTierCache.remove(song)
         streamValidatedAt.remove(song)
+        streamExpiresAt.remove(song)
         videoCandidatesCache.remove("$song|FILTER_SONG|MATCH_V12")
         videoCandidatesCache.remove("$song|FILTER_VIDEO|MATCH_V12")
         appCtx?.let { ctx ->
@@ -634,7 +643,7 @@ object SongPlayer {
                 "Cache cleared for '$title' — Reloading...",
                 android.widget.Toast.LENGTH_SHORT
             ).show()
-            playSong(songUrl, appContext, if (songId != null && songId != 0) "song/$songId" else null)
+            playSong(songUrl, appContext, if (songId != null && songId != 0) "song/$songId" else null, isRecovery = true)
         } else {
             android.widget.Toast.makeText(
                 appContext,
@@ -727,7 +736,7 @@ object SongPlayer {
                 Log.w(TAG, "duration guard: $source gave ${actual}ms, expected ${wantMs}ms for $song — switching provider")
                 providerBlocklist.merge(song, setOf(providerKey)) { old, new -> old + new }
                 invalidateResolvedStream(song)
-                playSong(song, ctx, currentMediaId)
+                playSong(song, ctx, currentMediaId, isRecovery = true)
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -761,11 +770,24 @@ object SongPlayer {
         }.onFailure { Log.w(TAG, "legacy match cache purge failed", it) }
     }
 
-    fun playSong(song: String, context: Context, mediaId: String? = null) {
+    fun playSong(song: String, context: Context, mediaId: String? = null, isRecovery: Boolean = false) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            onPlayerThread { playSong(song, context.applicationContext, mediaId) }
+            onPlayerThread { playSong(song, context.applicationContext, mediaId, isRecovery) }
             return
         }
+        com.music.spotui.data.preferences.PodcastResumeStore.flush(context)
+        // Mark-as-seen suppresses the CURRENT listening session only. Explicit
+        // playback of the same YouTube ID starts a new listening session.
+        // Transient network recovery must never remove the suppression.
+        if (!isRecovery) {
+            com.music.spotui.data.preferences.PodcastResumeStore.beginNewListening(context, song)
+        }
+        // Never route the new local track's controls to an unrelated Spotify Web session.
+        // A paused Spotify web track still owns its commands until a new track is selected.
+        val leavingWebPlayback = spotifyWebPlaybackSelected
+        spotifyWebPlaybackSelected = false
+        if (leavingWebPlayback) runCatching { SpotifyWebPlayer.pause() }
+        if (pendingSeekQuery != song) { pendingSeekQuery = null; pendingSeekMs = 0L }
         val requestGeneration = playbackGeneration.incrementAndGet()
         val appContext = context.applicationContext
         appCtx = appContext
@@ -809,13 +831,13 @@ object SongPlayer {
 
         // A user-selected alternate source must win over an old offline copy.
         // Keep the download stored; only bypass it while the override exists.
-        val manualOverride = alternativeStreamForPlayback(song, appContext)
+        val manualOverride = if (song.startsWith("yt_ep:")) null else alternativeStreamForPlayback(song, appContext)
         if (manualOverride != null && SpotifyWebPlayer.isPlaying) {
             // Switching from Spotify Web Playback to a user-supplied source must
             // silence the old engine before the ExoPlayer version starts.
             SpotifyWebPlayer.pause()
         }
-        val immediateDownloadedPath = if (manualOverride != null) null else
+        val immediateDownloadedPath = if (manualOverride != null || song.startsWith("yt_ep:")) null else
             com.music.spotui.data.preferences.downloadedPathForQuery(appContext, song)
         if (immediateDownloadedPath != null && java.io.File(immediateDownloadedPath).isFile) {
             runCatching {
@@ -832,9 +854,10 @@ object SongPlayer {
                 player?.prepare()
                 // Downloads must honor the saved resume position too; otherwise
                 // a restored local track always restarts from 0:00.
-                if (song == restoreQuery && restorePositionMs > 0L) {
-                    player?.seekTo(restorePositionMs)
-                }
+                val startAt = if (pendingSeekQuery == song) pendingSeekMs
+                    else if (song == restoreQuery) restorePositionMs else 0L
+                if (startAt > 0L) player?.seekTo(startAt)
+                if (pendingSeekQuery == song) pendingSeekQuery = null
                 if (song == restoreQuery) {
                     restoreQuery = null
                     restorePositionMs = 0L
@@ -869,6 +892,7 @@ object SongPlayer {
                 updateResolveStatus(true, "Loading Spotify episode...")
                 playbackResolving = false
                 publishPlaybackIntent()
+                spotifyWebPlaybackSelected = true
                 SpotifyWebPlayer.playEpisode(episodeId)
                 scope.launch {
                     delay(1500)
@@ -876,12 +900,14 @@ object SongPlayer {
                 }
                 return
             }
-            val matchSong = boundState?.queue?.value?.firstOrNull { it.url == song }
-            if (matchSong != null && matchSong.singer.isNotBlank() && matchSong.title.isNotBlank()) {
-                val querySong = buildSpotifyPlayQuery("episode_${matchSong.id}", matchSong.title, matchSong.singer)
-                playSong(querySong, context, mediaId)
-                return
-            }
+            // Spotify episode IDs have no playable YouTube video identity.
+            // Guessing a musical recording from its title is not an acceptable fallback.
+            playbackResolving = false
+            publishPlaybackIntent()
+            playWhenResolved = false
+            boundState?.updateResolveError("Este episodio de Spotify necesita reproducción web de Spotify")
+            updateResolveStatus(false)
+            return
         }
 
         if (webPlayerEnabled &&
@@ -899,6 +925,7 @@ object SongPlayer {
                 updateResolveStatus(true, "Loading Spotify track...")
                 playbackResolving = false
                 publishPlaybackIntent()
+                spotifyWebPlaybackSelected = true
                 SpotifyWebPlayer.play(spotifyId)
                 scope.launch {
                     delay(1500)
@@ -935,7 +962,7 @@ object SongPlayer {
                         boundState?.updateResolveError("No stream found")
                     }
                     updateResolveStatus(false)
-                    if (playWhenResolved) {
+                    if (playWhenResolved && !com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(song)) {
                         val q = boundState?.queue?.value.orEmpty()
                         if (q.size > 1 && consecutiveResolutionFailures < q.size) {
                             consecutiveResolutionFailures++
@@ -968,9 +995,10 @@ object SongPlayer {
                     }
                     p.setMediaItem(mediaItem)
                     p.prepare()
-                    if (song == restoreQuery && restorePositionMs > 0) {
-                        p.seekTo(restorePositionMs)
-                    }
+                    val startAt = if (pendingSeekQuery == song) pendingSeekMs
+                        else if (song == restoreQuery) restorePositionMs else 0L
+                    if (startAt > 0L) p.seekTo(startAt)
+                    if (pendingSeekQuery == song) pendingSeekQuery = null
                     restoreQuery = null
                     // Lossless providers do their own (unseen) matching: hold playback until the
                     // stream's real duration confirms it is the recording we asked for.
@@ -994,7 +1022,7 @@ object SongPlayer {
                 Log.e(TAG, "playSong failed for query: $song", e)
                 boundState?.updateResolveError(e.message ?: "Playback failed")
                 updateResolveStatus(false)
-                if (playWhenResolved) {
+                if (playWhenResolved && !com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(song)) {
                     val q = boundState?.queue?.value.orEmpty()
                     if (q.size > 1 && consecutiveResolutionFailures < q.size) {
                         consecutiveResolutionFailures++
@@ -1118,7 +1146,7 @@ object SongPlayer {
     }
 
     fun prefetchList(songs: List<String>, context: Context, count: Int = 4) {
-        val targetSongs = songs.take(count)
+        val targetSongs = songs.take(count).filterNot { it.startsWith("yt_ep:") }
         prefetchTargets = targetSongs.toSet()
         if (targetSongs.isNotEmpty()) {
             Log.d(TAG, "Preloading next ${targetSongs.size} songs in queue: $targetSongs")
@@ -1305,6 +1333,33 @@ object SongPlayer {
             boundState?.updateResolveError(null)
             updateResolveStatus(true, "Checking alternative source...")
         }
+        // Podcast audio must bypass all music matching and lossless providers.
+        // Resolve the exact YouTube video belonging to this episode, not a
+        // similarly named music track from the provider priority list.
+        if (song.startsWith("yt_ep:")) {
+            if (forPlayback) updateResolveStatus(true, "Cargando audio del episodio original...")
+            val podcastAudio = resolveYtPlayback(song, quality.audioQuality, appContext, forPlayback)
+                ?: return null
+            val url = podcastAudio.streamUrl
+            val qualityLabel = "${podcastAudio.format.bitrate / 1000} kbps"
+            streamCache[song] = url
+            streamExpiresAt[song] = System.currentTimeMillis() +
+                ((podcastAudio.streamExpiresInSeconds.toLong() - 90L).coerceIn(60L, 21_600L) * 1000L)
+            sourceCache[song] = "YouTube podcast"
+            qualityCache[song] = qualityLabel
+            qualityTierCache[song] = expectedTier
+            // Do not persist a signed podcast URL: YouTube may revoke it
+            // independently of the advertised expiry time.
+            if (forPlayback) {
+                currentSource = "YouTube podcast"
+                currentQuality = qualityLabel
+                updateResolveStatus(false)
+            }
+            return url
+        }
+
+        // User overrides and provider caches apply to music only, never a
+        // yt_ep: recording whose YouTube video ID is already authoritative.
         alternativeStreamForPlayback(song, appContext)?.let { alt ->
             return when {
                 alt.isLocal -> {
@@ -1699,6 +1754,7 @@ object SongPlayer {
                 }
                 streamCache[song] = url
                 streamValidatedAt.remove(song)
+                streamExpiresAt[song] = System.currentTimeMillis() + 4 * 60_000L
                 sourceCache[song] = sourceLabel
                 qualityCache[song] = flacQuality
                 qualityTierCache[song] = expectedTier
@@ -1761,6 +1817,8 @@ object SongPlayer {
         }
         streamCache[song] = playback.streamUrl
         streamValidatedAt[song] = System.currentTimeMillis()
+        streamExpiresAt[song] = System.currentTimeMillis() +
+            ((playback.streamExpiresInSeconds.toLong() - 90L).coerceIn(60L, 21_600L) * 1000L)
         sourceCache[song] = "YouTube"
         qualityCache[song] = ytQuality
         qualityTierCache[song] = expectedTier
@@ -3107,14 +3165,20 @@ object SongPlayer {
             }
         }
         val isPodcast = query.startsWith("yt_ep:")
-        val epVideoId = if (isPodcast && query.contains('|')) {
+        val epVideoId = if (isPodcast) {
             query.removePrefix("yt_ep:").substringBefore('|').takeIf { it.isNotBlank() }
         } else null
 
-        if (epVideoId != null) {
-            Log.d(TAG, "Resolving podcast episode direct videoId first (instant play): $epVideoId")
-            tryIds(listOf(epVideoId), skipValidation = true)?.let { return it }
-            Log.w(TAG, "Podcast episode direct videoId $epVideoId failed, falling back to search query...")
+        if (isPodcast) {
+            // An episode is an immutable recording identity. Never substitute a
+            // similarly titled song/video; that causes wrong audio and wrong duration.
+            if (epVideoId.isNullOrBlank() || !epVideoId.matches(youtubeIdRegex)) {
+                lastYtFailureReason = "Invalid podcast YouTube ID"
+                return null
+            }
+            val result = tryIds(listOf(epVideoId), skipValidation = true)
+            if (result == null) lastYtFailureReason = "Podcast audio unavailable for $epVideoId"
+            return result
         }
 
         // An explicit YouTube URL (including watch URLs with list/index parameters) is a
@@ -3245,10 +3309,10 @@ object SongPlayer {
     ): Boolean {
         if (Looper.myLooper() != Looper.getMainLooper()) return false
         val p = player ?: return false
-        if (loadedQuery?.startsWith("yt_ep:") != true) return false
+        if (loadedQuery?.startsWith("yt_ep:") != true || playbackResolving) return false
         val original = if (podcastAvPlayer === p) podcastOriginalAudioItem
             else p.currentMediaItem
-        if (original?.localConfiguration == null) return false
+        if (original?.localConfiguration == null || isMuxed) return false
         val wasPlaying = p.playWhenReady
         val at = p.currentPosition.coerceAtLeast(0L)
         return runCatching {
@@ -3259,10 +3323,11 @@ object SongPlayer {
             val videoItem = androidx.media3.common.MediaItem.Builder()
                 .setUri(videoUrl).setMimeType(videoMime)
                 .setMediaId(original.mediaId).setMediaMetadata(original.mediaMetadata).build()
-            val source = if (isMuxed) factory.createMediaSource(videoItem)
-                else androidx.media3.exoplayer.source.MergingMediaSource(
-                    true, factory.createMediaSource(original), factory.createMediaSource(videoItem)
-                )
+            // Keep the original, language-correct audio stream even if YouTube
+            // offers a muxed video. Video-only tracks have no second audio clock.
+            val source = androidx.media3.exoplayer.source.MergingMediaSource(
+                true, factory.createMediaSource(original), factory.createMediaSource(videoItem)
+            )
             podcastOriginalAudioItem = original
             podcastAvPlayer = p
             podcastAvQuery = loadedQuery
@@ -3472,6 +3537,7 @@ object SongPlayer {
     }
 
     fun pause() {
+        appCtx?.let { com.music.spotui.data.preferences.PodcastResumeStore.flush(it) }
         if (Looper.myLooper() != Looper.getMainLooper()) {
             onPlayerThread { pause() }
             return
@@ -3499,6 +3565,8 @@ object SongPlayer {
         }
         playbackGeneration.incrementAndGet()
         playbackResolving = false
+        spotifyWebPlaybackSelected = false
+        pendingSeekQuery = null
         playWhenResolved = false
         cancelCrossfade()
         releasePlaybackFocus()
@@ -3635,7 +3703,15 @@ object SongPlayer {
         }
         cancelCrossfade()
         if (webPlaybackActive()) { SpotifyWebPlayer.seekTo(position); return }
-        player?.seekTo(position)
+        val target = position.coerceAtLeast(0L)
+        if (playbackResolving || loadedQuery != currentRequest || player?.currentMediaItem == null) {
+            pendingSeekQuery = currentRequest
+            pendingSeekMs = target
+            return
+        }
+        // ExoPlayer issues a fresh byte-range request at target; never download the
+        // previous timeline to reach it. Existing bytes remain usable in cache.
+        player?.seekTo(target)
     }
 
     fun release() {
@@ -3818,6 +3894,26 @@ object SongPlayer {
                     cachedPositionMs = playerSnapshot.third
                     if (++posSaveTick % 12 == 0 && playerSnapshot.first && !webPlaybackActive()) {
                         if (cachedPositionMs > 0) com.music.spotui.data.preferences.saveLastPosition(ctx, cachedPositionMs)
+                    }
+                }
+                // Record podcast progress from the playback engine every second. This also
+                // works when the screen is closed, the player is paused or video is shown.
+                // Web playback has its own clock; never use ExoPlayer's stale position then.
+                boundState?.let { state ->
+                    val url = state.songUrl.value
+                    if (com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(url)
+                        && loadedQuery == url && !playbackResolving) {
+                        // Never write the outgoing ExoPlayer's position as the newly
+                        // selected episode's progress during a stream transition.
+                        val episode = state.queue.value.firstOrNull { it.url == url }
+                        if (episode != null) {
+                            val web = url.startsWith("episode:") && webPlaybackActive()
+                            val position = if (web) SpotifyWebPlayer.positionMs else playerSnapshot?.third ?: 0L
+                            val duration = if (web) SpotifyWebPlayer.durationMs else playerSnapshot?.second ?: 0L
+                            com.music.spotui.data.preferences.PodcastResumeStore.record(
+                                ctx, episode, position, duration, if (web) SpotifyWebPlayer.isPlaying else playerSnapshot?.first == true
+                            )
+                        }
                     }
                 }
                 if (isCrossfading) {

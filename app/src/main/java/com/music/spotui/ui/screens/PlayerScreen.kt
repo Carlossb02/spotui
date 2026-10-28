@@ -764,17 +764,21 @@ fun PlayerScreen(
                                     state = artworkPagerState,
                                     modifier = Modifier.aspectRatio(1f),
                                 ) { page ->
-                                    GlideImage(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .alpha(1f),
-                                        model = queueSongs.getOrNull(page)?.let {
-                                            com.music.spotui.ui.notification.PodcastCover.preferredUri(context, it)
-                                        } ?: songCoverUri,
-                                        contentScale = ContentScale.Crop,
-                                        contentDescription = ""
-                                    )
+                                    val pageSong = queueSongs.getOrNull(page)
+                                    if (pageSong != null && com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(pageSong.url)) {
+                                        com.music.spotui.ui.components.EpisodeArtwork(
+                                            episode = pageSong, modifier = Modifier.fillMaxSize(), radius = 10.dp
+                                        )
+                                    } else {
+                                        GlideImage(
+                                            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
+                                            model = pageSong?.let {
+                                                com.music.spotui.ui.notification.PodcastCover.preferredUri(context, it)
+                                            } ?: songCoverUri,
+                                            contentScale = ContentScale.Crop,
+                                            contentDescription = ""
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -953,18 +957,26 @@ fun PlayerScreen(
                                         .sizeIn(maxWidth = 385.dp, maxHeight = 385.dp)
                                         .aspectRatio(1f),
                                 ) { page ->
-                                    GlideImage(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .padding(20.dp)
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .alpha(if (canvasUrl != null) 0f else 1f),
-                                        model = queueSongs.getOrNull(page)?.let {
-                                            com.music.spotui.ui.notification.PodcastCover.preferredUri(context, it)
-                                        } ?: songCoverUri,
-                                        contentScale = ContentScale.Crop,
-                                        contentDescription = ""
-                                    )
+                                    val pageSong = queueSongs.getOrNull(page)
+                                    if (pageSong != null && com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(pageSong.url)) {
+                                        com.music.spotui.ui.components.EpisodeArtwork(
+                                            episode = pageSong,
+                                            modifier = Modifier.fillMaxSize().padding(20.dp)
+                                                .alpha(if (canvasUrl != null) 0f else 1f),
+                                            radius = 10.dp
+                                        )
+                                    } else {
+                                        GlideImage(
+                                            modifier = Modifier.fillMaxSize().padding(20.dp)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .alpha(if (canvasUrl != null) 0f else 1f),
+                                            model = pageSong?.let {
+                                                com.music.spotui.ui.notification.PodcastCover.preferredUri(context, it)
+                                            } ?: songCoverUri,
+                                            contentScale = ContentScale.Crop,
+                                            contentDescription = ""
+                                        )
+                                    }
                                 }
                             }
                         }

@@ -89,3 +89,9 @@ fun clearAllCachedStreams(context: Context) {
         .apply()
 }
 
+
+/** The same expiry timestamp used by getCachedStream, for session-memory eviction.
+ * Zero means no cached entry. Never extend a signed URL's lifetime. */
+fun cachedStreamExpiresAt(context: Context, query: String): Long =
+    context.getSharedPreferences(PREF_STREAM_CACHE, Context.MODE_PRIVATE)
+        .getLong(query + SUFFIX_EXPIRES, 0L)

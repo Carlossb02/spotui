@@ -366,6 +366,9 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            // Ignore late errors from an outgoing source while the next stream
+            // is being resolved: its metadata/queue now belongs to a new episode.
+            if (SongPlayer.isPreparingTrack()) return
             // Video is optional. The MediaSession must not skip an episode simply
             // because the selected YouTube video stream is unavailable/expired.
             if (com.music.spotui.ui.screens.PodcastVideoSession.player === SongPlayer.exoPlayer &&
@@ -402,17 +405,28 @@ class PlaybackService : MediaLibraryService() {
                     error.message?.contains("Source error", ignoreCase = true) == true ||
                     error.errorCode in 2000..3999
 
+            val isPodcastEpisode = com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(songUrl)
             if (retries < 2 && isIoOrSourceError && songUrl.isNotBlank()) {
                 errorRetryCounts[songUrl] = retries + 1
                 android.util.Log.w("PlaybackService", "Transient loading error for $songUrl (attempt ${retries + 1}), retrying playback instead of skipping...")
+                // Preserve an arbitrary seek, even if the failed source never reached READY.
+                val seekPosition = SongPlayer.getCurrentPosition().coerceAtLeast(0L)
+                if (seekPosition > 0L) SongPlayer.setRestorePoint(songUrl, seekPosition)
                 SongPlayer.invalidateResolvedStream(songUrl)
                 val mediaId = if (cur >= 0) "song/${queue[cur].id}" else currentSongState.songId.value.let { if (it != 0) "song/$it" else null }
-                SongPlayer.playSong(songUrl, applicationContext, mediaId)
+                SongPlayer.playSong(songUrl, applicationContext, mediaId, isRecovery = true)
                 return
             }
             errorRetryCounts.remove(songUrl)
             if (songUrl.isNotBlank()) {
                 SongPlayer.invalidateResolvedStream(songUrl)
+            }
+            if (isPodcastEpisode) {
+                // A podcast is not a playlist of interchangeable tracks. Keep the
+                // failed episode selected and show an actionable error instead.
+                currentSongState.updateResolveError("No se puede cargar este episodio; vuelve a intentarlo")
+                currentSongState.updatePlayingState(false)
+                return
             }
             advance(forward = true)
         }
@@ -832,6 +846,16 @@ class PlaybackService : MediaLibraryService() {
 
         override fun play() {
             SongPlayer.play()
+        }
+
+        // MediaSession/Android Auto seeks use the same pending-seek path as the UI.
+        // Forwarding a seek to a stale ExoPlayer item would otherwise lose it.
+        override fun seekTo(positionMs: Long) {
+            SongPlayer.seekTo(positionMs)
+        }
+
+        override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
+            if (mediaItemIndex == currentMediaItemIndex) SongPlayer.seekTo(positionMs)
         }
 
         override fun pause() {

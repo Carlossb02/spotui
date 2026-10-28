@@ -83,6 +83,7 @@ import com.music.spotui.ui.navigation.albumRoute
 import com.music.spotui.ui.navigation.artistRoute
 import com.music.spotui.ui.navigation.categoryRoute
 import com.music.spotui.ui.navigation.showRoute
+import com.music.spotui.ui.navigation.playlistRoute
 import com.music.spotui.ui.theme.AppBackground
 import com.music.spotui.ui.components.AppSearchBar
 import com.music.spotui.ui.theme.AppPalette
@@ -176,13 +177,14 @@ fun SumUpSearchScreen(
     val searchedList = results.songs
     // One relevance-mixed list (shows, episodes, songs, artists, albums interleaved)
     // exactly like Spotify search.
-    val mixed = remember(results) { mixSearchResults(results) }
+    val mixed = remember(results, text) { mixSearchResults(results, text) }
     val filteredMixed = remember(mixed, selectedCategory) {
         when (selectedCategory) {
             "Podcasts" -> mixed.filter { it is SearchRow.Show || it is SearchRow.Episode }
             "Songs" -> mixed.filter { it is SearchRow.Song }
             "Artists" -> mixed.filter { it is SearchRow.Artist }
             "Albums" -> mixed.filter { it is SearchRow.Album }
+            "Playlists" -> mixed.filter { it is SearchRow.Playlist }
             else -> mixed
         }
     }
@@ -314,6 +316,7 @@ fun SumUpSearchScreen(
                                     )
 
                                     "show" -> navController.navigate(showRoute(item.key, item.name))
+                                    "playlist" -> navController.navigate(playlistRoute(item.key, item.name))
                                 }
                             },
                             onRemove = {
@@ -349,7 +352,7 @@ fun SumUpSearchScreen(
                 }
             } else {
                 item {
-                    val categories = listOf("All", "Podcasts", "Songs", "Artists", "Albums")
+                    val categories = listOf("All", "Podcasts", "Songs", "Artists", "Albums", "Playlists")
                     LazyRow(
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -426,6 +429,19 @@ fun SumUpSearchScreen(
                             navController.navigate(artistRoute(row.artist.name, row.artist.id))
                         }
 
+                        is SearchRow.Playlist -> SearchPlaylistRow(row.playlist) {
+                            recordRecent(
+                                com.music.spotui.data.preferences.RecentItem(
+                                    type = "playlist",
+                                    key = row.playlist.spotifyId,
+                                    name = row.playlist.name,
+                                    singer = row.playlist.subtitle,
+                                    image = row.playlist.coverUri,
+                                )
+                            )
+                            navController.navigate(playlistRoute(row.playlist.spotifyId, row.playlist.name))
+                        }
+
                         is SearchRow.Album -> SearchAlbumRow(row.album) {
                             recordRecent(
                                 com.music.spotui.data.preferences.RecentItem(
@@ -454,36 +470,87 @@ fun SumUpSearchScreen(
     }
 }
 
-/** A single row in the search results: a track, an artist, or an album. */
+/** Search categories share one similarity ranking, not separate blocks by content type. */
 sealed class SearchRow {
     data class Show(val show: com.music.spotui.data.entity.PodcastModel) : SearchRow()
     data class Episode(val episode: SongsModel) : SearchRow()
     data class Song(val song: SongsModel) : SearchRow()
     data class Artist(val artist: com.music.spotui.data.entity.ArtistsModel) : SearchRow()
     data class Album(val album: com.music.spotui.data.entity.AlbumsModel) : SearchRow()
+    data class Playlist(val playlist: com.music.spotui.data.entity.LibraryEntry) : SearchRow()
 }
 
-/**
- * Interleaves the result types into one list (shows, episodes, songs, artists, albums)
- * so search reads as mixed and Spotify-style.
- */
-private fun mixSearchResults(results: SearchResults): List<SearchRow> {
-    val shows = results.shows.iterator()
-    val songs = results.songs.iterator()
-    val artists = results.artists.iterator()
-    val albums = results.albums.iterator()
-    val episodes = results.episodes.iterator()
-
-    val out = ArrayList<SearchRow>()
-
-    while (shows.hasNext() || songs.hasNext() || artists.hasNext() || albums.hasNext() || episodes.hasNext()) {
-        if (shows.hasNext()) out += SearchRow.Show(shows.next())
-        repeat(2) { if (songs.hasNext()) out += SearchRow.Song(songs.next()) }
-        if (artists.hasNext()) out += SearchRow.Artist(artists.next())
-        if (albums.hasNext()) out += SearchRow.Album(albums.next())
-        if (episodes.hasNext()) out += SearchRow.Episode(episodes.next())
+/** Exact/prefix/token similarity first, then a small artist/track boost. Playlists compete
+ * for their actual rank instead of being appended below all albums and episodes. */
+internal fun searchSimilarity(query: String, title: String, categoryBoost: Int): Int {
+    fun normalized(text: String): String = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFD)
+        .replace(Regex("\\p{M}+"), "")
+        .lowercase(java.util.Locale.ROOT)
+        .replace(Regex("[^a-z0-9]+"), " ").trim()
+    val q = normalized(query)
+    val t = normalized(title)
+    if (q.isEmpty() || t.isEmpty()) return categoryBoost
+    val tokens = q.split(' ').filter { it.isNotBlank() }
+    val matches = tokens.count { token -> t.split(' ').any { it == token || it.startsWith(token) } }
+    val quality = when {
+        t == q -> 200
+        t.startsWith("$q ") || t.startsWith(q) -> 164
+        t.contains(" $q ") || t.endsWith(" $q") -> 145
+        t.contains(q) -> 123
+        matches == tokens.size -> 100
+        else -> (matches * 80 / tokens.size).coerceAtMost(80)
     }
-    return out
+    return quality + categoryBoost
+}
+
+private fun mixSearchResults(results: SearchResults, query: String): List<SearchRow> {
+    val scored = buildList {
+        results.artists.forEach { add(SearchRow.Artist(it)) }
+        results.songs.forEach { add(SearchRow.Song(it)) }
+        results.albums.forEach { add(SearchRow.Album(it)) }
+        results.playlists.forEach { add(SearchRow.Playlist(it)) }
+        results.shows.forEach { add(SearchRow.Show(it)) }
+        results.episodes.forEach { add(SearchRow.Episode(it)) }
+    }
+    return scored.withIndex().sortedWith(
+        compareByDescending<IndexedValue<SearchRow>> { indexed ->
+            when (val r = indexed.value) {
+                is SearchRow.Artist -> searchSimilarity(query, r.artist.name, 36)
+                is SearchRow.Song -> searchSimilarity(query, r.song.title, 32)
+                is SearchRow.Album -> searchSimilarity(query, r.album.name, 18)
+                is SearchRow.Playlist -> searchSimilarity(query, r.playlist.name, 10)
+                is SearchRow.Show -> searchSimilarity(query, r.show.name, 16)
+                is SearchRow.Episode -> searchSimilarity(query, r.episode.title, 12)
+            }
+        }.thenBy { it.index }
+    ).map { it.value }
+}
+
+@OptIn(ExperimentalGlideComposeApi::class)
+@Composable
+private fun SearchPlaylistRow(
+    playlist: com.music.spotui.data.entity.LibraryEntry,
+    onClick: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    ) {
+        GlideImage(
+            model = playlist.coverUri,
+            contentDescription = playlist.name,
+            contentScale = ContentScale.Crop,
+            loading = placeholder(R.drawable.placeholder),
+            failure = placeholder(R.drawable.placeholder),
+            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(6.dp))
+        )
+        Column(modifier = Modifier.padding(start = 10.dp)) {
+            Text(playlist.name, color = Color.White, fontSize = 14.sp,
+                fontWeight = FontWeight.Medium, maxLines = 1)
+            Text(playlist.subtitle, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+        }
+    }
 }
 
 /** Maps a tapped search-result song to a persisted recent item. */
@@ -644,17 +711,21 @@ fun SearchSongRow(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.width(280.dp),
             ) {
-                GlideImage(
-                    modifier = Modifier
-                        .padding(0.dp, 0.dp, 10.dp, 0.dp)
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(6.dp)),
-                    model = song.coverUri,
-                    contentScale = ContentScale.Crop,
-                    failure = placeholder(R.drawable.placeholder),
-                    loading = placeholder(R.drawable.placeholder),
-                    contentDescription = "",
-                )
+                if (com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(song.url)) {
+                    com.music.spotui.ui.components.EpisodeArtwork(
+                        episode = song,
+                        modifier = Modifier.padding(end = 10.dp).size(48.dp),
+                        radius = 6.dp
+                    )
+                } else {
+                    GlideImage(
+                        modifier = Modifier.padding(end = 10.dp).size(48.dp).clip(RoundedCornerShape(6.dp)),
+                        model = song.coverUri, contentScale = ContentScale.Crop,
+                        failure = placeholder(R.drawable.placeholder),
+                        loading = placeholder(R.drawable.placeholder),
+                        contentDescription = ""
+                    )
+                }
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (song.explicit) {

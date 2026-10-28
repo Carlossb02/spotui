@@ -71,8 +71,7 @@ import kotlinx.coroutines.*
 import kotlin.math.abs
 import java.util.Locale
 
-/** Activity presentation state, not a second media session. A PiP window uses the same
- * muted video ExoPlayer and retains the podcast audio in SongPlayer/MediaSession. */
+/** Activity presentation state. PiP and the app share SongPlayer's MediaSession. */
 object PodcastVideoPipState {
     var isInPictureInPicture by mutableStateOf(false)
         internal set
@@ -107,12 +106,46 @@ data class PodcastVideoQuality(
     val label: String get() = "${height}p"
 }
 
-private object PodcastVideoStreams {
+internal object PodcastVideoStreams {
+    private val previewCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, PodcastVideoQuality>>()
+
+    suspend fun isReadable(url: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = okhttp3.Request.Builder().url(url)
+                .header("User-Agent", "com.google.ios.youtube/21.03.1 (iPhone16,2; U; CPU iOS 18_2 like Mac OS X;)")
+                .header("Range", "bytes=0-1023").build()
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+                .callTimeout(4, java.util.concurrent.TimeUnit.SECONDS).build()
+            client.newCall(request).execute().use { result ->
+                val valid = result.code == 200 || result.code == 206
+                val readable = valid && result.body?.source()?.request(1L) == true
+                Log.d("SpotuiPodcastVideo", "video stream probe status=${result.code} readable=$readable")
+                readable
+            }
+        }.getOrElse { false }
+    }
+
+    /** Resolve one small, silent hover preview with a short-lived stream URL cache.
+     * No high-resolution probing, audio decoder or use of the active MediaSession. */
+    suspend fun resolvePreview(videoId: String): PodcastVideoQuality? {
+        val now = System.currentTimeMillis()
+        previewCache[videoId]?.takeIf { now - it.first in 0L..600_000L }
+            ?.let { return it.second }
+        val options = resolve(videoId, previewOnly = true)
+        val selected = options.filter { !it.muxed }
+            .sortedBy { kotlin.math.abs(it.height - 360) }
+            .firstOrNull { isReadable(it.url) }
+        if (selected != null) previewCache[videoId] = now to selected
+        return selected
+    }
+
     /** Preserve the best supported rendition per resolution; the first client
      *  sometimes provides only 360p progressive URLs while later clients have
      *  720p/1080p adaptive video-only tracks. All sources are resolved off-main. */
-    suspend fun resolve(videoId: String): List<PodcastVideoQuality> = withContext(Dispatchers.IO) {
-        withTimeoutOrNull(16_000L) {
+    suspend fun resolve(videoId: String, previewOnly: Boolean = false): List<PodcastVideoQuality> = withContext(Dispatchers.IO) {
+        withTimeoutOrNull(if (previewOnly) 12_000L else 16_000L) {
             val bestByHeight = LinkedHashMap<Int, PodcastVideoQuality>()
             val clients = listOf(YouTubeClient.WEB, YouTubeClient.ANDROID_VR_NO_AUTH, YouTubeClient.MOBILE)
             for (client in clients) {
@@ -120,7 +153,7 @@ private object PodcastVideoStreams {
                     .getOrNull() ?: continue
                 if (response.playabilityStatus.status != "OK") continue
                 val muxed = response.streamingData?.formats.orEmpty()
-                val videoFormats = (response.streamingData?.adaptiveFormats.orEmpty() + muxed)
+                val videoFormats = response.streamingData?.adaptiveFormats.orEmpty()
                     .filter { it.width != null && it.height != null && it.mimeType.startsWith("video/") }
                     // Prefer hardware-decoded H.264, then the muxed copy at the
                     // same resolution. Sort by height before limiting candidates.
@@ -144,7 +177,8 @@ private object PodcastVideoStreams {
                         )
                     }
                 }
-                // Stop network probing as soon as we can offer HD + fallback.
+                // A thumbnail only needs a low-resolution video; avoid HD probes on hover.
+                if (previewOnly && bestByHeight.keys.any { it <= 480 }) break
                 if (bestByHeight.keys.any { it >= 720 } && bestByHeight.keys.any { it <= 480 }) break
             }
             if (bestByHeight.isEmpty()) {
@@ -165,12 +199,8 @@ private object PodcastVideoStreams {
     }
 }
 
-/**
- * Application-scoped, muted video companion. Audio and MediaSession remain owned by
- * SongPlayer. Unlike a composition-owned ExoPlayer, this keeps a single decoder,
- * position and source across tablet collapse, mini-player and full-screen transitions.
- * All entry points run on the main thread (the same thread as Compose and ExoPlayer).
- */
+/** Application-scoped video surface coordinator. Does not own a decoder or clock.
+ * The one ExoPlayer in SongPlayer owns audio, video, seek, PiP and MediaSession. */
 @OptIn(UnstableApi::class)
 object PodcastVideoSession {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -239,110 +269,56 @@ object PodcastVideoSession {
                 ?: streams.filter { it.height in 480..preferred }.maxByOrNull { it.height }
                 ?: streams.firstOrNull { it.height > preferred }
                 ?: streams.maxByOrNull { it.height } ?: return@launch
-            if (!applyQuality(initial)) error = "No se puede activar el vídeo de este episodio"
+            // A 403 when opening a Googlevideo URL is common even when InnerTube
+            // advertised it. Do not hand a rejected URL to the main MediaSession.
+            val candidates = (listOf(initial) + streams.filter { it != initial })
+                .filter { !it.muxed }
+            val working = candidates.firstOrNull { PodcastVideoStreams.isReadable(it.url) }
+            if (working == null) {
+                error = "YouTube no ofrece un stream de vídeo accesible para este episodio"
+                return@launch
+            }
+            // Audio may still be preparing when the user taps Video.
+            var enabled = false
+            repeat(30) {
+                if (activeVideoId != videoId || enabled) return@repeat
+                enabled = applyQuality(working)
+                if (!enabled) delay(200L)
+            }
+            if (!enabled && activeVideoId == videoId) error = "No se pudo combinar el vídeo con el audio actual"
         }
     }
 
     /**
-     * Video has its OWN muted decoder. The podcast soundtrack is not modified:
-     * do NOT call SongPlayer.setMediaItem/setMediaSource/prepare/seek here.
-     * Switching video mode therefore cannot rebuffer or interrupt podcast audio.
-     * The only clock we follow is SongPlayer's already-running podcast timeline.
+     * Audio and video share the one ExoPlayer / MediaSession in SongPlayer.
+     * Media3 merges two DASH-style tracks of the SAME video ID and drives
+     * them with a single timeline. This is never a title-based search.
      */
     private fun applyQuality(quality: PodcastVideoQuality): Boolean {
         val context = appContext ?: return false
-        return runCatching {
-            // Use the same YouTube-compatible HTTP identity as the existing
-            // SongPlayer resolver, but never share/reset its audio pipeline.
-            val http = androidx.media3.datasource.DefaultHttpDataSource.Factory()
-                .setUserAgent("com.google.ios.youtube/21.03.1 (iPhone16,2; U; CPU iOS 18_2 like Mac OS X;)")
-                .setAllowCrossProtocolRedirects(true)
-            val companion = player ?: ExoPlayer.Builder(context)
-                .setMediaSourceFactory(
-                    androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
-                        androidx.media3.datasource.DefaultDataSource.Factory(context, http)
-                    )
-                )
-                .build().apply {
-                    volume = 0f
-                    trackSelectionParameters = trackSelectionParameters.buildUpon()
-                        .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, true)
-                        .build()
-                    addListener(object : Player.Listener {
-                        override fun onPlayerError(failure: PlaybackException) {
-                            Log.w("SpotuiPodcastVideo", "Video-only playback failed", failure)
-                            PodcastVideoSession.error = "Vídeo no disponible; el audio sigue reproduciéndose"
-                        }
-                    })
-                }.also { player = it }
-            error = null
-            companion.setMediaItem(
-                MediaItem.Builder().setUri(quality.url).setMimeType(quality.mimeType).build()
-            )
-            // ExoPlayer permits an initial seek while the new video is preparing.
-            companion.seekTo(SongPlayer.getCurrentPosition().coerceAtLeast(0L))
-            companion.prepare()
-            companion.playWhenReady = SongPlayer.isPlaying()
-            selectedQuality = quality.label
-            startClockSync()
-            updateSurface()
-            true
-        }.onFailure { Log.e("SpotuiPodcastVideo", "Could not prepare video", it) }
-            .getOrDefault(false)
-    }
-
-    private var lastSeekTimestamp = 0L
-
-    private fun startClockSync() {
-        videoClockJob?.cancel()
-        videoClockJob = scope.launch {
-            while (isActive(activeVideoId)) {
-                val companion = player ?: break
-                val shouldPlay = SongPlayer.isPlaying() &&
-                    (isForeground || PodcastVideoPipState.isInPictureInPicture)
-                if (companion.playWhenReady != shouldPlay) companion.playWhenReady = shouldPlay
-
-                if (companion.playbackState == Player.STATE_READY) {
-                    val audioTime = SongPlayer.getCurrentPosition().coerceAtLeast(0L)
-                    val videoTime = companion.currentPosition.coerceAtLeast(0L)
-                    val diff = audioTime - videoTime
-                    val absDiff = kotlin.math.abs(diff)
-                    val now = android.os.SystemClock.elapsedRealtime()
-
-                    // Only hard seek if drift is massive (>1500ms) AND we haven't seeked in the last 1200ms.
-                    if (absDiff > 1500L && (now - lastSeekTimestamp > 1200L)) {
-                        lastSeekTimestamp = now
-                        if (companion.playbackParameters.speed != 1.0f) {
-                            companion.playbackParameters = androidx.media3.common.PlaybackParameters(1.0f)
-                        }
-                        companion.seekTo(audioTime)
-                    } else if (absDiff > 60L && shouldPlay) {
-                        val speed = when {
-                            diff > 400L -> 1.08f
-                            diff > 150L -> 1.05f
-                            diff > 60L -> 1.03f
-                            diff < -400L -> 0.92f
-                            diff < -150L -> 0.95f
-                            else -> 0.97f
-                        }
-                        if (companion.playbackParameters.speed != speed) {
-                            companion.playbackParameters = androidx.media3.common.PlaybackParameters(speed)
-                        }
-                    } else {
-                        if (companion.playbackParameters.speed != 1.0f) {
-                            companion.playbackParameters = androidx.media3.common.PlaybackParameters(1.0f)
-                        }
-                    }
-                }
-                delay(120L)
-            }
+        if (quality.muxed) return false // never decode a second audio track
+        if (!SongPlayer.enablePodcastVideo(context, quality.url, quality.mimeType, quality.muxed)) {
+            return false
         }
+        player = SongPlayer.exoPlayer
+        error = null
+        selectedQuality = quality.label
+        updateSurface()
+        return true
     }
 
     fun selectQuality(height: Int) {
         val target = qualities.firstOrNull { it.height == height } ?: return
         if (target.label == selectedQuality) return
-        if (!applyQuality(target)) error = "No se pudo cambiar la calidad de vídeo"
+        resolveJob?.cancel()
+        isLoading = true
+        resolveJob = scope.launch {
+            val valid = PodcastVideoStreams.isReadable(target.url)
+            isLoading = false
+            if (!valid || !applyQuality(target)) {
+                error = "No se pudo abrir la calidad de vídeo seleccionada"
+            }
+        }
     }
 
     fun stopIfDifferent(currentPodcastId: String?) {
@@ -356,9 +332,11 @@ object PodcastVideoSession {
         attachedView?.player = null
         attachedView = null
         visibleTargets.clear()
-        player?.release()
+        // The player belongs to PlaybackService. Never release it, mute it or
+        // pause it from a video-only UI lifecycle callback.
+        if (player === SongPlayer.exoPlayer) SongPlayer.disablePodcastVideo()
         player = null
-        // Do NOT reset SongPlayer's audio media source on video disable.
+
         activeVideoId = null
         fullscreen = false
         isLoading = false
@@ -371,9 +349,8 @@ object PodcastVideoSession {
 
     fun sync(foreground: Boolean) {
         isForeground = foreground
-        if (!foreground && !PodcastVideoPipState.isInPictureInPicture) {
-            player?.playWhenReady = false
-        }
+        // Background playback is owned by PlaybackService. A hidden video
+        // surface must not pause the podcast's soundtrack.
     }
 
     fun attach(view: PlayerView, priority: Int) {
@@ -398,11 +375,14 @@ object PodcastVideoSession {
 
     private fun updateSurface() {
         val target = visibleTargets.entries.maxByOrNull { it.value }?.key
-        val companion = player ?: return
+        val sharedPlayer = player ?: return
         if (target !== attachedView) {
-            PlayerView.switchTargetView(companion, attachedView, target)
+            PlayerView.switchTargetView(sharedPlayer, attachedView, target)
             attachedView = target
         }
+        // Disable video decoder/bandwidth when no UI is showing the picture;
+        // never disable or release the audio track.
+        SongPlayer.enablePodcastVideoTrack(target != null)
     }
 }
 
