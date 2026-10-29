@@ -7,6 +7,11 @@ import android.os.Bundle
 import android.app.PictureInPictureParams
 import android.content.res.Configuration
 import android.content.ContextWrapper
+import android.widget.FrameLayout
+import android.view.LayoutInflater
+import android.view.View
+import androidx.media3.ui.PlayerView
+import com.music.spotui.R
 import android.content.res.Resources
 import android.util.Rational
 import androidx.compose.foundation.layout.Box
@@ -48,11 +53,40 @@ class MainActivity : ComponentActivity() {
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var pipAutoEnterEnabled = false
     private var lastPipVideoSize: Pair<Int, Int>? = null
+    // An Android View overlay must exist BEFORE Android captures the PiP window.
+    // A conditional Compose layer is not synchronized with WindowManager's snapshot.
+    private var pipHost: FrameLayout? = null
+    private var pipSurface: PlayerView? = null
+
+    private fun mountNativePipSurface() {
+        if (pipHost != null) return
+        val content = findViewById<FrameLayout>(android.R.id.content)
+        val host = FrameLayout(this).apply {
+            setBackgroundColor(android.graphics.Color.BLACK)
+            elevation = 1000f
+        }
+        val surface = LayoutInflater.from(this)
+            .inflate(R.layout.spotui_podcast_video_view, host, false) as PlayerView
+        surface.useController = false
+        host.addView(surface, FrameLayout.LayoutParams(-1, -1))
+        content.addView(host, FrameLayout.LayoutParams(-1, -1))
+        pipHost = host
+        pipSurface = surface
+        PodcastVideoSession.attach(surface, 100)
+    }
+
+    private fun unmountNativePipSurface() {
+        pipSurface?.let { PodcastVideoSession.detach(it) }
+        pipSurface = null
+        pipHost?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }
+        pipHost = null
+    }
 
     /** Configure system PiP only for a currently playing video podcast. */
     private fun canEnterPodcastPip(): Boolean =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
+            PodcastVideoSession.videoVisible &&
             PodcastVideoSession.activeVideoId != null &&
             PodcastVideoSession.player != null
 
@@ -84,29 +118,26 @@ class MainActivity : ComponentActivity() {
             .onFailure { android.util.Log.w("SpotuiPiP", "Could not configure PiP", it) }
     }
 
-    /** Also exposed as a control in the video overlay. Never starts a second player. */
+    /** The native PiP surface is attached first; navigation stays mounted underneath. */
     fun enterPodcastPictureInPicture() {
-        if (!canEnterPodcastPip()) {
-            PodcastVideoSession.finishPipHandoff()
-            return
-        }
+        if (!canEnterPodcastPip() || isInPictureInPictureMode) return
         PodcastVideoSession.beginPipHandoff()
-        PodcastVideoPipState.isInPictureInPicture = true
+        mountNativePipSurface()
         refreshPodcastPipParams()
-        // Wait for the window decorView to repaint so Compose renders PodcastPipContent
-        // and dismisses the fullscreen dialog before entering Picture-in-Picture mode.
-        window.decorView.post {
-            window.decorView.post {
-                if (canEnterPodcastPip()) {
-                    val entered = runCatching { enterPictureInPictureMode() }
-                        .onFailure { android.util.Log.w("SpotuiPiP", "Unable to enter PiP", it) }
-                        .isSuccess
+        // Wait for the native TextureView layout and surface attachment,
+        // not for an arbitrary Compose recomposition or double post.
+        pipHost?.postOnAnimation {
+            // The fullscreen Dialog uses a separate Android Window. Allow its
+            // disposal to finish before Android captures the activity for PiP.
+            pipHost?.postOnAnimation {
+                if (canEnterPodcastPip() && pipHost?.isAttachedToWindow == true) {
+                    val entered = runCatching { enterPictureInPictureMode() }.isSuccess
                     if (!entered) {
-                        PodcastVideoPipState.isInPictureInPicture = false
+                        unmountNativePipSurface()
                         PodcastVideoSession.finishPipHandoff()
                     }
                 } else {
-                    PodcastVideoPipState.isInPictureInPicture = false
+                    unmountNativePipSurface()
                     PodcastVideoSession.finishPipHandoff()
                 }
             }
@@ -124,7 +155,12 @@ class MainActivity : ComponentActivity() {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         PodcastVideoPipState.isInPictureInPicture = isInPictureInPictureMode
         PodcastVideoSession.finishPipHandoff()
-        if (!isInPictureInPictureMode) refreshPodcastPipParams()
+        if (isInPictureInPictureMode) {
+            if (pipHost == null) mountNativePipSurface()
+        } else {
+            unmountNativePipSurface()
+            refreshPodcastPipParams()
+        }
     }
 
     private val notificationPermission =
@@ -199,14 +235,8 @@ class MainActivity : ComponentActivity() {
                     if (!PodcastVideoPipState.isInPictureInPicture) {
                         com.music.spotui.ui.screens.PodcastFullscreenOverlay()
                     }
-                    if (PodcastVideoPipState.isInPictureInPicture) {
-                        // PiP displays video regardless of current mini/lateral/full layout.
-                        Box(Modifier.fillMaxSize().background(Color.Black)) {
-                            if (PodcastVideoSession.player != null) {
-                                PodcastPipContent(Modifier.fillMaxSize())
-                            }
-                        }
-                    }
+                    // The only PiP video surface now lives in a native View
+                    // layered above Compose. Never reparent on each composition.
                 }
                 // Apply initial video availability immediately; polling below
                 // only tracks changes to play/pause that are not Compose state.
@@ -291,6 +321,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         PodcastVideoPipState.isInPictureInPicture = false
+        unmountNativePipSurface()
         super.onDestroy()
         controllerFuture?.let { MediaController.releaseFuture(it) }
     }

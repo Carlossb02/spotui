@@ -124,6 +124,16 @@ class Api @Inject constructor(
                 trackId.startsWith("spotify:local:", ignoreCase = true),
         )
         val overridden = com.music.spotui.data.preferences.CustomMetadataPref.applyOverride(context, baseSong)
+        // Full SpotifyTrack is already authoritative: reuse its metadata during
+        // playback instead of making the SAME Spotify request while YouTube
+        // candidate queries are ready. Never mark edited metadata as verified.
+        if (overridden.title == baseSong.title &&
+            overridden.singer == baseSong.singer && overridden.album == baseSong.album &&
+            !baseSong.isLocalSpotifyTrack && trackId.length == 22 && trackName.length <= 128) {
+            com.music.spotui.di.SongPlayer.registerVerifiedSpotifySnapshot(
+                baseSong.url, trackId, baseSong.title, baseSong.singer,
+                baseSong.album, baseSong.durationMs, baseSong.explicit)
+        }
         if (overridden.title != baseSong.title || overridden.singer != baseSong.singer) {
             overridden.copy(
                 url = com.music.spotui.di.SongPlayer.buildSpotifyPlayQuery(trackId, overridden.title, overridden.singer)

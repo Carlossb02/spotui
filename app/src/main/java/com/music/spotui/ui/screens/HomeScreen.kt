@@ -1193,6 +1193,7 @@ private fun HomePodcastsFeedContent(
         if (!isFollowingOnly) {
             item(key = "podcasts_continue_listening") {
                 ContinueListeningCarousel(
+                    navController = navController,
                     resumePlayer = resumePlayer,
                     onTrackOptions = onTrackOptions,
                 )
@@ -1414,10 +1415,12 @@ private fun HomePodcastsFeedContent(
 /** Independent state collection: remote cards/rows do not re-render on each progress tick. */
 @Composable
 private fun ContinueListeningCarousel(
+    navController: NavController,
     resumePlayer: PlayerViewModel,
     onTrackOptions: (SongsModel) -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) {
         com.music.spotui.data.preferences.PodcastResumeStore.ensureLoaded(context)
     }
@@ -1448,14 +1451,40 @@ private fun ContinueListeningCarousel(
                     val currentEntry = entry ?: return@items
                     ContinuePodcastCard(
                         entry = currentEntry,
+                        autoPreview = index == 0,
                         onPlay = {
                             val episode = currentEntry.episode
-                            resumePlayer.updateQueue(listOf(episode), isManualEdit = true)
-                            resumePlayer.updateSongState(episode.coverUri, episode.title, episode.singer,
-                                true, episode.id, 0, episode.album)
-                            com.music.spotui.ui.notification.PodcastCover.preserve(context, episode)
-                            SongPlayer.setRestorePoint(episode.url, currentEntry.positionMs)
-                            SongPlayer.playSong(episode.url, context, "song/${episode.id}")
+                            val knownShow = com.music.spotui.providers.PodcastProvider.knownShowForEpisode(episode.url)
+                            val showId = knownShow?.first.orEmpty()
+                            val showName = knownShow?.second?.ifBlank { episode.album.ifBlank { episode.singer } } ?: episode.album.ifBlank { episode.singer }
+
+                            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                val showEpisodes = if (showId.isNotBlank()) {
+                                    com.music.spotui.providers.PodcastProvider.getShowEpisodes(showId, showName)
+                                } else emptyList()
+
+                                val fullQueue = if (showEpisodes.isNotEmpty()) {
+                                    (listOf(episode) + showEpisodes.filter { it.id != episode.id }).distinctBy { it.id }
+                                } else listOf(episode)
+
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                    resumePlayer.updateQueue(fullQueue, isManualEdit = true)
+                                    resumePlayer.updateSongState(episode.coverUri, episode.title, episode.singer,
+                                        true, episode.id, 0, episode.album)
+                                    com.music.spotui.ui.notification.PodcastCover.preserve(context, episode)
+                                    SongPlayer.setRestorePoint(episode.url, currentEntry.positionMs)
+                                    SongPlayer.playSong(episode.url, context, "song/${episode.id}")
+                                }
+                            }
+                        },
+                        onShowClick = {
+                            val episode = currentEntry.episode
+                            val knownShow = com.music.spotui.providers.PodcastProvider.knownShowForEpisode(episode.url)
+                            val showId = knownShow?.first.orEmpty()
+                            val showName = knownShow?.second?.ifBlank { episode.album.ifBlank { episode.singer } } ?: episode.album.ifBlank { episode.singer }
+                            if (showId.isNotBlank()) {
+                                navController.navigate(showRoute(showId, showName))
+                            }
                         },
                         onAdd = { resumePlayer.addToQueue(currentEntry.episode) },
                         onOptions = { onTrackOptions(currentEntry.episode) },
@@ -1474,7 +1503,9 @@ private fun ContinueListeningCarousel(
 @Composable
 private fun ContinuePodcastCard(
     entry: com.music.spotui.data.preferences.PodcastResumeEntry,
+    autoPreview: Boolean,
     onPlay: () -> Unit,
+    onShowClick: () -> Unit,
     onAdd: () -> Unit,
     onOptions: () -> Unit,
     onMarkSeen: () -> Unit,
@@ -1482,33 +1513,51 @@ private fun ContinuePodcastCard(
     val episode = entry.episode
     var menuExpanded by remember(episode.url) { mutableStateOf(false) }
     Column(
-        modifier = Modifier.width(330.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(Color(0xFF242424))
-            .padding(14.dp)
+        modifier = Modifier.width(318.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.verticalGradient(listOf(Color(0xFF32343B), Color(0xFF202126)))
+            )
+            .padding(12.dp)
     ) {
         com.music.spotui.ui.components.ContinuePodcastPreview(
             entry = entry,
-            modifier = Modifier.fillMaxWidth().height(170.dp),
-            radius = 12.dp,
+            modifier = Modifier.fillMaxWidth().height(177.dp),
+            radius = 14.dp,
+            autoPreview = autoPreview,
             onTap = onPlay,
         )
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(12.dp))
         Text(episode.title,
             modifier = Modifier.clickable(onClick = onPlay),
             color = Color.White, fontSize = 18.sp,
             fontWeight = FontWeight.Bold, maxLines = 2,
             lineHeight = 23.sp, minLines = 2)
         Spacer(Modifier.height(7.dp))
-        Text("Episodio · ${episode.album.ifBlank { episode.singer }}",
-            color = Color(0xFFB6B6B6), fontSize = 13.sp, maxLines = 1)
-        Spacer(Modifier.height(16.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(6.dp).background(Color(0xFF1ED760), CircleShape))
+            Spacer(Modifier.width(7.dp))
+            Text(
+                text = episode.album.ifBlank { episode.singer },
+                color = Color(0xFFD1D4DD),
+                fontSize = 12.sp,
+                maxLines = 1,
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = onShowClick)
+            )
+            if (episode.releaseDate.isNotBlank()) {
+                Spacer(Modifier.width(7.dp))
+                Text(episode.releaseDate, color = Color(0xFF989CA7), fontSize = 11.sp, maxLines = 1)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
         val description = episode.description.takeIf {
             it.isNotBlank() && it != episode.title
         } ?: "Continúa escuchando este episodio donde lo dejaste."
-        Text(description, color = Color(0xFFC5C5C5), fontSize = 13.sp,
-            lineHeight = 19.sp, minLines = 3, maxLines = 3)
-        Spacer(Modifier.height(17.dp))
+        Text(description, color = Color(0xFFADB0B9), fontSize = 12.sp,
+            lineHeight = 17.sp, minLines = 2, maxLines = 2)
+        Spacer(Modifier.height(12.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -1543,7 +1592,7 @@ private fun ContinuePodcastCard(
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val minsLeft = ((entry.durationMs - entry.positionMs).coerceAtLeast(0L) + 59_999L) / 60_000L
-                Text("${minsLeft} min", color = Color(0xFFC4C4C4), fontSize = 13.sp)
+                Text("${minsLeft} min restantes", color = Color(0xFFCDD0DA), fontSize = 12.sp)
                 Spacer(Modifier.width(12.dp))
                 Box(
                     modifier = Modifier.size(48.dp).clip(CircleShape)

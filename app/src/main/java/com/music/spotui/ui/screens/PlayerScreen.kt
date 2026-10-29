@@ -53,6 +53,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.shadow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AddCircle
 import androidx.compose.material.icons.outlined.Share
@@ -424,6 +425,7 @@ fun PlayerScreen(
     }
     var showMenu by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
+    var showPodcastDetails by remember { mutableStateOf(false) }
     var showSavedIn by remember { mutableStateOf(false) }
     var showArtistSheet by remember { mutableStateOf(false) }
     var showQueueSheet by remember { mutableStateOf(false) }
@@ -744,7 +746,9 @@ fun PlayerScreen(
                                     videoId = podcastVideoId,
                                     modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
                                         .clip(RoundedCornerShape(10.dp)),
-                                    onUseAudio = { PodcastVideoSession.stop() },
+                                    onUseAudio = {
+                                        podcastVideoId?.let { PodcastVideoSession.setEnabled(context, it, false) }
+                                    },
                                     surfacePriority = if (embedded) 1 else 2
                                 )
                             } else if (queueSongs.isEmpty()) {
@@ -933,7 +937,9 @@ fun PlayerScreen(
                                     videoId = podcastVideoId,
                                     modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
                                         .clip(RoundedCornerShape(10.dp)),
-                                    onUseAudio = { PodcastVideoSession.stop() },
+                                    onUseAudio = {
+                                        podcastVideoId?.let { PodcastVideoSession.setEnabled(context, it, false) }
+                                    },
                                     surfacePriority = if (embedded) 1 else 2
                                 )
                             } else if (queueSongs.isEmpty()) {
@@ -1135,14 +1141,30 @@ fun PlayerScreen(
                 }
             }
             item {
-                InlineLyrics(
-                    title = songTitle,
-                    artist = songSinger,
-                    album = playerViewModel.currentSongAlbum.value,
-                    accentColor = dominentColor,
-                    onExpand = { showLyrics = true },
-                )
+                if (currentEpisode != null) {
+                    InlinePodcastDetails(
+                        episode = currentEpisode,
+                        accentColor = dominentColor,
+                        onExpand = { showPodcastDetails = true },
+                    )
+                } else {
+                    InlineLyrics(
+                        title = songTitle,
+                        artist = songSinger,
+                        album = playerViewModel.currentSongAlbum.value,
+                        accentColor = dominentColor,
+                        onExpand = { showLyrics = true },
+                    )
+                }
             }
+        }
+
+        if (showPodcastDetails && currentEpisode != null) {
+            PodcastDetailsSheet(
+                episode = currentEpisode,
+                accentColor = dominentColor,
+                onDismiss = { showPodcastDetails = false }
+            )
         }
 
         if (showLyrics) {
@@ -1730,12 +1752,9 @@ fun PlayerFull(
         )
         }
         if (podcastEpisode) {
-            androidx.compose.material3.Text(
-                text = uiLocalized("↶15"),
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                modifier = Modifier.clickable {
+            com.music.spotui.ui.components.SeekFifteenIcon(
+                backwards = true,
+                modifier = Modifier.size(33.dp).clickable {
                     SongPlayer.seekTo((SongPlayer.getCurrentPosition() - 15_000L).coerceAtLeast(0L))
                 },
             )
@@ -1815,12 +1834,9 @@ fun PlayerFull(
         }
 
         if (podcastEpisode) {
-            androidx.compose.material3.Text(
-                text = uiLocalized("15↷"),
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                modifier = Modifier.clickable {
+            com.music.spotui.ui.components.SeekFifteenIcon(
+                backwards = false,
+                modifier = Modifier.size(33.dp).clickable {
                     val duration = SongPlayer.getDuration()
                     val target = SongPlayer.getCurrentPosition() + 15_000L
                     SongPlayer.seekTo(if (duration > 0L) target.coerceAtMost(duration) else target)
@@ -1969,6 +1985,8 @@ fun PlayerConnectRow(
     }
 
     val routeName by com.music.spotui.ui.utils.AudioDeviceHelper.currentRouteNameState
+    val bluetoothRoute by com.music.spotui.ui.utils.AudioDeviceHelper.bluetoothRouteActiveState
+    val outputColor = if (bluetoothRoute) Color(0xFF1ED760) else Color.White
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1988,13 +2006,13 @@ fun PlayerConnectRow(
         ) {
             Icon(
                 painter = painterResource(id = R.drawable.ic_devices),
-                tint = Color(0xFF1ED760),
+                tint = outputColor,
                 modifier = Modifier.size(18.dp),
                 contentDescription = uiLocalized("Device"),
             )
             Text(
                 text = routeName,
-                color = Color(0xFF1ED760),
+                color = outputColor,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -3130,4 +3148,231 @@ private fun CanvasVideo(url: String, modifier: Modifier = Modifier, onError: (()
         }
     }
     androidx.compose.ui.viewinterop.AndroidView(modifier = modifier, factory = { playerView })
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun InlinePodcastDetails(
+    episode: SongsModel,
+    accentColor: Color,
+    onExpand: () -> Unit,
+) {
+    val chapters = remember(episode.description) {
+        parsePodcastChapters(episode.description)
+    }
+    val descriptionPreview = remember(episode.description) {
+        buildEpisodePreview(episode.description).ifBlank { episode.description.take(180) }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp, 8.dp, 16.dp, 40.dp)
+            .shadow(
+                elevation = 8.dp,
+                shape = RoundedCornerShape(16.dp),
+                clip = false
+            )
+            .clip(RoundedCornerShape(16.dp))
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        accentColor.copy(alpha = 0.45f),
+                        accentColor.copy(alpha = 0.35f)
+                    )
+                )
+            )
+            .background(Color.Black.copy(alpha = 0.45f))
+            .border(
+                width = 1.dp,
+                color = Color.White.copy(alpha = 0.25f),
+                shape = RoundedCornerShape(16.dp)
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) { onExpand() }
+            .padding(20.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.List,
+                    contentDescription = null,
+                    tint = Color(0xFF1ED760),
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (chapters.isNotEmpty()) "Capítulos y Descripción" else "Descripción del Episodio",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Text(
+                text = "Ver todo",
+                color = Color(0xFF1ED760),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (chapters.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                chapters.take(3).forEach { chapter ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.White.copy(alpha = 0.08f))
+                            .clickable { SongPlayer.seekTo(chapter.timeMs) }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = chapter.timeFormatted,
+                            color = Color(0xFF1ED760),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.width(55.dp)
+                        )
+                        Text(
+                            text = chapter.title,
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+
+        if (descriptionPreview.isNotBlank()) {
+            Text(
+                text = descriptionPreview,
+                color = Color.White.copy(alpha = 0.85f),
+                fontSize = 13.sp,
+                maxLines = 3,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                lineHeight = 18.sp
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PodcastDetailsSheet(
+    episode: SongsModel,
+    accentColor: Color,
+    onDismiss: () -> Unit,
+) {
+    val chapters = remember(episode.description) {
+        parsePodcastChapters(episode.description)
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF1B1B1B),
+        scrimColor = Color.Black.copy(alpha = 0.6f)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+        ) {
+            Text(
+                text = episode.title,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 20.sp,
+                maxLines = 2,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+            Text(
+                text = episode.singer,
+                color = Color(0xFF1ED760),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            androidx.compose.foundation.lazy.LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                if (chapters.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = "Capítulos",
+                            color = Color.White,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    items(chapters.size) { index ->
+                        val chapter = chapters[index]
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color.White.copy(alpha = 0.06f))
+                                .clickable {
+                                    SongPlayer.seekTo(chapter.timeMs)
+                                    onDismiss()
+                                }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = chapter.timeFormatted,
+                                color = Color(0xFF1ED760),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.width(65.dp)
+                            )
+                            Text(
+                                text = chapter.title,
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+
+                if (episode.description.isNotBlank()) {
+                    item {
+                        Text(
+                            text = "Descripción del episodio",
+                            color = Color.White,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = episode.description,
+                            color = Color.White.copy(alpha = 0.85f),
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+        }
+    }
 }

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A TextureView composites correctly during Compose size/alpha transitions,
-     unlike a separately-positioned SurfaceView on several Xiaomi tablets. -->
+<!-- TextureView is required for Compose transitions, clipping and PiP on
+     devices where SurfaceView remains invisible or is detached during handoff. -->
 <androidx.media3.ui.PlayerView
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"

@@ -20,6 +20,11 @@ data class AlternativeStream(
 }
 
 private const val PREF = "AlternativeStreams"
+// Bounded process cache; SharedPreferences remains the durable source of truth.
+private val hotStreams = object : LinkedHashMap<String, AlternativeStream?>(128, .75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, AlternativeStream?>?): Boolean = size > 200
+}
+private val hotLock = Any()
 
 fun alternativeStreamKey(song: SongsModel): String =
     song.spotifyTrackId.takeIf { it.isNotBlank() }?.let { "spotify:$it" } ?: "song:${song.id}"
@@ -42,10 +47,13 @@ private fun parseAlternativeStream(raw: String): AlternativeStream? = runCatchin
     ).takeIf { it.value.isNotBlank() && (it.isYouTube || it.isLocal) }
 }.getOrNull()
 
-fun getAlternativeStream(context: Context, key: String): AlternativeStream? =
-    context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-        .getString(key, null)
-        ?.let(::parseAlternativeStream)
+fun getAlternativeStream(context: Context, key: String): AlternativeStream? {
+    synchronized(hotLock) { if (hotStreams.containsKey(key)) return hotStreams[key] }
+    val loaded = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        .getString(key, null)?.let(::parseAlternativeStream)
+    synchronized(hotLock) { hotStreams[key] = loaded }
+    return loaded
+}
 
 fun setYouTubeAlternativeStream(context: Context, key: String, videoId: String) {
     val stream = AlternativeStream(
@@ -53,6 +61,7 @@ fun setYouTubeAlternativeStream(context: Context, key: String, videoId: String) 
         value = videoId,
         label = "YouTube video",
     )
+    synchronized(hotLock) { hotStreams[key] = stream }
     context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         .edit()
         .putString(key, stream.toJson())
@@ -65,6 +74,7 @@ fun setLocalAlternativeStream(context: Context, key: String, uri: Uri, label: St
         value = uri.toString(),
         label = label.ifBlank { uri.lastPathSegment.orEmpty() },
     )
+    synchronized(hotLock) { hotStreams[key] = stream }
     context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         .edit()
         .putString(key, stream.toJson())
@@ -72,6 +82,7 @@ fun setLocalAlternativeStream(context: Context, key: String, uri: Uri, label: St
 }
 
 fun clearAlternativeStream(context: Context, key: String) {
+    synchronized(hotLock) { hotStreams.remove(key) }
     context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         .edit()
         .remove(key)
@@ -79,6 +90,7 @@ fun clearAlternativeStream(context: Context, key: String) {
 }
 
 fun clearAllAlternativeStreams(context: Context) {
+    synchronized(hotLock) { hotStreams.clear() }
     context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         .edit()
         .clear()
@@ -99,6 +111,7 @@ fun getAllAlternativeStreams(context: Context): Map<String, AlternativeStream> {
 }
 
 fun restoreAlternativeStreams(context: Context, streams: Map<String, AlternativeStream>) {
+    synchronized(hotLock) { hotStreams.clear(); hotStreams.putAll(streams) }
     val editor = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
     for ((key, stream) in streams) {
         editor.putString(key, stream.toJson())

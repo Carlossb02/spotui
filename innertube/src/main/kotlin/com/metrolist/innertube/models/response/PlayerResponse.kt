@@ -62,8 +62,15 @@ data class PlayerResponse(
             val lastModified: Long?,
             val signatureCipher: String?,
             val cipher: String?,
-            val audioTrack: AudioTrack?
+            val audioTrack: AudioTrack?,
+            // YouTube adaptive MP4 exposes byte ranges for ISO-BMFF/SIDX.
+            // Optional for older clients and tests; required to offer genuine
+            // seamless DASH quality switches rather than re-preparing a URL.
+            val initRange: ByteRange? = null,
+            val indexRange: ByteRange? = null,
         ) {
+            @Serializable
+            data class ByteRange(val start: String, val end: String)
             val isAudio: Boolean
                 get() = width == null
 

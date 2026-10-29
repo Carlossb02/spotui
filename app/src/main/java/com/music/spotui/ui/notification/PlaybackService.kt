@@ -375,6 +375,7 @@ class PlaybackService : MediaLibraryService() {
                 com.music.spotui.ui.screens.PodcastVideoSession.activeVideoId != null) {
                 android.util.Log.w("PlaybackService", "A/V source failed; falling back to podcast audio", error)
                 com.music.spotui.ui.screens.PodcastVideoSession.stop()
+                SongPlayer.disablePodcastVideo()
                 return
             }
             if (SongPlayer.isCrossfadeActive()) {
@@ -410,7 +411,7 @@ class PlaybackService : MediaLibraryService() {
                 errorRetryCounts[songUrl] = retries + 1
                 android.util.Log.w("PlaybackService", "Transient loading error for $songUrl (attempt ${retries + 1}), retrying playback instead of skipping...")
                 // Preserve an arbitrary seek, even if the failed source never reached READY.
-                val seekPosition = SongPlayer.getCurrentPosition().coerceAtLeast(0L)
+                val seekPosition = SongPlayer.positionForStreamRecovery(songUrl)
                 if (seekPosition > 0L) SongPlayer.setRestorePoint(songUrl, seekPosition)
                 SongPlayer.invalidateResolvedStream(songUrl)
                 val mediaId = if (cur >= 0) "song/${queue[cur].id}" else currentSongState.songId.value.let { if (it != 0) "song/$it" else null }
@@ -1657,45 +1658,37 @@ class PlaybackService : MediaLibraryService() {
         android.util.Log.w("SpotuiLifecycle", "Unable to inspect app tasks", it)
     }.getOrNull()
 
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        val playingOrPreparing = isPlaybackOngoing() ||
-            SongPlayer.isResolvingOrPlaying() || SongPlayer.isPreparingTrack() ||
-            SpotifyWebPlayer.isPlaying
-        PlaybackLifecycleDiagnostics.record(this,
-            "task_removed_candidate active=$playingOrPreparing taskPresent=${hasSpotuiTaskInRecents()}")
-
-        if (!playingOrPreparing) {
-            // Official Media3 behavior for genuinely idle playback.
-            super.onTaskRemoved(rootIntent)
-            return
+    private fun saveLivePlaybackCheckpoint() {
+        // The Activity may disappear while the service remains owner of the
+        // session. Write just the position; never touch playWhenReady or a player.
+        val pos = SongPlayer.getCurrentPosition()
+        if (pos > 0L && currentSongState.songUrl.value.isNotBlank()) {
+            com.music.spotui.data.preferences.saveLastPosition(applicationContext, pos)
         }
+        com.music.spotui.data.preferences.PodcastResumeStore.flush(applicationContext)
+    }
 
-        taskRemovalCheckJob?.cancel()
-        taskRemovalCheckJob = serviceScope.launch {
-            kotlinx.coroutines.delay(1_500L)
-            val firstCheck = hasSpotuiTaskInRecents()
-            if (firstCheck != false) {
-                PlaybackLifecycleDiagnostics.record(this@PlaybackService,
-                    "task_removal_ignored firstCheck=$firstCheck")
-                return@launch
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        saveLivePlaybackCheckpoint()
+        // MediaSessionService is deliberately independent of the Activity task.
+        // A user switching applications (or clearing Recents) must not silently
+        // stop active playback or throw away an in-flight YouTube resolution.
+        // Media3's base implementation handles idle service shutdown.
+        val ongoing = isPlaybackOngoing() || SongPlayer.isResolvingOrPlaying() ||
+            SongPlayer.isPreparingTrack() || SpotifyWebPlayer.isPlaying
+        PlaybackLifecycleDiagnostics.record(this,
+            "task_removed ongoing=$ongoing; preserving_service_owned_playback")
+        if (!ongoing) {
+            super.onTaskRemoved(rootIntent)
+        } else {
+            mediaSession?.let { session ->
+                runCatching { updateOwnedPlaybackNotification(session) }
             }
-            kotlinx.coroutines.delay(1_500L)
-            val secondCheck = hasSpotuiTaskInRecents()
-            if (secondCheck != false) {
-                PlaybackLifecycleDiagnostics.record(this@PlaybackService,
-                    "task_removal_ignored secondCheck=$secondCheck")
-                return@launch
-            }
-            PlaybackLifecycleDiagnostics.record(this@PlaybackService,
-                "task_removal_confirmed stopping_player")
-            SpotifyWebPlayer.pause()
-            SongPlayer.stop()
-            currentSongState.updatePlayingState(false)
-            pauseAllPlayersAndStopSelf()
         }
     }
 
     override fun onDestroy() {
+        saveLivePlaybackCheckpoint()
         PlaybackLifecycleDiagnostics.record(this, "service_destroy " +
             "fgs=${isPlaybackOngoing()} playing=${SongPlayer.isPlaying()} " +
             "preparing=${SongPlayer.isPreparingTrack()} crossfade=${SongPlayer.isCrossfadeActive()}")

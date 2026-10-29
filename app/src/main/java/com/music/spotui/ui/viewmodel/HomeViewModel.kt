@@ -61,15 +61,34 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository)  
     val isFollowingOnly: StateFlow<Boolean> = _isFollowingOnly
 
     init {
+        // The feed carries artwork and sections for the landing screen.
+        // Launching three legacy catalogue calls at the same instant can
+        // compete with playback and podcast resolution for Spotify sockets.
         fetchHome()
+        fetchFollowedArtists()
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(1_800L)
+            var checks = 0
+            while (checks < 10 && com.music.spotui.di.SongPlayer.isPreparingTrack()) {
+                checks++
+                kotlinx.coroutines.delay(1_000L)
+            }
+            ensureMusicCatalogueLoaded()
+        }
+    }
+
+    private var catalogueStarted = false
+    fun ensureMusicCatalogueLoaded() {
+        if (catalogueStarted) return
+        catalogueStarted = true
         fetchArtists()
         fetchAlbums()
         fetchSongs()
-        fetchFollowedArtists()
     }
 
     fun setSelectedFilter(filter: String) {
         if (_selectedFilter.value != filter) {
+            if (filter == "Music") ensureMusicCatalogueLoaded()
             _selectedFilter.value = filter
             _isFollowingOnly.value = false
             if (filter == "Podcasts") {

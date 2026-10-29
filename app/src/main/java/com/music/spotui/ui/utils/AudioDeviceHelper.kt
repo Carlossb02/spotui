@@ -34,9 +34,29 @@ object AudioDeviceHelper {
     private var forcedSpeakerMode: Boolean = false
 
     val currentRouteNameState = androidx.compose.runtime.mutableStateOf("This Phone (Speaker)")
+    val bluetoothRouteActiveState = androidx.compose.runtime.mutableStateOf(false)
 
     fun updateRouteName(context: Context) {
         currentRouteNameState.value = getCurrentAudioRouteName(context)
+        bluetoothRouteActiveState.value = isBluetoothRouteActive(context)
+    }
+
+    /** Reflect the route selected by this app; do not colour the icon green
+     * merely because a Bluetooth headset is paired but not used. */
+    fun isBluetoothRouteActive(context: Context): Boolean {
+        if (forcedSpeakerMode) return false
+        return try {
+            val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val outputs = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            val current = getCurrentAudioRouteName(context)
+            outputs.any { output ->
+                val bt = output.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                    output.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                        output.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+                bt && cleanDeviceName(output.productName).equals(current, ignoreCase = true)
+            }
+        } catch (_: Exception) { false }
     }
 
     fun hasBluetoothPermission(context: Context): Boolean {

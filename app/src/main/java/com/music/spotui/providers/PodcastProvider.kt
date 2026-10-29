@@ -44,6 +44,90 @@ object PodcastProvider {
     private const val MAX_SHOWS_FOR_EPISODES = 5
     private const val MAX_EPISODES_PER_SHOW = 10
 
+    // Episode -> true show ID, populated when show results are browsed. It is a
+    // hint for radio only, never influences audio matching or the player URL.
+    private val knownEpisodeShows = java.util.concurrent.ConcurrentHashMap<String, Pair<String, String>>()
+    private val episodeMemoryCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<SongsModel>>>()
+    private const val EPISODE_CACHE_TTL_MS = 15 * 60_000L
+
+    private const val SHOW_MAP_PREFS = "spotui_episode_show_map_v1"
+    private const val SHOW_MAP_TTL_MS = 30L * 24 * 60 * 60 * 1000
+
+    fun knownShowForEpisode(url: String): Pair<String, String>? {
+        if (!url.startsWith("yt_ep:")) return null
+        val episodeId = url.removePrefix("yt_ep:").substringBefore('|')
+        knownEpisodeShows[episodeId]?.let { return it }
+        // Recent episode cards survive process death; this association must too.
+        val saved = runCatching {
+            MyApplication.instance.getSharedPreferences(SHOW_MAP_PREFS, android.content.Context.MODE_PRIVATE)
+                .getString(episodeId, null)
+        }.getOrNull() ?: return null
+        val parts = saved.split('\n', limit = 3)
+        if (parts.size != 3 ||
+            System.currentTimeMillis() - (parts[0].toLongOrNull() ?: 0L) !in 0L..SHOW_MAP_TTL_MS ||
+            parts[1].isBlank()) return null
+        val result = parts[1] to parts[2]
+        knownEpisodeShows[episodeId] = result
+        return result
+    }
+
+    private fun rememberEpisodes(showId: String, showName: String, episodes: List<SongsModel>) {
+        if (showId.isBlank() || episodes.isEmpty()) return
+        if (knownEpisodeShows.size > 1500) knownEpisodeShows.clear()
+        val prefs = MyApplication.instance.getSharedPreferences(
+            SHOW_MAP_PREFS, android.content.Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        val now = System.currentTimeMillis()
+        // The most recent show entries are enough for continue-listening radio;
+        // avoid writing hundreds of old episode keys from playlist continuations.
+        episodes.take(40).forEach { episode ->
+            if (episode.url.startsWith("yt_ep:")) {
+                val episodeId = episode.url.removePrefix("yt_ep:").substringBefore('|')
+                knownEpisodeShows[episodeId] = showId to showName
+                editor.putString(episodeId, "$now\n$showId\n$showName")
+            }
+        }
+        editor.apply()
+    }
+
+    /** Restore a podcast association for episodes opened from recent history.
+     * Spotify-like recent cards often carry the episode title and show name but
+     * no MPSP browse ID. Never guess the ID from a creator name; require the
+     * exact episode video ID in a verified YouTube Music episode result. */
+    suspend fun findShowByExactEpisode(episodeUrl: String, episodeTitle: String): PodcastModel? =
+        withContext(Dispatchers.IO) {
+            val videoId = episodeUrl.removePrefix(YOUTUBE_EPISODE_PREFIX).substringBefore('|')
+            if (!episodeUrl.startsWith(YOUTUBE_EPISODE_PREFIX) ||
+                !videoId.matches(Regex("[A-Za-z0-9_-]{11}")) || episodeTitle.isBlank())
+                return@withContext null
+            knownShowForEpisode(episodeUrl)?.let { (id, name) ->
+                return@withContext PodcastModel(id = id, name = name, publisher = "", coverUri = "")
+            }
+            val exact = withTimeoutOrNull(7_000L) {
+                YouTube.search(episodeTitle, YouTube.SearchFilter.FILTER_EPISODE)
+                    .getOrNull()?.items.orEmpty()
+                    .filterIsInstance<EpisodeItem>()
+                    .firstOrNull { it.id == videoId && !it.podcast?.id.isNullOrBlank() }
+            } ?: return@withContext null
+            // episodeToSong persists the verified episode -> show mapping.
+            episodeToSong(exact)
+            val podcast = exact.podcast ?: return@withContext null
+            val showId = podcast.id.let { if (it.startsWith(YOUTUBE_PODCAST_PREFIX)) it
+                else "$YOUTUBE_PODCAST_PREFIX$it" }
+            PodcastModel(id = showId, name = podcast.name,
+                publisher = exact.author?.name.orEmpty(), coverUri = exact.thumbnail)
+        }
+
+    /** One fast podcast-only search, ranked by show name; avoids the second
+     * independent episode search used by searchPodcasts(). */
+    suspend fun findShowForAutofill(name: String): PodcastModel? = withContext(Dispatchers.IO) {
+        if (name.isBlank() || name == "Podcast") return@withContext null
+        val candidates = YouTube.search(name, YouTube.SearchFilter.FILTER_PODCAST)
+            .getOrNull()?.items.orEmpty().mapNotNull { itemToShow(it) }
+        candidates.maxByOrNull { podcastNameScore(name, it.name) }
+            ?.takeIf { podcastNameScore(name, it.name) >= 70 }
+    }
+
     private const val BROWSE_URL =
         "https://music.youtube.com/youtubei/v1/browse?prettyPrint=false"
     private const val CLIENT_VERSION = "1.20250310.01.00"
@@ -129,6 +213,16 @@ object PodcastProvider {
         showName: String = ""
     ): SongsModel {
         val videoId = episode.id
+        val pod = episode.podcast
+        pod?.id?.takeIf { it.isNotBlank() }?.let { showId ->
+            val realShowId = if (showId.startsWith(YOUTUBE_PODCAST_PREFIX)) showId else "$YOUTUBE_PODCAST_PREFIX$showId"
+            val realShowName = pod.name.ifBlank { showName }
+            knownEpisodeShows[videoId] = realShowId to realShowName
+            runCatching {
+                MyApplication.instance.getSharedPreferences(SHOW_MAP_PREFS, android.content.Context.MODE_PRIVATE)
+                    .edit().putString(videoId, "${System.currentTimeMillis()}\n$realShowId\n$realShowName").apply()
+            }
+        }
         val authorName = episode.author?.name?.takeIf { it.isNotBlank() } ?: showName
         val queryText = listOf(episode.title, authorName).filter { it.isNotBlank() }.joinToString(" ")
 
@@ -504,9 +598,16 @@ object PodcastProvider {
                 .orEmpty()
                 .ifBlank { defaultCover }
 
-            // Descripción y textos secundarios
+            // Descripción y textos secundarios (extraídos solo de flexColumns, subtitle y description)
             val allTexts = mutableListOf<String>()
-            collectTexts(obj, allTexts)
+            val flex = obj.optJSONArray("flexColumns")
+            if (flex != null) {
+                for (fIdx in 0 until flex.length()) {
+                    collectTexts(flex.optJSONObject(fIdx), allTexts)
+                }
+            }
+            obj.optJSONObject("subtitle")?.let { collectTexts(it, allTexts) }
+            obj.optJSONObject("description")?.let { collectTexts(it, allTexts) }
 
             var durationMs = 0
             var releaseDate = ""
@@ -673,6 +774,16 @@ object PodcastProvider {
             return@flow
         }
 
+        // Emisión instantánea desde caché en memoria si está fresco
+        val cached = episodeMemoryCache[showId]
+        val now = System.currentTimeMillis()
+        if (cached != null && now - cached.first < EPISODE_CACHE_TTL_MS && cached.second.isNotEmpty()) {
+            emit(cached.second)
+            if (now - cached.first < 3 * 60_000L) {
+                return@flow
+            }
+        }
+
         if (showId.startsWith(LEGACY_SPOTIFY_SHOW_PREFIX)) {
             val youtubeShow = showName.takeIf { it.isNotBlank() }
                 ?.let { withTimeoutOrNull(15_000L) { resolveCuratedPodcast(it) } }
@@ -700,6 +811,8 @@ object PodcastProvider {
                 val initialEpisodes = parseEpisodesFromBrowse(root, resolvedName, headerShow?.coverUri.orEmpty())
                 if (initialEpisodes.isNotEmpty()) {
                     val allEpisodes = initialEpisodes.toMutableList()
+                    rememberEpisodes(showId, resolvedName, allEpisodes)
+                    episodeMemoryCache[showId] = System.currentTimeMillis() to allEpisodes.toList()
                     emit(allEpisodes.toList())
 
                     var currentRoot = root
@@ -714,6 +827,8 @@ object PodcastProvider {
                         val newEpisodes = nextBatch.filter { ep -> allEpisodes.none { it.id == ep.id } }
                         if (newEpisodes.isEmpty()) break
                         allEpisodes.addAll(newEpisodes)
+                        rememberEpisodes(showId, resolvedName, newEpisodes)
+                        episodeMemoryCache[showId] = System.currentTimeMillis() to allEpisodes.toList()
                         emit(allEpisodes.toList())
                         currentRoot = contRoot
                         pageCount++
@@ -734,6 +849,7 @@ object PodcastProvider {
             if (page != null && page.episodes.isNotEmpty()) {
                 resolvedName = page.podcast.title.ifBlank { showName }
                 val eps = page.episodes.map { episodeToSong(it, resolvedName) }
+                rememberEpisodes(showId, resolvedName, eps)
                 emit(eps)
                 return@flow
             }

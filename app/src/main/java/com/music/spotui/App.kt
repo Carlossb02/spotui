@@ -231,5 +231,8 @@ fun App() {
                 MyNavHost(navHostController = navController, searchFocusTrigger = searchFocusTrigger)
             }
         }
+        // Keep one tiny visual surface in the activity so hiding the video or
+        // moving between mini/fullscreen does not tear down its decoder.
+        com.music.spotui.ui.screens.PodcastStandbyVideoSurface(currentPodcastId)
     }
 }

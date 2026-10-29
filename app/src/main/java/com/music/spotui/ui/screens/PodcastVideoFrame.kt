@@ -43,6 +43,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
@@ -102,23 +103,54 @@ data class PodcastVideoQuality(
     val url: String,
     val mimeType: String,
     val muxed: Boolean = false,
+    val frameRate: Int = 30,
+    val verifiedForStartup: Boolean = false,
 ) {
     val label: String get() = "${height}p"
 }
 
 internal object PodcastVideoStreams {
     private val previewCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, PodcastVideoQuality>>()
+    private val videoOptionsCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<PodcastVideoQuality>>>()
+    // Signed format URLs can expire earlier than YouTube's advertised expiry;
+    // keep this cache short and prefer the response already verified by audio.
+    private const val VIDEO_OPTIONS_TTL_MS = 90_000L
+    private val resolvingLock = Any()
+    private val resolvingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val inFlight = HashMap<String, Deferred<List<PodcastVideoQuality>>>()
+    private val priming = HashMap<String, Deferred<List<PodcastVideoQuality>>>()
+    private val adaptiveManifestCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, MediaItem>>()
+    private val adaptiveLowestHeight = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private val alternativeVideoResponses = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, PlayerResponse>>()
+    private fun keepMatchingResponse(videoId: String, response: PlayerResponse) {
+        if (response.playabilityStatus.status == "OK" &&
+            response.videoDetails?.videoId == videoId) {
+            if (alternativeVideoResponses.size > 20) {
+                val now = System.currentTimeMillis()
+                alternativeVideoResponses.entries.removeIf {
+                    now - it.value.first !in 0L..VIDEO_OPTIONS_TTL_MS
+                }
+            }
+            alternativeVideoResponses[videoId] = System.currentTimeMillis() to response
+        }
+    }
+    fun lowestAdaptiveHeight(videoId: String): Int? = adaptiveLowestHeight[videoId]
+
+    // Shared connections avoid a fresh TLS setup and thread pool for each quality probe.
+    private val videoProbeClient by lazy {
+        okhttp3.OkHttpClient.Builder()
+            .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(4, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
 
     suspend fun isReadable(url: String): Boolean = withContext(Dispatchers.IO) {
         runCatching {
             val request = okhttp3.Request.Builder().url(url)
                 .header("User-Agent", "com.google.ios.youtube/21.03.1 (iPhone16,2; U; CPU iOS 18_2 like Mac OS X;)")
                 .header("Range", "bytes=0-1023").build()
-            val client = okhttp3.OkHttpClient.Builder()
-                .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
-                .callTimeout(4, java.util.concurrent.TimeUnit.SECONDS).build()
-            client.newCall(request).execute().use { result ->
+            videoProbeClient.newCall(request).execute().use { result ->
                 val valid = result.code == 200 || result.code == 206
                 val readable = valid && result.body?.source()?.request(1L) == true
                 Log.d("SpotuiPodcastVideo", "video stream probe status=${result.code} readable=$readable")
@@ -127,13 +159,237 @@ internal object PodcastVideoStreams {
         }.getOrElse { false }
     }
 
+    /** A raw Innertube HTTPS URL may still be throttled or rejected (403).
+     * Probe at most two small startup renditions with HTTP Range on IO,
+     * sequentially: do not leave a second HTTP request holding up a successful
+     * first source. Never read the entire video.
+     * Keep the rest of the quality catalogue and its manual selection intact. */
+    private suspend fun playableAtStartup(options: List<PodcastVideoQuality>): List<PodcastVideoQuality> = coroutineScope {
+        // A muxed MP4 (itag 18/22) is also usable when audio selection is
+        // disabled in the companion player. It must not be rejected if YouTube
+        // offers no separate video-only tracks.
+        val byStartup = compareBy<PodcastVideoQuality> {
+            if (it.height in 144..360) 0 else if (it.height in 361..480) 1 else 2
+        }.thenBy { it.height }
+        val videoOnly = options.filterNot { it.muxed }.sortedWith(byStartup).take(2)
+        // Verify a muxed MP4 as an emergency fallback as well: the companion
+        // player's AUDIO track is disabled, so no second soundtrack is heard.
+        val muxedFallback = options.filter { it.muxed }.sortedWith(byStartup).take(1)
+        val candidates = (videoOnly + muxedFallback).ifEmpty { options.sortedWith(byStartup).take(2) }
+        if (candidates.isEmpty()) return@coroutineScope emptyList()
+        // Each probe is just a 1 KiB Range. Parallel failure checks save a whole
+        // network roundtrip without skipping CDN verification (the v4 black screen).
+        val pending = candidates.mapIndexed { i, choice ->
+            i to async { isReadable(choice.url) }
+        }.toMutableList()
+        var firstGood: Int? = null
+        val failedUrls = HashSet<String>()
+        while (pending.isNotEmpty()) {
+            // A playable rendition may arrive before the preferred one. Use
+            // it immediately, never wait for a slow/blocked range request.
+            val result = kotlinx.coroutines.selects.select<Pair<Int, Boolean>> {
+                pending.forEach { (index, task) -> task.onAwait { index to it } }
+            }
+            pending.removeAll { it.first == result.first }
+            if (result.second) { firstGood = result.first; break }
+            failedUrls.add(candidates[result.first].url)
+        }
+        pending.forEach { it.second.cancel() }
+        val selected = firstGood?.let { candidates[it] } ?: return@coroutineScope emptyList()
+        options.filterNot { it.url in failedUrls }.map {
+            if (it.url == selected.url) it.copy(verifiedForStartup = true) else it
+        }
+    }
+
+    /** No-network hot path: immediately reuse direct unthrottled video URLs from
+     * the response already fetched for the SAME podcast's audio. Media3 itself
+     * validates the stream and the existing fallback handles any 403. A signed
+     * URL with an undeciphered `n` parameter is NOT used here: those must go
+     * through the normal decipher/fallback path to avoid a black frame. */
+    fun immediateFromAudio(videoId: String): List<PodcastVideoQuality> {
+        val now = System.currentTimeMillis()
+        videoOptionsCache[videoId]?.takeIf { now - it.first in 0L..VIDEO_OPTIONS_TTL_MS }
+            ?.second?.takeIf { it.isNotEmpty() }?.let { return it }
+        val response = com.metrolist.music.utils.YTPlayerUtils.recentVideoResponse(videoId)
+            ?: return emptyList()
+        if (response.playabilityStatus.status != "OK" ||
+            response.videoDetails?.videoId != videoId) return emptyList()
+        val result = response.streamingData?.adaptiveFormats.orEmpty()
+            .asSequence()
+            .filter { it.mimeType.startsWith("video/") &&
+                (it.height ?: 0) in 144..720 && (it.fps ?: 30) <= 30 }
+            .sortedWith(compareByDescending<PlayerResponse.StreamingData.Format> {
+                it.mimeType.startsWith("video/mp4") && it.mimeType.contains("avc1")
+            }.thenBy { kotlin.math.abs((it.height ?: 360) - 360) })
+            .mapNotNull { f ->
+                val direct = f.url?.takeIf { url -> url.startsWith("https://") &&
+                    !Regex("[?&]n=").containsMatchIn(url) }
+                    ?: return@mapNotNull null
+                PodcastVideoQuality(
+                    height = f.height ?: 360, url = direct,
+                    mimeType = if (f.mimeType.startsWith("video/webm"))
+                        MimeTypes.VIDEO_WEBM else MimeTypes.VIDEO_MP4,
+                    frameRate = f.fps ?: 30,
+                )
+            }.distinctBy { it.height }.take(4).toList()
+        if (result.isNotEmpty()) {
+            videoOptionsCache[videoId] = now to result
+            Log.i("SpotuiStartup", "video source reused from audio metadata without extra HTTP requests")
+        }
+        return result
+    }
+
+    /** Construct an on-demand DASH adaptation set from video-only MP4 URLs.
+     * Works only if the already-fetched response includes *real* init/index
+     * ranges (SIDX); inventing byte ranges causes black frames. A single
+     * Media3 DASH source then switches representations according to measured
+     * bandwidth without resetting the podcast audio or video timeline.
+     * If any prerequisite is missing, progressive playback remains available.
+     */
+    fun seamlessAdaptiveItem(videoId: String): MediaItem? {
+        val now = System.currentTimeMillis()
+        adaptiveManifestCache[videoId]?.takeIf { now - it.first in 0L..VIDEO_OPTIONS_TTL_MS }
+            ?.second?.let { return it }
+        val response = listOfNotNull(
+            com.metrolist.music.utils.YTPlayerUtils.recentVideoResponse(videoId),
+            alternativeVideoResponses[videoId]
+                ?.takeIf { now - it.first in 0L..VIDEO_OPTIONS_TTL_MS }?.second,
+        ).firstOrNull { candidate ->
+            candidate.playabilityStatus.status == "OK" &&
+                candidate.videoDetails?.videoId == videoId &&
+                candidate.streamingData?.adaptiveFormats.orEmpty().count { f ->
+                    f.mimeType.startsWith("video/mp4") && f.mimeType.contains("avc1") &&
+                        f.initRange != null && f.indexRange != null &&
+                        f.url?.let { url -> url.startsWith("https://") &&
+                            !Regex("[?&]n=").containsMatchIn(url) } == true
+                } >= 2
+        } ?: return null
+        val duration = response.videoDetails?.lengthSeconds?.toLongOrNull()
+            ?.takeIf { it > 0 } ?: return null
+        data class Rendition(
+            val format: PlayerResponse.StreamingData.Format,
+            val direct: String,
+            val codec: String,
+            val initStart: Long, val initEnd: Long, val indexStart: Long, val indexEnd: Long
+        )
+        val formats = response.streamingData?.adaptiveFormats.orEmpty()
+            .mapNotNull { f ->
+                val direct = f.url?.takeIf { url -> url.startsWith("https://") &&
+                    !Regex("[?&]n=").containsMatchIn(url) } ?: return@mapNotNull null
+                if (!f.mimeType.startsWith("video/mp4") ||
+                    !f.mimeType.contains("avc1") || (f.height ?: 0) !in 144..1080 ||
+                    (f.fps ?: 30) > 30) return@mapNotNull null
+                val initialization = f.initRange ?: return@mapNotNull null
+                val segmentIndex = f.indexRange ?: return@mapNotNull null
+                val initS = initialization.start.toLongOrNull() ?: return@mapNotNull null
+                val initE = initialization.end.toLongOrNull() ?: return@mapNotNull null
+                val indexS = segmentIndex.start.toLongOrNull() ?: return@mapNotNull null
+                val indexE = segmentIndex.end.toLongOrNull() ?: return@mapNotNull null
+                if (initS < 0 || initE < initS || indexS < 0 || indexE < indexS) return@mapNotNull null
+                val codec = Regex("avc1\\.[0-9A-Fa-f]+")
+                    .find(f.mimeType)?.value ?: return@mapNotNull null
+                Rendition(f, direct, codec, initS, initE, indexS, indexE)
+            }
+            .distinctBy { it.format.height }
+            .sortedBy { it.format.bitrate }
+        if (formats.size < 2 || formats.none { (it.format.height ?: 0) <= 480 }) return null
+        adaptiveLowestHeight[videoId] = formats.minOf { it.format.height ?: 360 }
+        fun xml(value: String): String = value.replace("&", "&amp;")
+            .replace("<", "&lt;").replace(">", "&gt;")
+            .replace("\"", "&quot;")
+        val xmlManifest = buildString {
+            append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+            append("<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\" type=\"static\"")
+            append(" profiles=\"urn:mpeg:dash:profile:isoff-on-demand:2011\"")
+            append(" minBufferTime=\"PT1S\" mediaPresentationDuration=\"PT${duration}S\">")
+            append("<Period id=\"podcast\" start=\"PT0S\">")
+            append("<AdaptationSet id=\"0\" contentType=\"video\" mimeType=\"video/mp4\"")
+            append(" segmentAlignment=\"true\" startWithSAP=\"1\">")
+            formats.forEach { r ->
+                val f = r.format
+                append("<Representation id=\"${f.itag}\" bandwidth=\"${f.bitrate}\"")
+                append(" width=\"${f.width ?: 640}\" height=\"${f.height}\"")
+                append(" codecs=\"${r.codec}\" frameRate=\"${f.fps ?: 30}\">")
+                append("<BaseURL>${xml(r.direct)}</BaseURL>")
+                append("<SegmentBase indexRange=\"${r.indexStart}-${r.indexEnd}\">")
+                append("<Initialization range=\"${r.initStart}-${r.initEnd}\"/>")
+                append("</SegmentBase></Representation>")
+            }
+            append("</AdaptationSet></Period></MPD>")
+        }
+        val encoded = android.util.Base64.encodeToString(
+            xmlManifest.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+        Log.i("SpotuiStartup", "Video DASH adaptation set available: ${formats.size} renditions")
+        return MediaItem.Builder()
+            .setUri("data:application/dash+xml;base64,$encoded")
+            .setMimeType(MimeTypes.APPLICATION_MPD)
+            .build().also { adaptiveManifestCache[videoId] = now to it }
+    }
+
+    /** Cheap prewarming path for URLs requiring YouTube `n` decoding.
+     * Decode just ONE suitable visual rendition, never eight and never run a
+     * separate CDN probe on a link that Media3 will validate when preparing.
+     * Can be called just after audio begins; the resulting cache is reused on
+     * the video toggle, avoiding a second Innertube lookup altogether. */
+    suspend fun primeFromAudio(videoId: String): List<PodcastVideoQuality> {
+        immediateFromAudio(videoId).takeIf { it.isNotEmpty() }?.let { return it }
+        // Prewarming and the user's toggle must await the SAME decipher job.
+        // The otherwise duplicated JavaScript resolution can monopolise CPU.
+        val pending = synchronized(resolvingLock) {
+            priming[videoId] ?: resolvingScope.async {
+                decodeSingleVideoFromAudio(videoId)
+            }.also { created ->
+                priming[videoId] = created
+                created.invokeOnCompletion {
+                    synchronized(resolvingLock) { priming.remove(videoId, created) }
+                }
+            }
+        }
+        return pending.await()
+    }
+
+    private suspend fun decodeSingleVideoFromAudio(videoId: String): List<PodcastVideoQuality> =
+        withContext(Dispatchers.IO) {
+            val response = com.metrolist.music.utils.YTPlayerUtils.recentVideoResponse(videoId)
+                ?: return@withContext emptyList()
+            if (response.playabilityStatus.status != "OK" ||
+                response.videoDetails?.videoId != videoId) return@withContext emptyList()
+            val options = response.streamingData?.adaptiveFormats.orEmpty()
+                .asSequence()
+                .filter { it.mimeType.startsWith("video/") &&
+                    (it.height ?: 0) in 144..720 && (it.fps ?: 30) <= 30 }
+                .sortedWith(compareByDescending<PlayerResponse.StreamingData.Format> {
+                    it.mimeType.startsWith("video/mp4") && it.mimeType.contains("avc1")
+                }.thenBy { kotlin.math.abs((it.height ?: 360) - 360) })
+                .toList()
+            // One JS decipher attempt for startup, not an entire catalogue.
+            val first = options.firstOrNull() ?: return@withContext emptyList()
+            val url = runCatching { NewPipeExtractor.getStreamUrl(first, videoId) }.getOrNull()
+                ?.takeIf { it.startsWith("https://") } ?: return@withContext emptyList()
+            val quality = PodcastVideoQuality(
+                height = first.height ?: 360, url = url,
+                mimeType = if (first.mimeType.startsWith("video/webm"))
+                    MimeTypes.VIDEO_WEBM else MimeTypes.VIDEO_MP4,
+                frameRate = first.fps ?: 30
+            )
+            videoOptionsCache[videoId] = System.currentTimeMillis() to listOf(quality)
+            Log.i("SpotuiStartup", "Podcast audio response decoded one video stream for fast toggle")
+            listOf(quality)
+        }
+
+    /** Bounded playback preview metadata; no decoder until a tile becomes active. */
+    fun warmPreview(videoId: String): PodcastVideoQuality? = previewCache[videoId]
+        ?.takeIf { System.currentTimeMillis() - it.first in 0L..VIDEO_OPTIONS_TTL_MS }?.second
+
     /** Resolve one small, silent hover preview with a short-lived stream URL cache.
      * No high-resolution probing, audio decoder or use of the active MediaSession. */
     suspend fun resolvePreview(videoId: String): PodcastVideoQuality? {
         val now = System.currentTimeMillis()
-        previewCache[videoId]?.takeIf { now - it.first in 0L..600_000L }
+        previewCache[videoId]?.takeIf { now - it.first in 0L..VIDEO_OPTIONS_TTL_MS }
             ?.let { return it.second }
-        val options = resolve(videoId, previewOnly = true)
+        // Hover should reuse current podcast metadata when possible, never
+        // create another three-client lookup just for a muted thumbnail.
+        val options = resolveUnshared(videoId, previewOnly = true)
         val selected = options.filter { !it.muxed }
             .sortedBy { kotlin.math.abs(it.height - 360) }
             .firstOrNull { isReadable(it.url) }
@@ -141,45 +397,156 @@ internal object PodcastVideoStreams {
         return selected
     }
 
+    /** Prefer real 24/25/30-fps H.264. In particular don't prefer a 60-fps
+     * AV1/VP9 stream over the same video's decoder-friendly 30-fps MP4 stream.
+     * Do not treat muxed formats as silent video: SongPlayer owns all audio. */
+    private fun videoOnlyFormats(response: PlayerResponse, videoId: String): List<PodcastVideoQuality> {
+        if (response.playabilityStatus.status != "OK" ||
+            response.videoDetails?.videoId?.let { it != videoId } == true) return emptyList()
+        val formats = response.streamingData?.adaptiveFormats.orEmpty()
+            .filter { it.width != null && it.height != null &&
+                (it.height ?: 0) in 144..2160 && it.mimeType.startsWith("video/") }
+            .sortedWith(compareByDescending<PlayerResponse.StreamingData.Format> {
+                it.mimeType.startsWith("video/mp4") && it.mimeType.contains("avc1")
+            }.thenByDescending {
+                (it.fps ?: 30) in 24..30
+            }.thenBy { it.bitrate })
+        fun qualityFor(format: PlayerResponse.StreamingData.Format, url: String) =
+            PodcastVideoQuality(
+                height = format.height ?: 360, url = url,
+                mimeType = if (format.mimeType.startsWith("video/webm"))
+                    MimeTypes.VIDEO_WEBM else MimeTypes.VIDEO_MP4,
+                muxed = false, frameRate = format.fps ?: 30,
+            )
+        // Decoding every quality's n/signature on the critical first-frame
+        // path was causing 5–10-second stalls. Prefer already-direct formats
+        // without touching JS; if none exists, decipher only a small 240/360p
+        // startup candidate. Never trust undeciphered n= URLs (black video).
+        val distinct = formats.distinctBy { it.height }.take(10)
+        val fast = distinct.mapNotNull { fmt ->
+            fmt.url?.takeIf { it.startsWith("https://") &&
+                !Regex("[?&]n=").containsMatchIn(it) }
+                ?.let { qualityFor(fmt, it) }
+        }
+        if (fast.isNotEmpty()) return fast
+        return distinct.sortedBy { kotlin.math.abs((it.height ?: 360) - 240) }
+            .take(2).mapNotNull { fmt ->
+                runCatching { NewPipeExtractor.getStreamUrl(fmt, videoId) }.getOrNull()
+                    ?.takeIf { it.startsWith("https://") }
+                    ?.let { qualityFor(fmt, it) }
+            }
+    }
+
     /** Preserve the best supported rendition per resolution; the first client
      *  sometimes provides only 360p progressive URLs while later clients have
      *  720p/1080p adaptive video-only tracks. All sources are resolved off-main. */
-    suspend fun resolve(videoId: String, previewOnly: Boolean = false): List<PodcastVideoQuality> = withContext(Dispatchers.IO) {
-        withTimeoutOrNull(if (previewOnly) 12_000L else 16_000L) {
-            val bestByHeight = LinkedHashMap<Int, PodcastVideoQuality>()
-            val clients = listOf(YouTubeClient.WEB, YouTubeClient.ANDROID_VR_NO_AUTH, YouTubeClient.MOBILE)
-            for (client in clients) {
-                val response = runCatching { YouTube.player(videoId, client = client).getOrNull() }
-                    .getOrNull() ?: continue
-                if (response.playabilityStatus.status != "OK") continue
-                val muxed = response.streamingData?.formats.orEmpty()
-                val videoFormats = response.streamingData?.adaptiveFormats.orEmpty()
-                    .filter { it.width != null && it.height != null && it.mimeType.startsWith("video/") }
-                    // Prefer hardware-decoded H.264, then the muxed copy at the
-                    // same resolution. Sort by height before limiting candidates.
-                    .sortedWith(compareByDescending<PlayerResponse.StreamingData.Format> {
-                        it.mimeType.startsWith("video/mp4") && it.mimeType.contains("avc1")
-                    }.thenByDescending { it in muxed }.thenByDescending { it.height ?: 0 })
-                    .distinctBy { it.height }
-                    .filter { (it.height ?: 0) in 144..2160 }
-                    .take(12)
-                for (format in videoFormats) {
-                    val height = format.height ?: continue
-                    if (bestByHeight.containsKey(height)) continue
-                    val url = format.url?.takeIf { it.startsWith("https://") }
-                        ?: runCatching { NewPipeExtractor.getStreamUrl(format, videoId) }.getOrNull()
-                    if (!url.isNullOrBlank() && url.startsWith("https://")) {
-                        bestByHeight[height] = PodcastVideoQuality(
-                            height, url,
-                            if (format.mimeType.startsWith("video/webm")) MimeTypes.VIDEO_WEBM
-                                else MimeTypes.VIDEO_MP4,
-                            muxed = format in muxed
-                        )
+    suspend fun resolve(videoId: String, previewOnly: Boolean = false): List<PodcastVideoQuality> {
+        if (previewOnly) return resolveUnshared(videoId, previewOnly = true)
+        val now = System.currentTimeMillis()
+        videoOptionsCache[videoId]?.takeIf { now - it.first in 0L..VIDEO_OPTIONS_TTL_MS }
+            ?.second?.takeIf { items -> items.any { it.verifiedForStartup } }
+            ?.let { return it }
+        // Shared, cancellable lookup: one user toggle and one Wi-Fi metadata
+        // prefetch must not simultaneously make three YouTube.player requests.
+        val pending = synchronized(resolvingLock) {
+            inFlight[videoId] ?: resolvingScope.async { resolveUnshared(videoId, previewOnly = false) }
+                .also { created ->
+                    inFlight[videoId] = created
+                    created.invokeOnCompletion {
+                        synchronized(resolvingLock) { inFlight.remove(videoId, created) }
                     }
                 }
-                // A thumbnail only needs a low-resolution video; avoid HD probes on hover.
-                if (previewOnly && bestByHeight.keys.any { it <= 480 }) break
-                if (bestByHeight.keys.any { it >= 720 } && bestByHeight.keys.any { it <= 480 }) break
+        }
+        return pending.await()
+    }
+
+    /** Discard a failed signed URL/response before one real network retry. */
+    fun invalidate(videoId: String) {
+        alternativeVideoResponses.remove(videoId)
+        adaptiveLowestHeight.remove(videoId)
+        adaptiveManifestCache.remove(videoId)
+        videoOptionsCache.remove(videoId)
+        com.metrolist.music.utils.YTPlayerUtils.invalidateRecentVideoResponse(videoId)
+    }
+
+    private suspend fun resolveUnshared(videoId: String, previewOnly: Boolean): List<PodcastVideoQuality> = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        videoOptionsCache[videoId]?.let { (savedAt, streams) ->
+            if (now >= savedAt && now - savedAt < VIDEO_OPTIONS_TTL_MS &&
+                streams.any { it.verifiedForStartup }) {
+                return@withContext streams
+            }
+        }
+        // Reuse exact-episode player metadata already fetched by the podcast
+        // audio resolver. No extra requests or speculative video decoder.
+        run {
+            com.metrolist.music.utils.YTPlayerUtils.recentVideoResponse(videoId)?.let { response ->
+                val fromAudio = videoOnlyFormats(response, videoId)
+                if (fromAudio.isNotEmpty()) {
+                    val marked = fromAudio.mapIndexed { idx, q -> if (idx == 0) q.copy(verifiedForStartup = true) else q }
+                    videoOptionsCache[videoId] = now to marked
+                    Log.d("SpotuiPodcastVideo", "Reused audio player response for videoId=$videoId directly")
+                    return@withContext marked.sortedByDescending { it.height }
+                }
+            }
+        }
+        val result = withTimeoutOrNull(if (previewOnly) 12_000L else 16_000L) {
+            val bestByHeight = LinkedHashMap<Int, PodcastVideoQuality>()
+            // Two Innertube clients in parallel; a third is a FALLBACK, not
+            // another speculative connection. The fast-but-unstable build fanned
+            // out too many player calls when several previews/episodes changed.
+            val clients = listOf(YouTubeClient.WEB, YouTubeClient.ANDROID_VR_NO_AUTH)
+            kotlinx.coroutines.coroutineScope {
+                val pending = clients.map { client ->
+                    async { runCatching { YouTube.player(videoId, client = client).getOrNull() }.getOrNull() }
+                }.toMutableList()
+                var firstUsableVideoAt = 0L
+                while (pending.isNotEmpty()) {
+                    suspend fun awaitNext() = kotlinx.coroutines.selects.select<
+                        Pair<kotlinx.coroutines.Deferred<PlayerResponse?>, PlayerResponse?>
+                    > {
+                        pending.forEach { deferred ->
+                            deferred.onAwait { response -> deferred to response }
+                        }
+                    }
+                    val next = if (firstUsableVideoAt != 0L) {
+                        val left = (firstUsableVideoAt + 180L - android.os.SystemClock.elapsedRealtime())
+                            .coerceAtLeast(1L)
+                        withTimeoutOrNull(left) { awaitNext() } ?: break
+                    } else awaitNext()
+                    pending.remove(next.first)
+                    val response = next.second ?: continue
+                    if (response.playabilityStatus.status != "OK") continue
+                    keepMatchingResponse(videoId, response)
+                    for (quality in videoOnlyFormats(response, videoId)) {
+                        bestByHeight.putIfAbsent(quality.height, quality)
+                    }
+                    // Do not wait for a slow client once any video-only
+                    // rendition exists. Allow at most 180 ms for additional
+                    // qualities before handing a URL to the visual decoder.
+                    if (bestByHeight.values.any { !it.muxed }) {
+                        if (previewOnly && bestByHeight.keys.any { it <= 480 }) break
+                        if (firstUsableVideoAt == 0L) {
+                            firstUsableVideoAt = android.os.SystemClock.elapsedRealtime()
+                        }
+                        if (bestByHeight.keys.any { it >= 720 } &&
+                            bestByHeight.keys.any { it <= 480 }) break
+                    }
+                }
+                pending.forEach { if (it.isActive) it.cancel() }
+            }
+            if (bestByHeight.isEmpty()) {
+                // The third client is queried only if both preferred client
+                // paths returned no playable video; never skip this fallback.
+                val mobileResponse = runCatching {
+                    YouTube.player(videoId, client = YouTubeClient.MOBILE).getOrNull()
+                }.getOrNull()
+                if (mobileResponse?.playabilityStatus?.status == "OK") {
+                    keepMatchingResponse(videoId, mobileResponse)
+                    videoOnlyFormats(mobileResponse, videoId).forEach { quality ->
+                        bestByHeight.putIfAbsent(quality.height, quality)
+                    }
+                }
             }
             if (bestByHeight.isEmpty()) {
                 val fallback = runCatching { YouTube.getNewPipeStreamUrls(videoId) }.getOrDefault(emptyList())
@@ -196,19 +563,37 @@ internal object PodcastVideoStreams {
             }
             bestByHeight.values.sortedByDescending { it.height }
         } ?: emptyList()
+        val playable = if (previewOnly) result else playableAtStartup(result)
+        if (!previewOnly && playable.isNotEmpty()) {
+            if (videoOptionsCache.size > 32) {
+                videoOptionsCache.entries.removeIf { now - it.value.first > VIDEO_OPTIONS_TTL_MS }
+            }
+            videoOptionsCache[videoId] = System.currentTimeMillis() to playable
+        }
+        playable
     }
 }
 
-/** Application-scoped video surface coordinator. Does not own a decoder or clock.
- * The one ExoPlayer in SongPlayer owns audio, video, seek, PiP and MediaSession. */
+/**
+ * Playback invariant: the podcast soundtrack is owned exclusively by SongPlayer.
+ * This optional, VIDEO-ONLY decoder never changes SongPlayer's MediaItem,
+ * MediaSource, seek position, audio focus or pause state. Enabling the picture
+ * therefore cannot interrupt the soundtrack, even while YouTube is loading.
+ * Media3 does not permit adding a new track to a prepared ProgressiveMediaSource
+ * without replacing that source: that is why the previous merged-player design
+ * necessarily stopped the audio on each first video enable.
+ */
 @OptIn(UnstableApi::class)
 object PodcastVideoSession {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val tag = "SpotuiPodcastVideo"
 
     var activeVideoId by mutableStateOf<String?>(null)
         private set
-    /** Activity-wide UI state: rotation and a change between mini / expanded player
-     * must never destroy the fullscreen dialog or restart its decoder. */
+    /** Visibility and decoder lifetime are independent: hiding a video must
+     * never call setMediaItem(), prepare() or release(). */
+    var videoVisible by mutableStateOf(false)
+        private set
     var fullscreen by mutableStateOf(false)
     var player by mutableStateOf<ExoPlayer?>(null)
         private set
@@ -220,18 +605,88 @@ object PodcastVideoSession {
         private set
     var selectedQuality by mutableStateOf("")
         private set
+    var automaticQuality by mutableStateOf(true)
+        private set
     var enteringPictureInPicture by mutableStateOf(false)
         private set
 
     private var resolveJob: Job? = null
+    private var firstFrameWatchdog: Job? = null
     private var videoClockJob: Job? = null
     private var surfaceHandoffJob: Job? = null
+    private var retainedReleaseJob: Job? = null
+    private var retainedPlayer: ExoPlayer? = null
+    private var retainedVideoId: String? = null
+    private var retainedQuality: PodcastVideoQuality? = null
+    private var retainedQualities: List<PodcastVideoQuality> = emptyList()
+    private var retainedAdaptive = false
+    private var warmedPlayer: ExoPlayer? = null
+    private var warmedVideoId: String? = null
+    private var warmedQualities: List<PodcastVideoQuality> = emptyList()
+    private var warmedInitialQuality: PodcastVideoQuality? = null
+    private var warmedAdaptive = false
+    private var warmJob: Job? = null
+    private var warmRequestedId: String? = null
+    private var warmExpiryJob: Job? = null
+    private var currentQuality: PodcastVideoQuality? = null
+    private var adaptiveActive = false
+    private var adaptiveManifest: MediaItem? = null
+    private var adaptiveMaxHeight = 480
     private var appContext: Context? = null
     private var attachedView: PlayerView? = null
     private val visibleTargets = LinkedHashMap<PlayerView, Int>()
     private var isForeground = true
+    private var estimatedVideoBitrate = 0L
+    private var lastReadyTime = 0L
+    private var lastQualityChangeTime = 0L
+    private var bufferingSince = 0L
+    private var hadReadyFrame = false
+    // Rate-limit hard synchronization: frequent seeks to keyframes can cause
+    // 1-fps looking playback even when the URL and decoder are fast.
+    private var lastSyncSeekAt = 0L
+    private var firstVideoAlignPending = false
+    private var lastSyncReportAt = 0L
+    private var lastObservedAudioAt = -1L
+    private var lastObservedClockAt = 0L
+    private var videoRequestedAt = 0L
+    private var failedUrls = mutableSetOf<String>()
+    private var freshSourceRetryAttempted = false
 
-    fun isActive(videoId: String?): Boolean = videoId != null && activeVideoId == videoId
+    private const val PREF_KEY_VIDEO_MODE = "podcast_user_preferred_video_mode_v2"
+
+    private fun loadVideoPreference(context: Context): Boolean {
+        return context.getSharedPreferences("spotui_podcast_mode_prefs", Context.MODE_PRIVATE)
+            .getBoolean(PREF_KEY_VIDEO_MODE, false)
+    }
+
+    private fun saveVideoPreference(context: Context, enabled: Boolean) {
+        context.getSharedPreferences("spotui_podcast_mode_prefs", Context.MODE_PRIVATE)
+            .edit().putBoolean(PREF_KEY_VIDEO_MODE, enabled).apply()
+    }
+
+    var userPreferredVideo by mutableStateOf<Boolean?>(null)
+
+    /** One companion session per episode. The audio has already resolved this
+     * exact YouTube video ID. Prewarming never creates a second visual player
+     * and never changes SongPlayer's audio or MediaSession. */
+    fun prewarm(context: Context, videoId: String) {
+        if (!videoId.matches(Regex("[A-Za-z0-9_-]{11}"))) return
+        if (!SongPlayer.isPodcastEpisodeLoaded(videoId)) return
+        val preferred = userPreferredVideo ?: loadVideoPreference(context).also { userPreferredVideo = it }
+        ensurePrepared(context, videoId, show = preferred)
+    }
+
+    private fun releaseWarmVideo() {
+        warmExpiryJob?.cancel(); warmExpiryJob = null
+        warmedPlayer?.release(); warmedPlayer = null
+        warmedVideoId = null
+        warmedQualities = emptyList()
+        warmedInitialQuality = null
+        warmedAdaptive = false
+    }
+
+    fun isActive(videoId: String?): Boolean =
+        videoVisible && videoId != null && activeVideoId == videoId
 
     fun beginPipHandoff() {
         enteringPictureInPicture = true
@@ -242,115 +697,514 @@ object PodcastVideoSession {
         updateSurface()
     }
 
+    /** The toggle controls visibility only. A prepared video continues to use
+     * the *same* muted ExoPlayer and its already-buffered network connection. */
     fun setEnabled(context: Context, videoId: String, enabled: Boolean) {
-        if (!enabled) { stop(); return }
-        if (activeVideoId == videoId && (player != null || isLoading)) return
+        userPreferredVideo = enabled
+        saveVideoPreference(context, enabled)
+        if (!enabled) {
+            if (activeVideoId == videoId) {
+                videoVisible = false
+                fullscreen = false
+                updateSurface()
+            }
+            return
+        }
+        ensurePrepared(context, videoId, show = true)
+    }
+
+    private fun ensurePrepared(context: Context, videoId: String, show: Boolean) {
+        if (activeVideoId == videoId) {
+            if (show && error != null && resolveJob?.isActive != true &&
+                player?.playbackState != Player.STATE_READY) {
+                // Explicit retry after a failed URL. Merely toggling an
+                // already prepared stream must NEVER trigger this path.
+                stop()
+                releaseRetained()
+                ensurePrepared(context, videoId, show = true)
+                return
+            }
+            if (show) {
+                videoVisible = true
+                updateSurface()
+                player?.let { alignVideoWithAudio(it, initial = true) }
+            }
+            return // A pending resolution or prepared decoder is reused as-is.
+        }
         stop()
         activeVideoId = videoId
+        videoVisible = show
         appContext = context.applicationContext
+        error = null
         isLoading = true
+        videoRequestedAt = android.os.SystemClock.elapsedRealtime()
+        failedUrls.clear()
+        freshSourceRetryAttempted = false
+
+        // Exactly one resolver and one visual ExoPlayer; no second speculative
+        // decoder and no parallel video preparation for the same episode.
+        releaseWarmVideo()
+        releaseRetained()
         resolveJob = scope.launch {
-            val streams = runCatching { PodcastVideoStreams.resolve(videoId) }
-                .onFailure { Log.w("SpotuiPodcastVideo", "Video lookup failed", it) }
-                .getOrNull().orEmpty()
+            // Only YouTube's own videoId is used; this runs concurrently with
+            // audio playback, which is never suspended for source lookup.
+            val choices = try {
+                // First frame should not wait for HTTP range-probes or
+                // fresh Innertube metadata when the active audio already
+                // supplied a usable video URL for this exact episode.
+                // Only one lookup for this episode. The resolver reuses the
+                // audio's Innertube response and checks the first CDN range;
+                // unverified optimistic URLs were causing black video in v8.
+                PodcastVideoStreams.resolve(videoId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Exception) {
+                Log.w(tag, "Could not retrieve video renditions", t)
+                emptyList()
+            }
             if (activeVideoId != videoId) return@launch
-            isLoading = false
-            if (streams.isEmpty()) {
-                error = "Este episodio no ofrece vídeo compatible"
+            Log.i("SpotuiStartup", "video metadata ready=" +
+                "${android.os.SystemClock.elapsedRealtime() - videoRequestedAt}ms " +
+                "qualities=${choices.size} videoId=$videoId")
+            val videoOnly = choices.filterNot { it.muxed }
+            // Prefer separate tracks; if only a muxed fallback passed the CDN
+            // probe, allow that exact verified file with its audio disabled.
+            qualities = (if (videoOnly.any { it.verifiedForStartup }) videoOnly else choices)
+                .sortedByDescending { it.verifiedForStartup }
+                .distinctBy { it.height }.sortedBy { it.height }
+            val contextNow = appContext ?: return@launch
+            if (qualities.isEmpty()) {
+                isLoading = false
+                error = "YouTube no ofrece vídeo compatible para este episodio"
                 return@launch
             }
-            qualities = streams
+            // DASH is only generated if the exact episode audio response supplies
+            // multiple codec-compatible MP4 tracks and genuine SIDX byte ranges.
+            // Its representation switching is handled by Media3 (no setMediaItem
+            // calls), so bandwidth adaptation does not stop video frames.
+            // The speculative v8 data-URI DASH manifest was not validated by
+            // Media3 and could leave the display black. Prefer known playable
+            // video-only progressive MP4; never build a synthetic MPD here.
+            adaptiveManifest = null
+            // Start small and ramp up when the measured video network speed
+            // supports it. No sequential high-resolution HTTP probes on click.
             val metered = runCatching {
-                (appContext?.getSystemService(Context.CONNECTIVITY_SERVICE)
+                (contextNow.getSystemService(Context.CONNECTIVITY_SERVICE)
                     as? android.net.ConnectivityManager)?.isActiveNetworkMetered ?: true
             }.getOrDefault(true)
-            val preferred = if (metered) 480 else 720
-            val initial = streams.firstOrNull { it.height == preferred }
-                ?: streams.filter { it.height in 480..preferred }.maxByOrNull { it.height }
-                ?: streams.firstOrNull { it.height > preferred }
-                ?: streams.maxByOrNull { it.height } ?: return@launch
-            // A 403 when opening a Googlevideo URL is common even when InnerTube
-            // advertised it. Do not hand a rejected URL to the main MediaSession.
-            val candidates = (listOf(initial) + streams.filter { it != initial })
-                .filter { !it.muxed }
-            val working = candidates.firstOrNull { PodcastVideoStreams.isReadable(it.url) }
-            if (working == null) {
-                error = "YouTube no ofrece un stream de vídeo accesible para este episodio"
-                return@launch
-            }
-            // Audio may still be preparing when the user taps Video.
-            var enabled = false
-            repeat(30) {
-                if (activeVideoId != videoId || enabled) return@repeat
-                enabled = applyQuality(working)
-                if (!enabled) delay(200L)
-            }
-            if (!enabled && activeVideoId == videoId) error = "No se pudo combinar el vídeo con el audio actual"
+            val initialLimit = if (metered) 240 else 360
+            // Start only with a rendition proven readable by the CDN range
+            // probe. Other advertised qualities remain selectable manually.
+            val first = qualities.filter { it.verifiedForStartup }.minByOrNull { it.height }
+                ?: qualities.filter { it.height <= initialLimit }.maxByOrNull { it.height }
+                ?: qualities.minByOrNull { it.height } ?: return@launch
+            createVideoPlayer(contextNow, videoId)
+            switchVisualQuality(first)
+            startVideoClock(videoId)
         }
     }
 
-    /**
-     * Audio and video share the one ExoPlayer / MediaSession in SongPlayer.
-     * Media3 merges two DASH-style tracks of the SAME video ID and drives
-     * them with a single timeline. This is never a title-based search.
-     */
-    private fun applyQuality(quality: PodcastVideoQuality): Boolean {
-        val context = appContext ?: return false
-        if (quality.muxed) return false // never decode a second audio track
-        if (!SongPlayer.enablePodcastVideo(context, quality.url, quality.mimeType, quality.muxed)) {
-            return false
-        }
-        player = SongPlayer.exoPlayer
-        error = null
-        selectedQuality = quality.label
+    private fun buildVideoPlayer(context: Context, videoId: String): ExoPlayer {
+        // IMPORTANT: do NOT reuse SongPlayer.exoPlayer here. Only a separate,
+        // muted video decoder allows truly seamless audio -> video transition.
+        val http = androidx.media3.datasource.DefaultHttpDataSource.Factory()
+            .setUserAgent("com.google.ios.youtube/21.03.1 (iPhone16,2; U; CPU iOS 18_2 like Mac OS X;)")
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(5_000)
+            .setReadTimeoutMs(8_000)
+        val factory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+            androidx.media3.datasource.DefaultDataSource.Factory(context, http)
+        )
+        val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(5_000, 25_000, 450, 800).build()
+        val visualPlayer = ExoPlayer.Builder(context)
+            .setMediaSourceFactory(factory)
+            .setLoadControl(loadControl)
+            .setAudioAttributes(
+                androidx.media3.common.AudioAttributes.Builder()
+                    .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .setUsage(androidx.media3.common.C.USAGE_MEDIA).build(),
+                false // Visual-only player must never request audio focus.
+            )
+            .setHandleAudioBecomingNoisy(false)
+            .build()
+        visualPlayer.volume = 0f
+        visualPlayer.trackSelectionParameters = visualPlayer.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, true)
+            .build()
+        visualPlayer.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                if (player !== visualPlayer || activeVideoId != videoId) return
+                val now = android.os.SystemClock.elapsedRealtime()
+                when (state) {
+                    Player.STATE_READY -> {
+                        if (!hadReadyFrame) {
+                            Log.i("SpotuiStartup", "video first READY=" +
+                                "${now - videoRequestedAt}ms videoId=$videoId " +
+                                "quality=${currentQuality?.label} fps=${currentQuality?.frameRate}")
+                        }
+                        lastReadyTime = now
+                        bufferingSince = 0L
+                        // STATE_READY is not proof that a frame has been drawn.
+                        // Keep the loading indicator until the visual decoder
+                        // really renders; otherwise the UI is silently black.
+                        alignVideoWithAudio(visualPlayer, true)
+                        watchForFirstFrame(videoId, visualPlayer)
+                    }
+                    Player.STATE_BUFFERING -> if (bufferingSince == 0L) {
+                        bufferingSince = now
+                    }
+                    else -> Unit
+                }
+            }
+            override fun onRenderedFirstFrame() {
+                if (player !== visualPlayer || activeVideoId != videoId) return
+                val wasWaiting = !hadReadyFrame
+                hadReadyFrame = true
+                firstFrameWatchdog?.cancel()
+                firstFrameWatchdog = null
+                isLoading = false
+                error = null
+                if (wasWaiting) Log.i("SpotuiStartup", "video FIRST_FRAME=${android.os.SystemClock.elapsedRealtime() - videoRequestedAt}ms videoId=$videoId")
+                if (adaptiveActive && automaticQuality) {
+                    // Unlock quality adaptation only after visible video already
+                    // plays; Media3's DASH track selector then changes quality
+                    // on a segment boundary instead of re-preparing the source.
+                    scope.launch {
+                        delay(700L)
+                        if (player === visualPlayer && adaptiveActive && automaticQuality) {
+                            visualPlayer.trackSelectionParameters = visualPlayer.trackSelectionParameters
+                                .buildUpon().setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE).build()
+                        }
+                    }
+                }
+            }
+            override fun onPlayerError(failure: PlaybackException) {
+                if (player !== visualPlayer || activeVideoId != videoId) return
+                Log.w(tag, "Optional video failed (audio stays uninterrupted)", failure)
+                recoverVideoImage(visualPlayer, videoId)
+            }
+        })
+        // Actual transferred bytes, not claimed Wi-Fi link speed, determine
+        // whether raising resolution is safe in Auto mode.
+        visualPlayer.addAnalyticsListener(object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+            override fun onBandwidthEstimate(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                totalLoadTimeMs: Int,
+                totalBytesLoaded: Long,
+                bitrateEstimate: Long,
+            ) {
+                if (player === visualPlayer && bitrateEstimate > 0L) {
+                    estimatedVideoBitrate = bitrateEstimate
+                }
+            }
+        })
+        return visualPlayer
+    }
+
+    private fun createVideoPlayer(context: Context, videoId: String) {
+        player = buildVideoPlayer(context, videoId)
         updateSurface()
-        return true
     }
 
+    /** Media3 can report READY with an empty/invalid TextureView stream.
+     * A missing first frame is treated as a playback failure, never success. */
+    private fun watchForFirstFrame(videoId: String, p: ExoPlayer) {
+        if (hadReadyFrame || player !== p || activeVideoId != videoId ||
+            visibleTargets.isEmpty() || !SongPlayer.isPlaying()) return
+        if (firstFrameWatchdog?.isActive == true) return
+        firstFrameWatchdog = scope.launch {
+            delay(5_500L)
+            if (player === p && activeVideoId == videoId && !hadReadyFrame &&
+                visibleTargets.isNotEmpty() && SongPlayer.isPlaying()) {
+                Log.w(tag, "No first video frame after READY; trying a different source")
+                recoverVideoImage(p, videoId)
+            }
+        }
+    }
+
+    /** Only the optional visual stream is replaced. Never touch SongPlayer. */
+    private fun recoverVideoImage(p: ExoPlayer, videoId: String) {
+        if (player !== p || activeVideoId != videoId) return
+        firstFrameWatchdog?.cancel()
+        firstFrameWatchdog = null
+        if (adaptiveActive) {
+            Log.w(tag, "DASH video unavailable; falling back to progressive MP4")
+            adaptiveActive = false
+            adaptiveManifest = null
+            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE).build()
+            val fallback = qualities.filter { it.height <= 360 }.maxByOrNull { it.height }
+                ?: qualities.minByOrNull { it.height }
+            if (fallback != null) { switchVisualQuality(fallback); return }
+        }
+        currentQuality?.url?.let { failedUrls.add(it) }
+        // Don't cycle through many different resolutions from the same broken
+        // player response. The cache may hold URLs lacking the right signature.
+        val next = if (failedUrls.size < 2) {
+            qualities.filter { it.url !in failedUrls }
+                .filter { it.height < (currentQuality?.height ?: Int.MAX_VALUE) }
+                .maxByOrNull { it.height }
+                ?: qualities.filter { it.url !in failedUrls }.minByOrNull { it.height }
+        } else null
+        if (next != null) { switchVisualQuality(next); return }
+        if (!freshSourceRetryAttempted) {
+            freshSourceRetryAttempted = true
+            isLoading = true
+            scope.launch {
+                PodcastVideoStreams.invalidate(videoId)
+                val fresh = try { PodcastVideoStreams.resolve(videoId) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) { Log.w(tag, "Video source retry failed", failure); emptyList() }
+                if (activeVideoId != videoId || player !== p) return@launch
+                val freshVideoOnly = fresh.filterNot { it.muxed }
+                qualities = (if (freshVideoOnly.any { it.verifiedForStartup }) freshVideoOnly else fresh)
+                    .sortedByDescending { it.verifiedForStartup }
+                    .distinctBy { it.height }.sortedBy { it.height }
+                failedUrls.clear()
+                val first = qualities.firstOrNull { it.verifiedForStartup }
+                    ?: qualities.filter { it.height <= 360 }.maxByOrNull { it.height }
+                    ?: qualities.minByOrNull { it.height }
+                if (first != null) switchVisualQuality(first)
+                else { isLoading = false; error = "No se pudo obtener el vídeo; el audio sigue reproduciéndose" }
+            }
+        } else {
+            isLoading = false
+            error = "No se ha recibido ningún fotograma; el audio sigue reproduciéndose"
+            p.playWhenReady = false
+        }
+    }
+
+    /** Initial DASH load is pinned to the smallest available visual track,
+     * then Media3 unlocks all tracks after the first frame; bitrate ABR owns
+     * subsequent quality changes and does not reset the MediaItem/decoder. */
+    private fun startAdaptiveVideo(fallback: PodcastVideoQuality) {
+        val p = player ?: return
+        val item = adaptiveManifest ?: run { switchVisualQuality(fallback); return }
+        adaptiveActive = true
+        currentQuality = fallback
+        selectedQuality = "Auto"
+        adaptiveMaxHeight = PodcastVideoStreams.lowestAdaptiveHeight(activeVideoId.orEmpty())
+            ?: qualities.minOfOrNull { it.height } ?: 360
+        lastQualityChangeTime = android.os.SystemClock.elapsedRealtime()
+        firstVideoAlignPending = true
+        hadReadyFrame = false
+        isLoading = true
+        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+            .setMaxVideoSize(Int.MAX_VALUE, adaptiveMaxHeight)
+            .build()
+        p.setMediaItem(item, SongPlayer.getCurrentPosition().coerceAtLeast(0L))
+        p.prepare()
+        p.playWhenReady = SongPlayer.isPlaying() && visibleTargets.isNotEmpty()
+    }
+
+    private fun switchVisualQuality(choice: PodcastVideoQuality) {
+        adaptiveActive = false
+        val p = player ?: return
+        if (activeVideoId == null || choice.url in failedUrls) return
+        // A previously pinned low-resolution DASH startup track must never
+        // restrict a manual progressive quality choice.
+        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+            .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE).build()
+        if (currentQuality == choice && p.mediaItemCount > 0) return
+        firstFrameWatchdog?.cancel()
+        firstFrameWatchdog = null
+        currentQuality = choice
+        selectedQuality = if (automaticQuality) "Auto · ${choice.label}" else choice.label
+        lastQualityChangeTime = android.os.SystemClock.elapsedRealtime()
+        lastSyncSeekAt = lastQualityChangeTime
+        firstVideoAlignPending = true
+        lastObservedAudioAt = -1L
+        lastObservedClockAt = 0L
+        lastReadyTime = lastQualityChangeTime
+        bufferingSince = 0L
+        hadReadyFrame = false
+        isLoading = true
+        error = null
+        // Re-preparation affects VIDEO ONLY. SongPlayer's soundtrack, position,
+        // crossfade and MediaSession are never touched.
+        p.setMediaItem(MediaItem.Builder().setUri(choice.url)
+            .setMimeType(choice.mimeType).build(), SongPlayer.getCurrentPosition().coerceAtLeast(0L))
+        p.prepare()
+        p.playWhenReady = SongPlayer.isPlaying()
+    }
+
+    /** Called only for the optional video clock. Never seek the audio player. */
+    private fun alignVideoWithAudio(p: ExoPlayer, initial: Boolean = false) {
+        if (p.playbackState == Player.STATE_IDLE || p.playbackState == Player.STATE_ENDED) return
+        val audioAt = SongPlayer.getCurrentPosition().coerceAtLeast(0L)
+        val drift = audioAt - p.currentPosition
+        val audioPlaying = SongPlayer.isPlaying()
+        val shouldPlay = audioPlaying &&
+            (isForeground || PodcastVideoPipState.isInPictureInPicture || enteringPictureInPicture)
+        if (p.playWhenReady != shouldPlay) p.playWhenReady = shouldPlay
+        if (p.playbackState != Player.STATE_READY) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        // Compare the podcast clock with elapsed real time. A sudden jump means
+        // the user sought in the AUDIO player. This is when a VIDEO seek is
+        // warranted; ordinary streaming lag is not a reason to thrash keyframes.
+        val wallDelta = if (lastObservedClockAt == 0L) 0L else (now - lastObservedClockAt).coerceAtLeast(0L)
+        val audioDelta = if (lastObservedAudioAt < 0L) 0L else audioAt - lastObservedAudioAt
+        val explicitAudioSeek = lastObservedAudioAt >= 0L && wallDelta in 1L..3_000L &&
+            (audioDelta < -1_000L || audioDelta > wallDelta + 2_000L)
+        lastObservedAudioAt = audioAt
+        lastObservedClockAt = now
+
+        // READY can fire before PlayerView has an attached Surface. Preserve
+        // initial catch-up until the first *visible* frame can be rendered.
+        val initialCatchUp = firstVideoAlignPending && visibleTargets.isNotEmpty() &&
+            abs(drift) > 650L
+        if (firstVideoAlignPending && visibleTargets.isNotEmpty()) {
+            firstVideoAlignPending = false
+        }
+
+        // Hard seek only for explicit user seeks or massive position drift (>5s)
+        val mayRecover = shouldPlay && now - lastSyncSeekAt > 20_000L &&
+            now - lastReadyTime > 3_000L && abs(drift) > 5_000L &&
+            p.playbackState == Player.STATE_READY
+        if (shouldPlay && (initialCatchUp || explicitAudioSeek || mayRecover)) {
+            lastSyncSeekAt = now
+            p.seekTo(audioAt)
+        } else if (shouldPlay && p.playbackState == Player.STATE_READY) {
+            // Smooth micro-adjustments via playback speed avoid decoder resets and keyframe stalls
+            val targetSpeed = when {
+                drift > 300L -> 1.05f  // Video is behind audio: speed up slightly
+                drift < -300L -> 0.95f // Video is ahead of audio: slow down slightly
+                else -> 1.0f           // In sync
+            }
+            if (p.playbackParameters.speed != targetSpeed) {
+                p.playbackParameters = androidx.media3.common.PlaybackParameters(targetSpeed)
+            }
+        }
+        if (now - lastSyncReportAt >= 10_000L) {
+            lastSyncReportAt = now
+            Log.d(tag, "video sync drift=${drift}ms playing=${p.isPlaying} " +
+                "state=${p.playbackState} quality=${currentQuality?.label} " +
+                "fps=${currentQuality?.frameRate} buffered=${p.totalBufferedDuration}ms")
+        }
+    }
+
+    private fun startVideoClock(videoId: String) {
+        videoClockJob?.cancel()
+        videoClockJob = scope.launch {
+            var pendingAudioMs = 0L
+            while (activeVideoId == videoId) {
+                val p = player ?: break
+                if (!SongPlayer.isPodcastEpisodeLoaded(videoId)) {
+                    // A tap made while the same episode is still resolving must
+                    // not destroy the visual player before the audio starts.
+                    if (SongPlayer.isPreparingTrack() && pendingAudioMs < 20_000L) {
+                        pendingAudioMs += 250L
+                        delay(250L)
+                        continue
+                    }
+                    stop()
+                    break
+                }
+                pendingAudioMs = 0L
+                alignVideoWithAudio(p)
+                if (!hadReadyFrame && p.playbackState == Player.STATE_READY) {
+                    watchForFirstFrame(videoId, p)
+                }
+                adjustAutomaticQuality(p)
+                delay(250L)
+            }
+        }
+    }
+
+    private fun adjustAutomaticQuality(p: ExoPlayer) {
+        if (adaptiveActive) return // Media3 handles DASH adaptation automatically.
+        if (!automaticQuality || activeVideoId == null || qualities.size < 2) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastQualityChangeTime < 12_000L) return
+        val active = currentQuality ?: return
+        // Drop one level after a sustained rebuffer. Initial startup buffering
+        // does not count; prevent loops when the CDN simply rejects a URL.
+        if (hadReadyFrame && bufferingSince > 0 && now - bufferingSince > 1_500L) {
+            val lower = qualities.filter { it.height < active.height && it.url !in failedUrls }
+                .maxByOrNull { it.height }
+            if (lower != null) { switchVisualQuality(lower); return }
+        }
+        // Video is delivered as one progressive URL per quality, not a DASH
+        // adaptation set. An automatic upshift requires setMediaItem+prepare:
+        // that stops video frames. Prefer a stable automatically chosen start
+        // resolution, then downshift only when sustained buffering is observed.
+        // Higher resolution remains available through the explicit user selector.
+    }
+
+    /** Manual quality remains fixed until the user selects Auto again. */
     fun selectQuality(height: Int) {
         val target = qualities.firstOrNull { it.height == height } ?: return
-        if (target.label == selectedQuality) return
-        resolveJob?.cancel()
-        isLoading = true
-        resolveJob = scope.launch {
-            val valid = PodcastVideoStreams.isReadable(target.url)
-            isLoading = false
-            if (!valid || !applyQuality(target)) {
-                error = "No se pudo abrir la calidad de vídeo seleccionada"
-            }
-        }
+        automaticQuality = false
+        failedUrls.remove(target.url)
+        switchVisualQuality(target)
+    }
+
+    fun selectAutomaticQuality() {
+        automaticQuality = true
+        currentQuality?.let { selectedQuality = "Auto · ${it.label}" }
+        lastQualityChangeTime = 0L
     }
 
     fun stopIfDifferent(currentPodcastId: String?) {
-        if (activeVideoId != null && activeVideoId != currentPodcastId) stop()
+        if (warmedVideoId != null && warmedVideoId != currentPodcastId) releaseWarmVideo()
+        if (activeVideoId != null && activeVideoId != currentPodcastId) {
+            stop()
+            releaseRetained()
+        }
+        if (retainedVideoId != null && retainedVideoId != currentPodcastId) releaseRetained()
     }
 
     fun stop() {
         resolveJob?.cancel(); resolveJob = null
+        firstFrameWatchdog?.cancel(); firstFrameWatchdog = null
         videoClockJob?.cancel(); videoClockJob = null
         surfaceHandoffJob?.cancel(); surfaceHandoffJob = null
         attachedView?.player = null
         attachedView = null
         visibleTargets.clear()
-        // The player belongs to PlaybackService. Never release it, mute it or
-        // pause it from a video-only UI lifecycle callback.
-        if (player === SongPlayer.exoPlayer) SongPlayer.disablePodcastVideo()
+        val p = player
+        // Retain the prepared VIDEO ONLY for a brief audio/video toggle back.
+        // No audio decoder or podcast MediaSource is retained here.
+        if (p != null) {
+            p.playWhenReady = false
+            releaseRetained()
+            retainedPlayer = p
+            retainedVideoId = activeVideoId
+            retainedQuality = currentQuality
+            retainedAdaptive = adaptiveActive
+            retainedQualities = qualities
+            retainedReleaseJob = scope.launch {
+                delay(90_000L)
+                if (retainedPlayer === p) releaseRetained()
+            }
+        }
         player = null
-
         activeVideoId = null
+        videoVisible = false
         fullscreen = false
         isLoading = false
         error = null
         qualities = emptyList()
         selectedQuality = ""
+        currentQuality = null
+        adaptiveActive = false
+        adaptiveManifest = null
         appContext = null
         enteringPictureInPicture = false
     }
 
+    private fun releaseRetained() {
+        retainedReleaseJob?.cancel(); retainedReleaseJob = null
+        retainedPlayer?.release(); retainedPlayer = null
+        retainedVideoId = null
+        retainedQuality = null
+        retainedQualities = emptyList()
+    }
+
     fun sync(foreground: Boolean) {
         isForeground = foreground
-        // Background playback is owned by PlaybackService. A hidden video
-        // surface must not pause the podcast's soundtrack.
+        // The soundtrack is deliberately not controlled from this function.
     }
 
     fun attach(view: PlayerView, priority: Int) {
@@ -361,28 +1215,28 @@ object PodcastVideoSession {
 
     fun detach(view: PlayerView) {
         visibleTargets.remove(view)
-        if (view !== attachedView) {
-            updateSurface()
-            return
-        }
+        if (view !== attachedView) { updateSurface(); return }
         surfaceHandoffJob?.cancel()
         if (visibleTargets.isNotEmpty()) updateSurface()
-        else surfaceHandoffJob = scope.launch {
-            delay(220L)
-            updateSurface()
-        }
+        else surfaceHandoffJob = scope.launch { delay(220L); updateSurface() }
     }
 
     private fun updateSurface() {
         val target = visibleTargets.entries.maxByOrNull { it.value }?.key
-        val sharedPlayer = player ?: return
+        val p = player ?: return
         if (target !== attachedView) {
-            PlayerView.switchTargetView(sharedPlayer, attachedView, target)
+            PlayerView.switchTargetView(p, attachedView, target)
             attachedView = target
         }
-        // Disable video decoder/bandwidth when no UI is showing the picture;
-        // never disable or release the audio track.
-        SongPlayer.enablePodcastVideoTrack(target != null)
+        // A ready player may have waited for this surface. Perform its single
+        // initial alignment now; never seek the actual podcast soundtrack.
+        if (target != null && firstVideoAlignPending && p.playbackState == Player.STATE_READY) {
+            alignVideoWithAudio(p, initial = true)
+        }
+        if (target != null && !hadReadyFrame && p.playbackState == Player.STATE_READY) {
+            activeVideoId?.let { watchForFirstFrame(it, p) }
+        }
+        // Video frame lifecycle has no effect on SongPlayer or audio focus.
     }
 }
 
@@ -417,6 +1271,18 @@ private fun VideoSurface(modifier: Modifier = Modifier, priority: Int = 1) {
     )
 }
 
+/** Tiny persistent TextureView: keeps the same video-only decoder attached
+ * while the artwork is shown. This is intentionally at the app root, not in
+ * the mini/full player, so switching layouts cannot start duplicate loads. */
+@Composable
+fun PodcastStandbyVideoSurface(videoId: String?) {
+    if (videoId == null || PodcastVideoSession.activeVideoId != videoId ||
+        PodcastVideoSession.player == null) return
+    Box(Modifier.size(8.dp).graphicsLayer { alpha = 0.01f }) {
+        VideoSurface(Modifier.fillMaxSize(), priority = -10)
+    }
+}
+
 @Composable
 fun PodcastVideoFrame(
     videoId: String,
@@ -439,6 +1305,13 @@ fun PodcastVideoFrame(
             PodcastVideoSession.fullscreen || PodcastVideoSession.enteringPictureInPicture -> Unit
             else -> VideoSurface(
                 Modifier.fillMaxSize(), priority = if (compact) 0 else surfacePriority
+            )
+        }
+        if (active && !compact && error == null && !PodcastVideoSession.fullscreen &&
+            PodcastVideoSession.isLoading) {
+            CircularProgressIndicator(
+                color = Color.White,
+                modifier = Modifier.align(Alignment.Center).size(30.dp)
             )
         }
         if (active && !compact && error == null && !PodcastVideoSession.fullscreen) {
@@ -582,9 +1455,8 @@ fun PodcastFullscreenOverlay() {
                         .padding(horizontal = 19.dp, vertical = 13.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        painter = painterResource(id = if (tapDirection < 0) R.drawable.ic_replay_15 else R.drawable.ic_forward_15),
-                        contentDescription = null, tint = lime, modifier = Modifier.size(24.dp)
+                    com.music.spotui.ui.components.SeekFifteenIcon(
+                        backwards = tapDirection < 0, modifier = Modifier.size(27.dp), tint = lime
                     )
                     Spacer(Modifier.width(6.dp))
                     Text("15 s", color = Color.White, fontWeight = FontWeight.SemiBold)
@@ -623,11 +1495,22 @@ fun PodcastFullscreenOverlay() {
                                 onDismissRequest = { qualityMenuOpen = false },
                                 modifier = Modifier.background(Color(0xFF24272B))
                             ) {
+                                DropdownMenuItem(
+                                    text = { Text(
+                                        "Automática" + if (PodcastVideoSession.automaticQuality) " ✓" else "",
+                                        color = Color.White
+                                    ) },
+                                    onClick = {
+                                        PodcastVideoSession.selectAutomaticQuality()
+                                        qualityMenuOpen = false
+                                        showControls()
+                                    }
+                                )
                                 PodcastVideoSession.qualities.forEach { quality ->
                                     DropdownMenuItem(
                                         text = {
                                             Text(
-                                                quality.label + if (quality.label == PodcastVideoSession.selectedQuality) " ✓" else "",
+                                                quality.label + if (!PodcastVideoSession.automaticQuality && quality.label == PodcastVideoSession.selectedQuality) " ✓" else "",
                                                 color = Color.White
                                             )
                                         },
@@ -668,10 +1551,8 @@ fun PodcastFullscreenOverlay() {
                     ) {
                         IconButton(onClick = { skip(-15_000L) },
                             modifier = Modifier.size(58.dp).background(glass, CircleShape)) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_replay_15),
-                                contentDescription = "Retroceder 15 segundos",
-                                tint = Color.White, modifier = Modifier.size(28.dp)
+                            com.music.spotui.ui.components.SeekFifteenIcon(
+                                backwards = true, modifier = Modifier.size(30.dp)
                             )
                         }
                         IconButton(
@@ -687,10 +1568,8 @@ fun PodcastFullscreenOverlay() {
                         }
                         IconButton(onClick = { skip(15_000L) },
                             modifier = Modifier.size(58.dp).background(glass, CircleShape)) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_forward_15),
-                                contentDescription = "Avanzar 15 segundos",
-                                tint = Color.White, modifier = Modifier.size(28.dp)
+                            com.music.spotui.ui.components.SeekFifteenIcon(
+                                backwards = false, modifier = Modifier.size(30.dp)
                             )
                         }
                     }

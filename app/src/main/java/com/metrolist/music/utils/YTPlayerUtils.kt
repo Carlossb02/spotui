@@ -39,6 +39,11 @@ import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.Deferred
 import okhttp3.OkHttpClient
 import timber.log.Timber
 import java.util.concurrent.TimeUnit
@@ -51,8 +56,14 @@ object YTPlayerUtils {
      * Verbose audio-track diagnostics. Use Log.e so Android Studio Logcat shows
      * these entries in red. Do not log stream URLs, cookies, PoTokens, or signatures.
      */
+    private const val VERBOSE_AUDIO_DIAGNOSTICS = false
     private fun audioDebug(message: String) {
-        Log.e("YT_AUDIO_DEBUG", message)
+        // Hundreds of per-format messages per cold track were emitted at ERROR
+        // priority. Keep summaries and failures without flooding Logcat/CPU.
+        if (VERBOSE_AUDIO_DIAGNOSTICS || message.startsWith("FINAL ") ||
+            message.startsWith("ALL CLIENTS") || message.startsWith("NO_TRACK_SAFE_URL")) {
+            Log.d("YT_AUDIO_DEBUG", message)
+        }
     }
 
     private fun safeAudioUrlInfo(url: String?): String {
@@ -159,22 +170,91 @@ object YTPlayerUtils {
 
     private val poTokenGenerator = PoTokenGenerator()
 
+    // A signature timestamp comes from YouTube's player script, not from the song.
+    // Reuse ONLY successful timestamps for a short period. Failures stay video-specific
+    // (important for age restrictions); a refreshed script is fetched after TTL.
+    @Volatile private var recentSignatureTimestamp: Pair<Long, Int>? = null
+    private const val SIGNATURE_TIMESTAMP_TTL_MS = 5 * 60_000L
+    private val signatureTimestampLock = Any()
+
+    // Resolving several fallback recordings simultaneously must not launch
+    // several identical NewPipe player-script downloads on a cold start.
+    // Only verified non-age-restricted timestamps are shared; failures and
+    // age-restricted responses retain their individual resolution behavior.
+    private fun signatureTimestampFast(videoId: String): SignatureTimestampResult =
+        synchronized(signatureTimestampLock) {
+            val now = System.currentTimeMillis()
+            recentSignatureTimestamp?.let { (savedAt, timestamp) ->
+                if (now >= savedAt && now - savedAt < SIGNATURE_TIMESTAMP_TTL_MS) {
+                    return@synchronized SignatureTimestampResult(timestamp, isAgeRestricted = false)
+                }
+            }
+            val result = getSignatureTimestampOrNull(videoId)
+            if (result.timestamp != null && !result.isAgeRestricted) {
+                recentSignatureTimestamp = System.currentTimeMillis() to result.timestamp
+            }
+            result
+        }
+
     private val MAIN_CLIENT: YouTubeClient = WEB_REMIX
 
     private val STREAM_FALLBACK_CLIENTS: Array<YouTubeClient> = arrayOf(
+        ANDROID_VR_NO_AUTH,
+        TVHTML5_SIMPLY_EMBEDDED_PLAYER,
+        ANDROID_NO_SDK,
+        WEB,
         IOS,
         IPADOS,
         MOBILE,
-        ANDROID_NO_SDK,
-        TVHTML5_SIMPLY_EMBEDDED_PLAYER,
         TVHTML5,
         ANDROID_VR_1_43_32,
         ANDROID_VR_1_61_48,
         ANDROID_CREATOR,
-        ANDROID_VR_NO_AUTH,
-        WEB,
         WEB_CREATOR
     )
+    // The audio resolver has already fetched and validated an Innertube player
+    // response for this exact YouTube ID. Reuse its *video-format metadata* for
+    // podcasts instead of doing another multi-client player lookup on Video tap.
+    // This is strictly a side cache: it does not change audio selection or the
+    // validation/priority of any stream provider.
+    private val recentVideoResponses = java.util.concurrent.ConcurrentHashMap<
+        String, Pair<Long, PlayerResponse>>()
+    private const val VIDEO_RESPONSE_TTL_MS = 90_000L
+
+    fun recentVideoResponse(videoId: String): PlayerResponse? {
+        val saved = recentVideoResponses[videoId] ?: return null
+        val age = android.os.SystemClock.elapsedRealtime() - saved.first
+        return if (age in 0L until VIDEO_RESPONSE_TTL_MS) saved.second else {
+            recentVideoResponses.remove(videoId, saved)
+            null
+        }
+    }
+
+    fun invalidateRecentVideoResponse(videoId: String) {
+        recentVideoResponses.remove(videoId)
+    }
+
+    private fun rememberVerifiedVideoResponse(videoId: String, response: PlayerResponse) {
+        if (response.playabilityStatus.status != "OK" ||
+            response.videoDetails?.videoId != videoId ||
+            response.streamingData?.adaptiveFormats.orEmpty().none { fmt ->
+                fmt.height != null && fmt.mimeType.startsWith("video/") &&
+                    fmt.url?.startsWith("https://") == true
+            }) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (recentVideoResponses.size >= 16) {
+            recentVideoResponses.entries.removeIf {
+                now - it.value.first !in 0L until VIDEO_RESPONSE_TTL_MS
+            }
+            if (recentVideoResponses.size >= 16) {
+                recentVideoResponses.entries.minByOrNull { it.value.first }?.let {
+                    recentVideoResponses.remove(it.key, it.value)
+                }
+            }
+        }
+        recentVideoResponses[videoId] = now to response
+    }
+
     data class PlaybackData(
         val audioConfig: PlayerResponse.PlayerConfig.AudioConfig?,
         val videoDetails: PlayerResponse.VideoDetails?,
@@ -195,6 +275,7 @@ object YTPlayerUtils {
         connectivityManager: ConnectivityManager,
         skipValidation: Boolean = false,
     ): Result<PlaybackData> = runCatching {
+        val streamStartedAt = android.os.SystemClock.elapsedRealtime()
         Timber.tag(TAG).d("=== PLAYER RESPONSE FOR PLAYBACK ===")
         Timber.tag(TAG).d("videoId: $videoId")
         Timber.tag(TAG).d("playlistId: $playlistId")
@@ -217,7 +298,7 @@ object YTPlayerUtils {
         val mainClientNeedsPoToken = MAIN_CLIENT.useWebPoTokens
 
         val sigFuture = java.util.concurrent.CompletableFuture.supplyAsync {
-            getSignatureTimestampOrNull(videoId)
+            signatureTimestampFast(videoId)
         }
         val potFuture: java.util.concurrent.CompletableFuture<PoTokenResult?>? =
             if (mainClientNeedsPoToken && sessionId != null) {
@@ -239,18 +320,21 @@ object YTPlayerUtils {
         // extraction may stall). Use bounded waits so the resolution pipeline can
         // still fall through to clients that don't require these tokens.
         val signatureTimestamp = try {
-            sigFuture.get(SIG_FUTURE_TIMEOUT_SEC, java.util.concurrent.TimeUnit.SECONDS)
+            sigFuture.get(800L, java.util.concurrent.TimeUnit.MILLISECONDS)
         } catch (e: Exception) {
             Timber.tag(logTag).w("Signature timestamp timed out or failed: ${e.message}")
             SignatureTimestampResult(null, isAgeRestricted = false)
         }
         Timber.tag(logTag).d("Signature timestamp: ${signatureTimestamp.timestamp}")
         var poToken: PoTokenResult? = try {
-            potFuture?.get(POT_FUTURE_TIMEOUT_SEC, java.util.concurrent.TimeUnit.SECONDS)
+            potFuture?.get(200L, java.util.concurrent.TimeUnit.MILLISECONDS)
         } catch (e: Exception) {
             Timber.tag(logTag).w("PoToken timed out or failed: ${e.message}")
             null
         }
+
+        Log.i("SpotuiStartup", "ytAuth cost=${android.os.SystemClock.elapsedRealtime() - streamStartedAt}ms " +
+            "signature=${signatureTimestamp.timestamp != null} token=${poToken != null}")
 
         // If MAIN_CLIENT needs a PoToken but we couldn't get one (WebView missing, JS
         // blocked, network hostile), WEB_REMIX will return streams that 403 on play.
@@ -346,6 +430,28 @@ object YTPlayerUtils {
             else -> -1
         }
 
+        // Request the next two fallback client responses concurrently, but
+        // CONSUME them in the original order below. Prefetch is limited to two
+        // pending clients and cancelled once a source has been selected.
+        // This does not change the source/format/lang ranking or the fallback
+        // behavior when a request fails.
+        val fallbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val prefetchedResponses = java.util.HashMap<Int, Deferred<PlayerResponse?>>()
+        fun queueFallback(index: Int) {
+            if (index !in STREAM_FALLBACK_CLIENTS.indices || index in prefetchedResponses) return
+            val nextClient = STREAM_FALLBACK_CLIENTS[index]
+            if (nextClient.loginRequired && !isLoggedIn && YouTube.cookie == null) return
+            val clientPoToken = if (nextClient.useWebPoTokens) poToken?.playerRequestPoToken else null
+            val clientSigTimestamp = if (wasOriginallyAgeRestricted) null else signatureTimestamp.timestamp
+            prefetchedResponses[index] = fallbackScope.async {
+                YouTube.player(videoId, playlistId, nextClient, clientSigTimestamp, clientPoToken).getOrNull()
+            }
+        }
+        if (startIndex >= 0) {
+            queueFallback(startIndex)
+            queueFallback(startIndex + 1)
+        }
+        try {
         for (clientIndex in (startIndex until STREAM_FALLBACK_CLIENTS.size)) {
             // reset for each client
             format = null
@@ -376,8 +482,16 @@ object YTPlayerUtils {
                 val clientPoToken = if (client.useWebPoTokens) poToken?.playerRequestPoToken else null
                 // Skip signature timestamp for age-restricted (faster), use it for normal content
                 val clientSigTimestamp = if (wasOriginallyAgeRestricted) null else signatureTimestamp.timestamp
-                streamPlayerResponse =
-                    YouTube.player(videoId, playlistId, client, clientSigTimestamp, clientPoToken).getOrNull()
+                // Start fetching the following response while this one is
+                // checked. No speculative request changes which client wins.
+                queueFallback(clientIndex)
+                queueFallback(clientIndex + 1)
+                val startedClientAt = android.os.SystemClock.elapsedRealtime()
+                val inProgress = prefetchedResponses.remove(clientIndex)
+                streamPlayerResponse = if (inProgress != null) inProgress.await()
+                    else YouTube.player(videoId, playlistId, client, clientSigTimestamp, clientPoToken).getOrNull()
+                Log.i("SpotuiStartup", "ytClient[${clientIndex}] latency=${android.os.SystemClock.elapsedRealtime() - startedClientAt}ms " +
+                    "status=${streamPlayerResponse?.playabilityStatus?.status}")
                 dumpAudioFormats("CLIENT_${client.clientName}", streamPlayerResponse)
             }
 
@@ -393,6 +507,10 @@ object YTPlayerUtils {
                 )
                 continue
             }
+
+            // The returned ID has been checked above. Caching a verified
+            // response has no influence on audio formats or the selected URL.
+            streamPlayerResponse?.let { rememberVerifiedVideoResponse(videoId, it) }
 
             // process current client response
             if (streamPlayerResponse?.playabilityStatus?.status == "OK") {
@@ -608,6 +726,11 @@ object YTPlayerUtils {
             }
         }
 
+        } finally {
+            // No orphan requests after success, error or a new track.
+            fallbackScope.cancel()
+        }
+
         if (streamUrl.isNullOrBlank() && fallbackStreamUrl != null) {
             audioDebug("ALL CLIENTS EXHAUSTED: using previously language-checked fallback stream")
             streamUrl = fallbackStreamUrl
@@ -635,6 +758,8 @@ object YTPlayerUtils {
         if (isUploadedTrack) {
             println("[PLAYBACK_DEBUG] SUCCESS: Got playback data for uploaded track - format=${format.mimeType}, streamUrl=${streamUrl.take(100)}...")
         }
+        Log.i("SpotuiStartup", "ytStream total=${android.os.SystemClock.elapsedRealtime() - streamStartedAt}ms " +
+            "videoId=$videoId format=${format.itag} track=${format.audioTrack?.id ?: "default"}")
         PlaybackData(
             streamPlayerResponse?.playerConfig?.audioConfig ?: mainPlayerResponse?.playerConfig?.audioConfig,
             streamPlayerResponse?.videoDetails ?: mainPlayerResponse?.videoDetails,
@@ -772,13 +897,19 @@ object YTPlayerUtils {
                 }
             }
 
-            val bitrateScore = (f.bitrate / 1000L) * when (audioQuality) {
-                AudioQuality.AUTO -> if (connectivityManager.isActiveNetworkMetered) -1 else 1
-                AudioQuality.HIGH -> 1
-                AudioQuality.LOW -> -1
-            } + (if (f.mimeType.startsWith("audio/webm")) 10L else 0L)
+            val codecBonus = when {
+                f.mimeType.contains("opus", ignoreCase = true) -> 10_000L
+                f.mimeType.startsWith("audio/webm") -> 5_000L
+                else -> 0L
+            }
 
-            score + bitrateScore
+            val bitrateScore = (f.bitrate / 1000L) * when (audioQuality) {
+                AudioQuality.AUTO -> if (connectivityManager.isActiveNetworkMetered) 1 else 10
+                AudioQuality.HIGH -> 10
+                AudioQuality.LOW -> -10
+            }
+
+            score + bitrateScore + codecBonus
         }
 
         if (selected != null) {
@@ -801,6 +932,16 @@ object YTPlayerUtils {
      *    killing the client here just cascades us down the fallback chain for no reason
      *  - other HTTP codes (4xx/5xx) → invalid
      */
+    // Only the optional URL probe has a short deadline. The playback client and
+    // YouTube extraction retain their original timeouts and recovery behavior.
+    private val quickProbeClient by lazy {
+        httpClient.newBuilder()
+            .connectTimeout(3, TimeUnit.SECONDS)
+            .readTimeout(3, TimeUnit.SECONDS)
+            .callTimeout(4, TimeUnit.SECONDS)
+            .build()
+    }
+
     internal fun validateStatus(url: String): Boolean {
         Timber.tag(logTag).d("Validating stream URL status via GET Range bytes=0-0")
         try {
@@ -813,7 +954,7 @@ object YTPlayerUtils {
                 requestBuilder.addHeader("Cookie", cookie)
             }
 
-            val response = httpClient.newCall(requestBuilder.build()).execute()
+            val response = quickProbeClient.newCall(requestBuilder.build()).execute()
             response.close()
             val code = response.code
             val accepted = (response.isSuccessful || code == 206 || code == 403 || code == 410 || code == 405 || code == 400) && code != 404

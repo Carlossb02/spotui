@@ -872,7 +872,7 @@ internal fun parsePodcastChapters(description: String): List<PodcastChapter> {
     return chapters
 }
 
-private fun buildEpisodePreview(description: String): String {
+internal fun buildEpisodePreview(description: String): String {
     if (description.isBlank()) return ""
 
     // The provider can include raw YouTube descriptions with ads, links and chapter lists.

@@ -1,5 +1,9 @@
 package com.music.spotui.ui.components
 
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.runtime.DisposableEffect
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -75,6 +79,7 @@ import com.music.spotui.data.preferences.isSongLiked
 import com.music.spotui.data.preferences.removeLikedSongId
 import com.music.spotui.di.Palette
 import com.music.spotui.di.SongPlayer
+import com.music.spotui.ui.utils.AudioDeviceHelper
 import com.music.spotui.ui.screens.PodcastVideoFrame
 import com.music.spotui.ui.screens.PodcastVideoSession
 import com.music.spotui.ui.navigation.Routes
@@ -124,6 +129,19 @@ fun ExplicitBadge(
             .background(Color(0xFF333333), RoundedCornerShape(3.dp))
             .padding(horizontal = 4.dp, vertical = 1.dp),
     )
+}
+
+@Composable
+private fun MiniOutputRouteButton(onClick: () -> Unit, size: Dp = 36.dp) {
+    val bluetooth by AudioDeviceHelper.bluetoothRouteActiveState
+    androidx.compose.material3.IconButton(onClick = onClick, modifier = Modifier.size(size)) {
+        Icon(
+            painter = painterResource(id = R.drawable.ic_devices),
+            contentDescription = "Seleccionar dispositivo de salida",
+            tint = if (bluetooth) Color(0xFF1ED760) else Color.White,
+            modifier = Modifier.size(19.dp)
+        )
+    }
 }
 
 @OptIn(ExperimentalGlideComposeApi::class, ExperimentalFoundationApi::class)
@@ -192,6 +210,26 @@ fun MiniPlayer(
     }
     val currentTrack = miniPlayerViewModel.queue.value.firstOrNull { it.id == songId }
     var showSavedIn by remember { mutableStateOf(false) }
+    var showDevicesSheet by remember { mutableStateOf(false) }
+    // Reuse the full player's output selector. A route update is event-driven,
+    // not a high-frequency Bluetooth poll on every recomposition.
+    DisposableEffect(context) {
+        val manager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+        val callback = object : android.media.AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+                AudioDeviceHelper.updateRouteName(context)
+            }
+            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+                AudioDeviceHelper.updateRouteName(context)
+            }
+        }
+        manager.registerAudioDeviceCallback(callback, null)
+        AudioDeviceHelper.updateRouteName(context)
+        onDispose { manager.unregisterAudioDeviceCallback(callback) }
+    }
+    if (showDevicesSheet) {
+        DevicesSheet(context = context, onDismiss = { showDevicesSheet = false })
+    }
     if (showSavedIn && currentTrack != null) {
         SavedInSheet(
             song = currentTrack,
@@ -228,7 +266,9 @@ fun MiniPlayer(
                         compact = true,
                         modifier = Modifier.padding(start = 7.dp, top = 5.dp, bottom = 5.dp)
                             .width(88.dp).fillMaxHeight().clip(RoundedCornerShape(7.dp)),
-                        onUseAudio = { PodcastVideoSession.stop() }
+                        onUseAudio = {
+                            podcastVideoId?.let { PodcastVideoSession.setEnabled(context, it, false) }
+                        }
                     )
                 } else {
                     val coverModifier = if (podcastVideoId != null) {
@@ -249,12 +289,13 @@ fun MiniPlayer(
                     }
                 }
                 Column(Modifier.weight(1f).padding(start = 11.dp, end = 6.dp)) {
-                    Text(songTitle, fontSize = 14.sp, fontWeight = FontWeight.Bold,
-                        maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    Text(songTitle, modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE),
+                        fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1,
                         color = Color.White)
-                    Text(songSinger, fontSize = 12.sp, color = Color.LightGray,
-                        maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    Text(songSinger, modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE),
+                        fontSize = 12.sp, color = Color.LightGray, maxLines = 1)
                 }
+                MiniOutputRouteButton(onClick = { showDevicesSheet = true })
                 // Separate, bounded hit targets: never overlap the title or play.
                 androidx.compose.material3.IconButton(
                     onClick = { showSavedIn = true }, modifier = Modifier.size(42.dp)
@@ -461,7 +502,9 @@ fun MiniPlayer(
                         modifier = Modifier.padding(start = 5.dp, end = 10.dp)
                             .width(75.dp).height(42.dp)
                             .clip(RoundedCornerShape(6.dp)),
-                        onUseAudio = { PodcastVideoSession.stop() }
+                        onUseAudio = {
+                            podcastVideoId?.let { PodcastVideoSession.setEnabled(context, it, false) }
+                        }
                     )
                 } else {
                     if (currentTrack != null && com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(currentTrack.url)) {
@@ -479,26 +522,29 @@ fun MiniPlayer(
                         )
                     }
                 }
-                Column(
-                    modifier = Modifier
-                        .widthIn(Dp.Unspecified, 200.dp)
-                ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (isCurrentSongExplicit) {
                             ExplicitBadge()
                             Spacer(Modifier.width(4.dp))
                         }
-                        Text(text = songTitle, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis )
+                        Text(text = songTitle, color = Color.White, fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold, maxLines = 1,
+                            modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE))
                     }
-                    Text(text = songSinger, color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    Text(text = songSinger, color = Color.LightGray, fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium, maxLines = 1,
+                        modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE))
                 }
             }
 
             Row(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.width(70.dp)
+                modifier = Modifier.width(105.dp)
             ) {
+                MiniOutputRouteButton(onClick = { showDevicesSheet = true }, size = 29.dp)
+
 
                 // Plus = save; green check = already saved. A second tap opens the
                 // "Saved in" sheet (Liked Songs + playlists) instead of unliking.

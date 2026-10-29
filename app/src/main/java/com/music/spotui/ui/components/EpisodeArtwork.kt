@@ -45,21 +45,34 @@ fun EpisodeArtwork(
         PodcastResumeStore.observeEpisode(episode.url)
     }.collectAsState()
     Box(modifier = modifier.clip(RoundedCornerShape(radius))) {
+        // Artwork is loaded only for visible LazyRow items. A failed YouTube
+        // thumbnail falls back to the episode's actual cover instead of a
+        // permanent gray placeholder. No network lookup for stream metadata.
+        val fallbackCover = remember(episode.url, episode.coverUri) {
+            PodcastCover.preferredUri(context, episode)
+        }
         GlideImage(
-            model = imageOverride?.takeIf { it.isNotBlank() } ?: PodcastCover.preferredUri(context, episode),
+            model = imageOverride?.takeIf { it.isNotBlank() } ?: fallbackCover,
             contentDescription = episode.title,
             contentScale = contentScale,
             loading = placeholder(R.drawable.placeholder),
             failure = placeholder(R.drawable.placeholder),
             modifier = Modifier.fillMaxSize(),
+            requestBuilderTransform = { request ->
+                if (!imageOverride.isNullOrBlank() && fallbackCover.isNotBlank()) {
+                    request.error(com.bumptech.glide.Glide.with(context).load(fallbackCover))
+                        .override(640, 360)
+                } else request
+            },
         )
-        val p = progress
-        if (p != null && p.fraction > 0f) {
+        // State delegation is not smart-castable; capture one immutable snapshot.
+        val displayedProgress = progress
+        if (displayedProgress != null && displayedProgress.fraction > 0f) {
             Box(
                 modifier = Modifier.fillMaxWidth().height(4.dp)
                     .align(Alignment.BottomCenter).background(Color.Black.copy(alpha = 0.65f))
             ) {
-                Box(Modifier.fillMaxHeight().fillMaxWidth(p.fraction)
+                Box(Modifier.fillMaxHeight().fillMaxWidth(displayedProgress.fraction)
                     .background(Color(0xFF1ED760)))
             }
         }
