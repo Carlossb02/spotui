@@ -1,0 +1,313 @@
+--- a/app/src/main/java/com/music/spotui/ui/screens/PodcastVideoFrame.kt
++++ b/app/src/main/java/com/music/spotui/ui/screens/PodcastVideoFrame.kt
+@@ -189,14 +189,16 @@
+                 val muxed = response.streamingData?.formats.orEmpty()
+                 val videoFormats = response.streamingData?.adaptiveFormats.orEmpty()
+                     .filter { it.width != null && it.height != null &&
+-                        it.mimeType.startsWith("video/") && (it.fps ?: 30) >= 15 }
++                        it.mimeType.startsWith("video/") }
+                     // Prefer hardware-decoded H.264, then the muxed copy at the
+                     // same resolution. Sort by height before limiting candidates.
+                     .sortedWith(compareByDescending<PlayerResponse.StreamingData.Format> {
++                        // Prefer an actual video cadence, but don't eliminate a
++                        // fallback just because YouTube reports a bad fps value.
++                        (it.fps ?: 30) >= 24
++                    }.thenByDescending {
+                         it.mimeType.startsWith("video/mp4") && it.mimeType.contains("avc1")
+-                    }.thenByDescending { it.fps ?: 30 }
+-                        .thenByDescending { it.bitrate }
+-                        .thenByDescending { it.height ?: 0 })
++                    }.thenByDescending { it.height ?: 0 })
+                     .distinctBy { it.height }
+                     .filter { (it.height ?: 0) in 144..2160 }
+                     .take(12)
+@@ -309,6 +311,8 @@
+     private var lastSyncSeekAt = 0L
+     private var firstVideoAlignPending = false
+     private var lastSyncReportAt = 0L
++    private var lastObservedAudioAt = -1L
++    private var lastObservedClockAt = 0L
+     private var videoRequestedAt = 0L
+     private var failedUrls = mutableSetOf<String>()
+ 
+@@ -479,6 +483,8 @@
+         lastQualityChangeTime = android.os.SystemClock.elapsedRealtime()
+         lastSyncSeekAt = lastQualityChangeTime
+         firstVideoAlignPending = true
++        lastObservedAudioAt = -1L
++        lastObservedClockAt = 0L
+         lastReadyTime = lastQualityChangeTime
+         bufferingSince = 0L
+         hadReadyFrame = false
+@@ -503,27 +509,26 @@
+         if (p.playWhenReady != shouldPlay) p.playWhenReady = shouldPlay
+         if (p.playbackState != Player.STATE_READY) return
+         val now = android.os.SystemClock.elapsedRealtime()
+-        val elapsedSinceSeek = now - lastSyncSeekAt
+-        // The audio clock is authoritative, but video-only YouTube streams
+-        // need to decode forward from keyframes after a seek. Seeking every
+-        // 250 ms prevents that decoder from producing smooth frames.
+-        // 1) Initial catch-up only for meaningful startup offset.
+-        // 2) Subsequent seeks only for major drift with a generous cooldown.
+-        val initialCatchUp = initial && firstVideoAlignPending &&
+-            kotlin.math.abs(drift) > 1_500L
+-        val shouldSeek = shouldPlay && (initialCatchUp ||
+-            (elapsedSinceSeek >= 7_000L && kotlin.math.abs(drift) > 3_500L))
+-        if (initial && shouldPlay) firstVideoAlignPending = false
+-        if (shouldSeek) {
++        // Compare the podcast clock with elapsed real time. A sudden jump means
++        // the user sought in the AUDIO player. This is when a VIDEO seek is
++        // warranted; ordinary streaming lag is not a reason to thrash keyframes.
++        val wallDelta = if (lastObservedClockAt == 0L) 0L else (now - lastObservedClockAt).coerceAtLeast(0L)
++        val audioDelta = if (lastObservedAudioAt < 0L) 0L else audioAt - lastObservedAudioAt
++        val explicitAudioSeek = lastObservedAudioAt >= 0L && wallDelta in 1L..3_000L &&
++            (audioDelta < -1_000L || audioDelta > wallDelta + 2_000L)
++        lastObservedAudioAt = audioAt
++        lastObservedClockAt = now
++
++        val initialCatchUp = initial && firstVideoAlignPending && abs(drift) > 1_500L
++        val mayRecover = now - lastSyncSeekAt > 30_000L && abs(drift) > 8_000L &&
++            p.playbackState == Player.STATE_READY
++        if (initial) firstVideoAlignPending = false
++        if (shouldPlay && (initialCatchUp || explicitAudioSeek || mayRecover)) {
+             lastSyncSeekAt = now
+             p.seekTo(audioAt)
+-            p.playbackParameters = androidx.media3.common.PlaybackParameters(1f)
+-        } else if (p.playbackParameters.speed != 1f) {
+-            // The two independent decoders run at their natural playback rate.
+-            // Repeated playback-speed changes also reconfigure some hardware
+-            // video decoders, resulting in severe frame drops on Xiaomi devices.
+-            p.playbackParameters = androidx.media3.common.PlaybackParameters(1f)
+-        }
++        }
++        // No playback-speed changes to the visual decoder. It plays naturally
++        // between sparse seeks and cannot cause stalls in the soundtrack.
+         if (now - lastSyncReportAt >= 10_000L) {
+             lastSyncReportAt = now
+             Log.d(tag, "video sync drift=${drift}ms playing=${p.isPlaying} " +
+--- a/app/src/main/java/com/music/spotui/di/SongPlayer.kt
++++ b/app/src/main/java/com/music/spotui/di/SongPlayer.kt
+@@ -2672,6 +2672,7 @@
+     }
+ 
+     private suspend fun ensureSpotifyMatchMetadataUnshared(query: String): TrackMatchMetadata? {
++        val metadataStartedAt = android.os.SystemClock.elapsedRealtime()
+         val currentMeta = metadataRegistry[query]
+         val hasUsefulMeta = currentMeta?.let {
+             it.title.isNotBlank() && it.artist.isNotBlank() && it.album.isNotBlank()
+@@ -2697,6 +2698,7 @@
+                 .onFailure { Log.w(TAG, "Spotify metadata repair failed for $spotifyId (attempt ${attempt + 1})", it) }
+                 .getOrNull()
+         }
++        Log.i("SpotuiStartup", "spotifyMetadata lookup=${android.os.SystemClock.elapsedRealtime() - metadataStartedAt}ms success=${track != null}")
+         if (track == null) {
+             Log.w(TAG, "Spotify metadata unavailable for $spotifyId: trying duration fallbacks")
+             resolveDurationFallbacks(query, spotifyId, null, currentMeta?.title, currentMeta?.artist, currentMeta?.album)
+@@ -2767,7 +2769,11 @@
+         forPlayback: Boolean = false,
+     ): List<String> {
+         val cacheKey = "$query|${filter.value}|MATCH_V12"
+-        videoCandidatesCache[cacheKey]?.let { return it }
++        val matchStartedAt = android.os.SystemClock.elapsedRealtime()
++        videoCandidatesCache[cacheKey]?.let {
++            Log.i("SpotuiStartup", "ytCandidates memoryCache hits=${it.size}")
++            return it
++        }
+         appCtx?.let { ctx ->
+             com.music.spotui.data.preferences.getCachedVideoIds(ctx, cacheKey)?.let { cached ->
+                 videoCandidatesCache[cacheKey] = cached
+@@ -3178,7 +3184,10 @@
+             return emptyList()
+         }
+         return try {
+-            decide()
++            decide().also { result ->
++                Log.i("SpotuiStartup", "ytCandidates total=${android.os.SystemClock.elapsedRealtime() - matchStartedAt}ms " +
++                    "matches=${result.size} primaryHits=${hits.size} queries=${searchQueries.size}")
++            }
+         } finally {
+             videoSearches.values.forEach { it.cancel() }
+         }
+@@ -3196,17 +3205,16 @@
+         val cacheKey = "$query|${com.metrolist.innertube.YouTube.SearchFilter.FILTER_SONG.value}|MATCH_V12"
+         val candidatesCached = videoCandidatesCache.containsKey(cacheKey)
+         val tried = mutableSetOf<String>()
+-        val streamResolutionSemaphore = Semaphore(3)
++        val streamResolutionSemaphore = Semaphore(2)
+         suspend fun tryIds(ids: List<String>, skipValidation: Boolean = false): YTPlayerUtils.PlaybackData? {
+             val uniqueIds = ids.filter { it.isNotBlank() }.distinct().filter { tried.add(it) }
+             if (uniqueIds.isEmpty()) return null
+             val attempts = uniqueIds.mapIndexed { index, videoId ->
+                 scope.async {
+-                    // Keep first candidate immediate. Stagger lower-ranked
+-                    // speculative candidates to avoid simultaneous WebView
+-                    // PoToken creation and HTTP contention on cold starts.
+-                    // Priority and winner-selection loop below are unchanged.
+-                    if (index > 0) delay(index * 650L)
++                    // Warm lower-priority candidates shortly after the first.
++                    // Two parallel stream resolvers max; the winner is still
++                    // chosen in the exact original ranking order.
++                    if (index > 0) delay(index * 180L)
+                     streamResolutionSemaphore.withPermit {
+                         if (forPlayback) {
+                             updateResolveStatus(true, "Resolving YouTube stream ${index + 1}/${uniqueIds.size}...")
+--- a/app/src/main/java/com/metrolist/music/utils/YTPlayerUtils.kt
++++ b/app/src/main/java/com/metrolist/music/utils/YTPlayerUtils.kt
+@@ -39,6 +39,11 @@
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.GlobalScope
+ import kotlinx.coroutines.launch
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.SupervisorJob
++import kotlinx.coroutines.async
++import kotlinx.coroutines.cancel
++import kotlinx.coroutines.Deferred
+ import okhttp3.OkHttpClient
+ import timber.log.Timber
+ import java.util.concurrent.TimeUnit
+@@ -170,20 +175,26 @@
+     // (important for age restrictions); a refreshed script is fetched after TTL.
+     @Volatile private var recentSignatureTimestamp: Pair<Long, Int>? = null
+     private const val SIGNATURE_TIMESTAMP_TTL_MS = 5 * 60_000L
+-
+-    private fun signatureTimestampFast(videoId: String): SignatureTimestampResult {
+-        val now = System.currentTimeMillis()
+-        recentSignatureTimestamp?.let { (savedAt, timestamp) ->
+-            if (now >= savedAt && now - savedAt < SIGNATURE_TIMESTAMP_TTL_MS) {
+-                return SignatureTimestampResult(timestamp, isAgeRestricted = false)
+-            }
+-        }
+-        val result = getSignatureTimestampOrNull(videoId)
+-        if (result.timestamp != null && !result.isAgeRestricted) {
+-            recentSignatureTimestamp = System.currentTimeMillis() to result.timestamp
+-        }
+-        return result
+-    }
++    private val signatureTimestampLock = Any()
++
++    // Resolving several fallback recordings simultaneously must not launch
++    // several identical NewPipe player-script downloads on a cold start.
++    // Only verified non-age-restricted timestamps are shared; failures and
++    // age-restricted responses retain their individual resolution behavior.
++    private fun signatureTimestampFast(videoId: String): SignatureTimestampResult =
++        synchronized(signatureTimestampLock) {
++            val now = System.currentTimeMillis()
++            recentSignatureTimestamp?.let { (savedAt, timestamp) ->
++                if (now >= savedAt && now - savedAt < SIGNATURE_TIMESTAMP_TTL_MS) {
++                    return@synchronized SignatureTimestampResult(timestamp, isAgeRestricted = false)
++                }
++            }
++            val result = getSignatureTimestampOrNull(videoId)
++            if (result.timestamp != null && !result.isAgeRestricted) {
++                recentSignatureTimestamp = System.currentTimeMillis() to result.timestamp
++            }
++            result
++        }
+ 
+     private val MAIN_CLIENT: YouTubeClient = WEB_REMIX
+ 
+@@ -221,6 +232,7 @@
+         connectivityManager: ConnectivityManager,
+         skipValidation: Boolean = false,
+     ): Result<PlaybackData> = runCatching {
++        val streamStartedAt = android.os.SystemClock.elapsedRealtime()
+         Timber.tag(TAG).d("=== PLAYER RESPONSE FOR PLAYBACK ===")
+         Timber.tag(TAG).d("videoId: $videoId")
+         Timber.tag(TAG).d("playlistId: $playlistId")
+@@ -278,6 +290,9 @@
+             null
+         }
+ 
++        Log.i("SpotuiStartup", "ytAuth cost=${android.os.SystemClock.elapsedRealtime() - streamStartedAt}ms " +
++            "signature=${signatureTimestamp.timestamp != null} token=${poToken != null}")
++
+         // If MAIN_CLIENT needs a PoToken but we couldn't get one (WebView missing, JS
+         // blocked, network hostile), WEB_REMIX will return streams that 403 on play.
+         // Skip it and go straight to the fallback chain.
+@@ -372,6 +387,28 @@
+             else -> -1
+         }
+ 
++        // Request the next two fallback client responses concurrently, but
++        // CONSUME them in the original order below. Prefetch is limited to two
++        // pending clients and cancelled once a source has been selected.
++        // This does not change the source/format/lang ranking or the fallback
++        // behavior when a request fails.
++        val fallbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
++        val prefetchedResponses = java.util.HashMap<Int, Deferred<PlayerResponse?>>()
++        fun queueFallback(index: Int) {
++            if (index !in STREAM_FALLBACK_CLIENTS.indices || index in prefetchedResponses) return
++            val nextClient = STREAM_FALLBACK_CLIENTS[index]
++            if (nextClient.loginRequired && !isLoggedIn && YouTube.cookie == null) return
++            val clientPoToken = if (nextClient.useWebPoTokens) poToken?.playerRequestPoToken else null
++            val clientSigTimestamp = if (wasOriginallyAgeRestricted) null else signatureTimestamp.timestamp
++            prefetchedResponses[index] = fallbackScope.async {
++                YouTube.player(videoId, playlistId, nextClient, clientSigTimestamp, clientPoToken).getOrNull()
++            }
++        }
++        if (startIndex >= 0) {
++            queueFallback(startIndex)
++            queueFallback(startIndex + 1)
++        }
++        try {
+         for (clientIndex in (startIndex until STREAM_FALLBACK_CLIENTS.size)) {
+             // reset for each client
+             format = null
+@@ -402,8 +439,16 @@
+                 val clientPoToken = if (client.useWebPoTokens) poToken?.playerRequestPoToken else null
+                 // Skip signature timestamp for age-restricted (faster), use it for normal content
+                 val clientSigTimestamp = if (wasOriginallyAgeRestricted) null else signatureTimestamp.timestamp
+-                streamPlayerResponse =
+-                    YouTube.player(videoId, playlistId, client, clientSigTimestamp, clientPoToken).getOrNull()
++                // Start fetching the following response while this one is
++                // checked. No speculative request changes which client wins.
++                queueFallback(clientIndex)
++                queueFallback(clientIndex + 1)
++                val startedClientAt = android.os.SystemClock.elapsedRealtime()
++                val inProgress = prefetchedResponses.remove(clientIndex)
++                streamPlayerResponse = if (inProgress != null) inProgress.await()
++                    else YouTube.player(videoId, playlistId, client, clientSigTimestamp, clientPoToken).getOrNull()
++                Log.i("SpotuiStartup", "ytClient[${clientIndex}] latency=${android.os.SystemClock.elapsedRealtime() - startedClientAt}ms " +
++                    "status=${streamPlayerResponse?.playabilityStatus?.status}")
+                 dumpAudioFormats("CLIENT_${client.clientName}", streamPlayerResponse)
+             }
+ 
+@@ -634,6 +679,11 @@
+             }
+         }
+ 
++        } finally {
++            // No orphan requests after success, error or a new track.
++            fallbackScope.cancel()
++        }
++
+         if (streamUrl.isNullOrBlank() && fallbackStreamUrl != null) {
+             audioDebug("ALL CLIENTS EXHAUSTED: using previously language-checked fallback stream")
+             streamUrl = fallbackStreamUrl
+@@ -661,6 +711,8 @@
+         if (isUploadedTrack) {
+             println("[PLAYBACK_DEBUG] SUCCESS: Got playback data for uploaded track - format=${format.mimeType}, streamUrl=${streamUrl.take(100)}...")
+         }
++        Log.i("SpotuiStartup", "ytStream total=${android.os.SystemClock.elapsedRealtime() - streamStartedAt}ms " +
++            "videoId=$videoId format=${format.itag} track=${format.audioTrack?.id ?: "default"}")
+         PlaybackData(
+             streamPlayerResponse?.playerConfig?.audioConfig ?: mainPlayerResponse?.playerConfig?.audioConfig,
+             streamPlayerResponse?.videoDetails ?: mainPlayerResponse?.videoDetails,
+--- a/app/src/main/res/layout/spotui_podcast_video_view.xml
++++ b/app/src/main/res/layout/spotui_podcast_video_view.xml
+@@ -1,12 +1,12 @@
+ <?xml version="1.0" encoding="utf-8"?>
+-<!-- Media3 SurfaceView renders video through a dedicated hardware layer.
+-     TextureView GPU composition was excessively slow on some devices. -->
++<!-- TextureView is required for Compose transitions, clipping and PiP on
++     devices where SurfaceView remains invisible or is detached during handoff. -->
+ <androidx.media3.ui.PlayerView
+     xmlns:android="http://schemas.android.com/apk/res/android"
+     xmlns:app="http://schemas.android.com/apk/res-auto"
+     android:layout_width="match_parent"
+     android:layout_height="match_parent"
+-    app:surface_type="surface_view"
++    app:surface_type="texture_view"
+     app:use_controller="false"
+     app:resize_mode="fit"
+     app:show_buffering="never" />

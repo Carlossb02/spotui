@@ -1,0 +1,455 @@
+--- a/app/src/main/java/com/music/spotui/di/SongPlayer.kt
++++ b/app/src/main/java/com/music/spotui/di/SongPlayer.kt
+@@ -1011,13 +1011,16 @@
+                     currentPlayerNormalizer?.apply {
+                         setTrackLoudness(loudness)
+                         beginTrack()
+                     }
+-                    p.setMediaItem(mediaItem)
+-                    p.prepare()
++                    // Set the resume position BEFORE prepare. The previous
++                    // prepare-at-zero + seek could open a large podcast stream
++                    // twice, wasting its first range request and extractor work.
+                     val startAt = if (pendingSeekQuery == song) pendingSeekMs
+                         else if (song == restoreQuery) restorePositionMs else 0L
+-                    if (startAt > 0L) p.seekTo(startAt)
++                    if (startAt > 0L) p.setMediaItem(mediaItem, startAt)
++                    else p.setMediaItem(mediaItem)
++                    p.prepare()
+                     if (pendingSeekQuery == song) pendingSeekQuery = null
+                     restoreQuery = null
+                     // Lossless providers do their own (unseen) matching: hold playback until the
+                     // stream's real duration confirms it is the recording we asked for.
+@@ -1061,10 +1064,14 @@
+         val metadataBuilder = androidx.media3.common.MediaMetadata.Builder()
+             .setTitle(metaTitle)
+             .setArtist(metaArtist)
+         val ctx = appCtx ?: com.music.spotui.MyApplication.instance
++        // Podcast streams cannot be downloaded via the music downloads table.
++        // Looking up every downloaded entry for a signed podcast CDN URL can
++        // block preparation without producing a matching entry.
+         com.music.spotui.util.ArtworkHelper.attachArtwork(
+-            metadataBuilder, ctx, metaCover, currentMediaId, streamUrl
++            metadataBuilder, ctx, metaCover, currentMediaId,
++            if (songQuery.startsWith("yt_ep:")) null else streamUrl
+         )
+         val metadata = metadataBuilder.build()
+         val query = songQuery.ifBlank { currentRequest }
+         val spotifyId = trackIdRegistry[query] ?: spotifyTrackIdForPlayback(query)
+@@ -2727,8 +2734,15 @@
+     // same API (often hitting 429). Results still go through the original code.
+     private val metadataInFlight = java.util.concurrent.ConcurrentHashMap<String,
+         kotlinx.coroutines.Deferred<TrackMatchMetadata?>>()
+     private val metadataInFlightLock = Any()
++    // Spotify metadata is authoritative after a successful exact track-ID read.
++    // A remaster/live title still carries strong version flags and previously
++    // triggered a new Spotify network request every time it was replayed.
++    // Keep a short-lived proof keyed by ID and the exact immutable metadata.
++    private val verifiedMatchMetadata = java.util.concurrent.ConcurrentHashMap<
++        String, Triple<Long, String, TrackMatchMetadata>>()
++    private const val VERIFIED_MATCH_TTL_MS = 10 * 60_000L
+ 
+     private suspend fun ensureSpotifyMatchMetadata(query: String): TrackMatchMetadata? {
+         val pending = synchronized(metadataInFlightLock) {
+             metadataInFlight[query] ?: scope.async(Dispatchers.IO) {
+@@ -2749,14 +2763,20 @@
+         } ?: false
+         val currentStrongFlags = currentMeta?.let {
+             (versionFlags(it.title) + versionFlags(it.album)).intersect(strongFlags)
+         }.orEmpty()
++        val spotifyId = trackIdRegistry[query] ?: spotifyTrackIdForPlayback(query)
++        val verification = verifiedMatchMetadata[query]
++        val verifiedRecent = currentMeta != null && spotifyId != null &&
++            verification != null && verification.second == spotifyId &&
++            verification.third == currentMeta &&
++            android.os.SystemClock.elapsedRealtime() - verification.first in 0L until VERIFIED_MATCH_TTL_MS
+         if (hasUsefulMeta && durationRegistry[query] != null &&
+-            explicitRegistry.containsKey(query) && currentStrongFlags.isEmpty()) {
++            explicitRegistry.containsKey(query) && (currentStrongFlags.isEmpty() || verifiedRecent)) {
++            if (verifiedRecent) Log.d(TAG, "Spotify exact metadata reused for $spotifyId")
+             return currentMeta
+         }
+ 
+-        val spotifyId = trackIdRegistry[query] ?: spotifyTrackIdForPlayback(query)
+         if (spotifyId == null) {
+             resolveDurationFallbacks(query, null, null, currentMeta?.title, currentMeta?.artist, currentMeta?.album)
+             return currentMeta
+         }
+@@ -2782,8 +2802,17 @@
+         )
+         metadataRegistry[query] = repaired
+         trackIdRegistry[query] = spotifyId
+         explicitRegistry[query] = track.explicit
++        if (verifiedMatchMetadata.size > 200) {
++            val now = android.os.SystemClock.elapsedRealtime()
++            verifiedMatchMetadata.entries.removeIf {
++                now - it.value.first !in 0L until VERIFIED_MATCH_TTL_MS
++            }
++        }
++        verifiedMatchMetadata[query] = Triple(
++            android.os.SystemClock.elapsedRealtime(), spotifyId, repaired
++        )
+         if (track.durationMs > 0) {
+             durationRegistry[query] = track.durationMs
+             approxDurationQueries.remove(query)
+             persistDurationMs(spotifyId, track.durationMs)
+@@ -2929,17 +2958,21 @@
+             if (combined) videoSearches[searchText] = scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) { searchHits(searchText, YouTube.SearchFilter.FILTER_VIDEO) }
+             // Speculative start from the metadata we already have; unused ones are cancelled below.
+             launchPlan(buildPlan(null))
+ 
++            val metadataWaitStarted = android.os.SystemClock.elapsedRealtime()
+             val exactMeta = metadataDeferred.await()
++            if (forPlayback) Log.i("SpotuiStartup", "ytSearch metadataGate=${android.os.SystemClock.elapsedRealtime() - metadataWaitStarted}ms")
+             val finalPlan = buildPlan(exactMeta)
+             launchPlan(finalPlan)
+             searches.entries.filter { it.key !in primaryQueries(finalPlan) }.forEach { it.value.cancel() }
+             videoSearches.entries.filter { it.key !in finalPlan.videoQueries }.forEach { it.value.cancel() }
+ 
++            val searchWaitStarted = android.os.SystemClock.elapsedRealtime()
+             val allHits = primaryQueries(finalPlan)
+                 .flatMap { q -> searches.getValue(q).await() }
+                 .distinctBy { it.id }
++            if (forPlayback) Log.i("SpotuiStartup", "ytSearch networkGate=${android.os.SystemClock.elapsedRealtime() - searchWaitStarted}ms queries=${primaryQueries(finalPlan).size}")
+             Triple(exactMeta, finalPlan, allHits)
+         }
+         val searchQueries = plan.queries
+         val targetAlbum: String? = plan.album
+--- a/app/src/main/java/com/music/spotui/ui/screens/PodcastVideoFrame.kt
++++ b/app/src/main/java/com/music/spotui/ui/screens/PodcastVideoFrame.kt
+@@ -102,8 +102,9 @@
+     val url: String,
+     val mimeType: String,
+     val muxed: Boolean = false,
+     val frameRate: Int = 30,
++    val verifiedForStartup: Boolean = false,
+ ) {
+     val label: String get() = "${height}p"
+ }
+ 
+@@ -137,8 +138,32 @@
+                 Log.d("SpotuiPodcastVideo", "video stream probe status=${result.code} readable=$readable")
+                 readable
+             }
+         }.getOrElse { false }
++    }
++
++    /** A raw Innertube HTTPS URL may still be throttled or rejected (403).
++     * Probe at most two small startup renditions with HTTP Range on IO,
++     * sequentially: do not leave a second HTTP request holding up a successful
++     * first source. Never read the entire video.
++     * Keep the rest of the quality catalogue and its manual selection intact. */
++    private suspend fun playableAtStartup(options: List<PodcastVideoQuality>): List<PodcastVideoQuality> {
++        val candidates = options.filterNot { it.muxed }
++            .sortedWith(compareBy<PodcastVideoQuality> {
++                // Lowest adequate bitrate makes first frame arrive sooner.
++                if (it.height in 240..360) 0 else if (it.height in 361..480) 1 else 2
++            }.thenBy { kotlin.math.abs(it.height - 360) })
++            .take(2)
++        if (candidates.isEmpty()) return emptyList()
++        if (isReadable(candidates[0].url)) return options.map {
++            if (it.url == candidates[0].url) it.copy(verifiedForStartup = true) else it
++        }
++        Log.w("SpotuiPodcastVideo", "Video CDN rejected first startup rendition")
++        if (candidates.size > 1 && isReadable(candidates[1].url)) {
++            return options.filterNot { it.url == candidates[0].url }
++                .map { if (it.url == candidates[1].url) it.copy(verifiedForStartup = true) else it }
++        }
++        return emptyList()
+     }
+ 
+     /** Resolve one small, silent hover preview with a short-lived stream URL cache.
+      * No high-resolution probing, audio decoder or use of the active MediaSession. */
+@@ -176,19 +201,20 @@
+                 mimeType = if (format.mimeType.startsWith("video/webm"))
+                     MimeTypes.VIDEO_WEBM else MimeTypes.VIDEO_MP4,
+                 muxed = false, frameRate = format.fps ?: 30,
+             )
+-        // Fast path: direct signed URLs are already playable. Avoid blocking
+-        // NewPipe signature extraction for every cipher-only alternate format.
+-        val directlyPlayable = formats.mapNotNull { format ->
+-            format.url?.takeIf { it.startsWith("https://") }?.let { qualityFor(format, it) }
+-        }.distinctBy { it.height }
+-        if (directlyPlayable.isNotEmpty()) return directlyPlayable
+-        // Some clients expose only ciphered URLs. Limit decryption work to one
+-        // quality per resolution, with the decoder-friendly MP4 formats first.
++        // HTTPS does not automatically mean playable: YouTube's `n` throttling
++        // parameter may still be ciphered. Deobfuscate only URLs that actually
++        // carry n= (or signatureCipher); do not pay JS/NewPipe startup cost on
++        // already-decoded URLs. Preserve MP4/H.264 ranking and all resolutions.
+         return formats.distinctBy { it.height }.take(8).mapNotNull { format ->
+-            runCatching { NewPipeExtractor.getStreamUrl(format, videoId) }.getOrNull()
+-                ?.takeIf { it.startsWith("https://") }
++            val direct = format.url?.takeIf { it.startsWith("https://") }
++            val needsDeobfuscation = direct == null ||
++                Regex("[?&]n=").containsMatchIn(direct)
++            val url = if (needsDeobfuscation) {
++                runCatching { NewPipeExtractor.getStreamUrl(format, videoId) }.getOrNull()
++            } else direct
++            url?.takeIf { it.startsWith("https://") }
+                 ?.let { qualityFor(format, it) }
+         }
+     }
+ 
+@@ -231,13 +257,17 @@
+         // audio resolver. No extra requests or speculative video decoder.
+         run {
+             com.metrolist.music.utils.YTPlayerUtils.recentVideoResponse(videoId)?.let { response ->
+                 val fromAudio = videoOnlyFormats(response, videoId)
+-                if (fromAudio.isNotEmpty()) {
+-                    videoOptionsCache[videoId] = now to fromAudio
+-                    Log.d("SpotuiPodcastVideo", "Reused verified audio player response for videoId=$videoId")
+-                    return@withContext fromAudio.sortedByDescending { it.height }
+-                }
++                val checkedAudio = playableAtStartup(fromAudio)
++                if (checkedAudio.isNotEmpty()) {
++                    videoOptionsCache[videoId] = now to checkedAudio
++                    Log.d("SpotuiPodcastVideo", "Reused CDN-readable audio player response for videoId=$videoId")
++                    return@withContext checkedAudio.sortedByDescending { it.height }
++                }
++                // Matching video ID is NOT sufficient: cached audio responses
++                // can contain non-playable video URLs. Try alternate clients.
++                Log.d("SpotuiPodcastVideo", "Cached video metadata did not yield a readable URL; re-resolving")
+             }
+         }
+         val result = withTimeoutOrNull(if (previewOnly) 12_000L else 16_000L) {
+             val bestByHeight = LinkedHashMap<Int, PodcastVideoQuality>()
+@@ -309,15 +339,16 @@
+                 }
+             }
+             bestByHeight.values.sortedByDescending { it.height }
+         } ?: emptyList()
+-        if (!previewOnly && result.isNotEmpty()) {
++        val playable = if (previewOnly) result else playableAtStartup(result)
++        if (!previewOnly && playable.isNotEmpty()) {
+             if (videoOptionsCache.size > 32) {
+                 videoOptionsCache.entries.removeIf { now - it.value.first > VIDEO_OPTIONS_TTL_MS }
+             }
+-            videoOptionsCache[videoId] = System.currentTimeMillis() to result
+-        }
+-        result
++            videoOptionsCache[videoId] = System.currentTimeMillis() to playable
++        }
++        playable
+     }
+ }
+ 
+ /**
+@@ -352,8 +383,9 @@
+     var enteringPictureInPicture by mutableStateOf(false)
+         private set
+ 
+     private var resolveJob: Job? = null
++    private var firstFrameWatchdog: Job? = null
+     private var videoClockJob: Job? = null
+     private var surfaceHandoffJob: Job? = null
+     private var retainedReleaseJob: Job? = null
+     private var retainedPlayer: ExoPlayer? = null
+@@ -451,9 +483,12 @@
+                 (contextNow.getSystemService(Context.CONNECTIVITY_SERVICE)
+                     as? android.net.ConnectivityManager)?.isActiveNetworkMetered ?: true
+             }.getOrDefault(true)
+             val initialLimit = if (metered) 360 else 480
+-            val first = qualities.filter { it.height <= initialLimit }.maxByOrNull { it.height }
++            // Start only with a rendition proven readable by the CDN range
++            // probe. Other advertised qualities remain selectable manually.
++            val first = qualities.firstOrNull { it.verifiedForStartup }
++                ?: qualities.filter { it.height <= initialLimit }.maxByOrNull { it.height }
+                 ?: qualities.minByOrNull { it.height } ?: return@launch
+             createVideoPlayer(contextNow, videoId)
+             switchVisualQuality(first)
+             startVideoClock(videoId)
+@@ -498,57 +533,36 @@
+                             Log.i("SpotuiStartup", "video first READY=" +
+                                 "${now - videoRequestedAt}ms videoId=$videoId " +
+                                 "quality=${currentQuality?.label} fps=${currentQuality?.frameRate}")
+                         }
+-                        hadReadyFrame = true
+                         lastReadyTime = now
+                         bufferingSince = 0L
+-                        isLoading = false
+-                        error = null
++                        // STATE_READY is not proof that a frame has been drawn.
++                        // Keep the loading indicator until the visual decoder
++                        // really renders; otherwise the UI is silently black.
+                         alignVideoWithAudio(visualPlayer, true)
++                        watchForFirstFrame(videoId, visualPlayer)
+                     }
+                     Player.STATE_BUFFERING -> if (bufferingSince == 0L) {
+                         bufferingSince = now
+                     }
+                     else -> Unit
+                 }
+             }
++            override fun onRenderedFirstFrame() {
++                if (player !== visualPlayer || activeVideoId != videoId) return
++                val wasWaiting = !hadReadyFrame
++                hadReadyFrame = true
++                firstFrameWatchdog?.cancel()
++                firstFrameWatchdog = null
++                isLoading = false
++                error = null
++                if (wasWaiting) Log.i("SpotuiStartup", "video FIRST_FRAME=${android.os.SystemClock.elapsedRealtime() - videoRequestedAt}ms videoId=$videoId")
++            }
+             override fun onPlayerError(failure: PlaybackException) {
+                 if (player !== visualPlayer || activeVideoId != videoId) return
+                 Log.w(tag, "Optional video failed (audio stays uninterrupted)", failure)
+-                currentQuality?.url?.let { failedUrls.add(it) }
+-                val replacement = qualities.filter { it.url !in failedUrls }
+-                    .filter { it.height < (currentQuality?.height ?: Int.MAX_VALUE) }
+-                    .maxByOrNull { it.height }
+-                    ?: qualities.filter { it.url !in failedUrls }.minByOrNull { it.height }
+-                if (replacement != null) switchVisualQuality(replacement)
+-                else if (!freshSourceRetryAttempted) {
+-                    // A cached direct URL can be rejected by the CDN. Retry
+-                    // once using a fresh player response, not indefinitely.
+-                    // The independent audio player is never reloaded.
+-                    freshSourceRetryAttempted = true
+-                    isLoading = true
+-                    scope.launch {
+-                        PodcastVideoStreams.invalidate(videoId)
+-                        val fresh = try { PodcastVideoStreams.resolve(videoId) }
+-                        catch (cancelled: CancellationException) { throw cancelled }
+-                        catch (_: Exception) { emptyList() }
+-                        if (activeVideoId != videoId || player !== visualPlayer) return@launch
+-                        qualities = fresh.filterNot { it.muxed }.distinctBy { it.height }
+-                            .sortedBy { it.height }
+-                        failedUrls.clear()
+-                        val first = qualities.filter { it.height <= 360 }.maxByOrNull { it.height }
+-                            ?: qualities.minByOrNull { it.height }
+-                        if (first != null) switchVisualQuality(first)
+-                        else {
+-                            isLoading = false
+-                            error = "No se pudo cargar la imagen; el audio continúa reproduciéndose"
+-                        }
+-                    }
+-                } else {
+-                    isLoading = false
+-                    error = "No se pudo cargar la imagen; el audio continúa reproduciéndose"
+-                }
++                recoverVideoImage(visualPlayer, videoId)
+             }
+         })
+         // Actual transferred bytes, not claimed Wi-Fi link speed, determine
+         // whether raising resolution is safe in Auto mode.
+@@ -567,12 +581,70 @@
+         player = visualPlayer
+         updateSurface()
+     }
+ 
++    /** Media3 can report READY with an empty/invalid TextureView stream.
++     * A missing first frame is treated as a playback failure, never success. */
++    private fun watchForFirstFrame(videoId: String, p: ExoPlayer) {
++        if (hadReadyFrame || player !== p || activeVideoId != videoId ||
++            visibleTargets.isEmpty() || !SongPlayer.isPlaying()) return
++        if (firstFrameWatchdog?.isActive == true) return
++        firstFrameWatchdog = scope.launch {
++            delay(5_500L)
++            if (player === p && activeVideoId == videoId && !hadReadyFrame &&
++                visibleTargets.isNotEmpty() && SongPlayer.isPlaying()) {
++                Log.w(tag, "No first video frame after READY; trying a different source")
++                recoverVideoImage(p, videoId)
++            }
++        }
++    }
++
++    /** Only the optional visual stream is replaced. Never touch SongPlayer. */
++    private fun recoverVideoImage(p: ExoPlayer, videoId: String) {
++        if (player !== p || activeVideoId != videoId) return
++        firstFrameWatchdog?.cancel()
++        firstFrameWatchdog = null
++        currentQuality?.url?.let { failedUrls.add(it) }
++        // Don't cycle through many different resolutions from the same broken
++        // player response. The cache may hold URLs lacking the right signature.
++        val next = if (failedUrls.size < 2) {
++            qualities.filter { it.url !in failedUrls }
++                .filter { it.height < (currentQuality?.height ?: Int.MAX_VALUE) }
++                .maxByOrNull { it.height }
++                ?: qualities.filter { it.url !in failedUrls }.minByOrNull { it.height }
++        } else null
++        if (next != null) { switchVisualQuality(next); return }
++        if (!freshSourceRetryAttempted) {
++            freshSourceRetryAttempted = true
++            isLoading = true
++            scope.launch {
++                PodcastVideoStreams.invalidate(videoId)
++                val fresh = try { PodcastVideoStreams.resolve(videoId) }
++                    catch (cancelled: CancellationException) { throw cancelled }
++                    catch (failure: Exception) { Log.w(tag, "Video source retry failed", failure); emptyList() }
++                if (activeVideoId != videoId || player !== p) return@launch
++                qualities = fresh.filterNot { it.muxed }.distinctBy { it.height }
++                    .sortedBy { it.height }
++                failedUrls.clear()
++                val first = qualities.firstOrNull { it.verifiedForStartup }
++                    ?: qualities.filter { it.height <= 360 }.maxByOrNull { it.height }
++                    ?: qualities.minByOrNull { it.height }
++                if (first != null) switchVisualQuality(first)
++                else { isLoading = false; error = "No se pudo obtener el vídeo; el audio sigue reproduciéndose" }
++            }
++        } else {
++            isLoading = false
++            error = "No se ha recibido ningún fotograma; el audio sigue reproduciéndose"
++            p.playWhenReady = false
++        }
++    }
++
+     private fun switchVisualQuality(choice: PodcastVideoQuality) {
+         val p = player ?: return
+         if (activeVideoId == null || choice.url in failedUrls) return
+         if (currentQuality == choice && p.mediaItemCount > 0) return
++        firstFrameWatchdog?.cancel()
++        firstFrameWatchdog = null
+         currentQuality = choice
+         selectedQuality = if (automaticQuality) "Auto · ${choice.label}" else choice.label
+         lastQualityChangeTime = android.os.SystemClock.elapsedRealtime()
+         lastSyncSeekAt = lastQualityChangeTime
+@@ -658,8 +730,11 @@
+                     break
+                 }
+                 pendingAudioMs = 0L
+                 alignVideoWithAudio(p)
++                if (!hadReadyFrame && p.playbackState == Player.STATE_READY) {
++                    watchForFirstFrame(videoId, p)
++                }
+                 adjustAutomaticQuality(p)
+                 delay(250L)
+             }
+         }
+@@ -704,8 +779,9 @@
+     }
+ 
+     fun stop() {
+         resolveJob?.cancel(); resolveJob = null
++        firstFrameWatchdog?.cancel(); firstFrameWatchdog = null
+         videoClockJob?.cancel(); videoClockJob = null
+         surfaceHandoffJob?.cancel(); surfaceHandoffJob = null
+         attachedView?.player = null
+         attachedView = null
+@@ -775,8 +851,11 @@
+         // initial alignment now; never seek the actual podcast soundtrack.
+         if (target != null && firstVideoAlignPending && p.playbackState == Player.STATE_READY) {
+             alignVideoWithAudio(p, initial = true)
+         }
++        if (target != null && !hadReadyFrame && p.playbackState == Player.STATE_READY) {
++            activeVideoId?.let { watchForFirstFrame(it, p) }
++        }
+         // Video frame lifecycle has no effect on SongPlayer or audio focus.
+     }
+ }
+ 
+@@ -832,8 +911,15 @@
+             }
+             PodcastVideoSession.fullscreen || PodcastVideoSession.enteringPictureInPicture -> Unit
+             else -> VideoSurface(
+                 Modifier.fillMaxSize(), priority = if (compact) 0 else surfacePriority
++            )
++        }
++        if (active && !compact && error == null && !PodcastVideoSession.fullscreen &&
++            PodcastVideoSession.isLoading) {
++            CircularProgressIndicator(
++                color = Color.White,
++                modifier = Modifier.align(Alignment.Center).size(30.dp)
+             )
+         }
+         if (active && !compact && error == null && !PodcastVideoSession.fullscreen) {
+             IconButton(

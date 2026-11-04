@@ -1,0 +1,262 @@
+--- a/app/src/main/java/com/music/spotui/di/SongPlayer.kt
++++ b/app/src/main/java/com/music/spotui/di/SongPlayer.kt
+@@ -326,7 +326,11 @@
+     // Remove them before title/flag comparison so e.g.
+     // "Full of Life", "Full of Life (Lyric Video)" and
+     // "Full of Life (With Lyrics)" compare as the same title.
+-    private fun cleanLyricsTitleForMatch(title: String): String {
++    private val lyricsMatchTextCache = com.music.spotui.util.BoundedMemoizer<String, String>(512)
++    private fun cleanLyricsTitleForMatch(title: String): String =
++        lyricsMatchTextCache.getOrCompute(title) { cleanLyricsTitleForMatchUncached(title) }
++
++    private fun cleanLyricsTitleForMatchUncached(title: String): String {
+         var cleaned = title
+         repeat(3) {
+             cleaned = cleaned.replace(lyricsTitleDecorationRegex, "")
+@@ -336,7 +340,11 @@
+         return cleaned
+     }
+ 
+-    private fun cleanTrackTitle(raw: String, artist: String): String {
++    private val trackTitleCache = com.music.spotui.util.BoundedMemoizer<Pair<String, String>, String>(512)
++    private fun cleanTrackTitle(raw: String, artist: String): String =
++        trackTitleCache.getOrCompute(raw to artist) { cleanTrackTitleUncached(raw, artist) }
++
++    private fun cleanTrackTitleUncached(raw: String, artist: String): String {
+         var title = raw
+         if (title.contains("|")) {
+             title = title.substringAfter("|")
+@@ -1358,6 +1366,26 @@
+         // Resolve the exact YouTube video belonging to this episode, not a
+         // similarly named music track from the provider priority list.
+         if (song.startsWith("yt_ep:")) {
++            // Reuse ONLY this exact episode's still-live, quality-matched signed URL.
++            // A playlist revisit used to redo PoToken / YouTube / NewPipe even when
++            // the previous successful resolution was seconds old.
++            val cachedPodcast = streamCache[song]
++            val podcastExpires = streamExpiresAt[song] ?: 0L
++            val now = System.currentTimeMillis()
++            if (cachedPodcast != null && podcastExpires > now + 30_000L &&
++                qualityTierCache[song] == expectedTier) {
++                if (forPlayback) {
++                    currentSource = sourceCache[song] ?: "YouTube podcast"
++                    currentQuality = qualityCache[song].orEmpty()
++                    boundState?.updateResolveDetailNote("Source: $currentSource • Format: $currentQuality (valid episode cache)")
++                    updateResolveStatus(false)
++                }
++                Log.i("SpotuiStartup", "podcast exact-ID signed URL reused, remaining=${(podcastExpires - now) / 1000}s")
++                return cachedPodcast
++            }
++            // Expired signed CDN URLs must never be handed to Media3 again.
++            streamCache.remove(song)
++            streamExpiresAt.remove(song)
+             if (forPlayback) updateResolveStatus(true, "Cargando audio del episodio original...")
+             val podcastAudio = resolveYtPlayback(song, quality.audioQuality, appContext, forPlayback)
+                 ?: return null
+@@ -1440,6 +1468,18 @@
+             updateResolveStatus(true, "Checking cache...")
+         }
+         val networkAvailable = isNetworkAvailable(appContext)
++        // A fast cache hit is useful only when the CDN signature is still valid.
++        // Without this guard, the player could try a stale URL, hit 403 and spend
++        // much longer recovering than a fresh resolution would take.
++        val expiration = streamExpiresAt[song]
++        if (expiration != null && expiration <= System.currentTimeMillis() + 30_000L) {
++            streamCache.remove(song)
++            streamExpiresAt.remove(song)
++            streamValidatedAt.remove(song)
++            sourceCache.remove(song)
++            qualityCache.remove(song)
++            qualityTierCache.remove(song)
++        }
+         streamCache[song]?.let { url ->
+             val cacheKey = com.music.spotui.audio.LosslessCacheKeyFactory.buildCacheKey(flacSpotifyId, url)
+             val hasDiskCache = runCatching {
+@@ -2331,8 +2371,9 @@
+         return result
+     }
+ 
++    private val artistMatchKeyCache = com.music.spotui.util.BoundedMemoizer<String, String>(1024)
+     private fun artistKey(name: String): String =
+-        cleanTextForMatch(name.trim().replace(artistNoiseRegex, ""))
++        artistMatchKeyCache.getOrCompute(name) { cleanTextForMatch(name.trim().replace(artistNoiseRegex, "")) }
+ 
+     private fun artistComparisonKey(name: String): String =
+         artistKey(name).removePrefix("the").ifBlank { artistKey(name) }
+@@ -2341,7 +2382,11 @@
+         a.isNotBlank() && b.isNotBlank() &&
+                 (a == b || artistComparisonKey(a) == artistComparisonKey(b))
+ 
+-    private fun albumKey(name: String?): String {
++    private val albumMatchKeyCache = com.music.spotui.util.BoundedMemoizer<String, String>(512)
++    private fun albumKey(name: String?): String = if (name == null) "" else
++        albumMatchKeyCache.getOrCompute(name) { albumKeyUncached(name) }
++
++    private fun albumKeyUncached(name: String?): String {
+         if (name.isNullOrBlank()) return ""
+         val head = name.split(dashSplitRegex, limit = 2)[0].replace(albumNoiseRegex, " ")
+         return cleanTextForMatch(head)
+@@ -2356,7 +2401,14 @@
+ 
+     private class TitleParts(val baseKey: String, val decorations: String)
+ 
+-    private fun parseTitle(title: String, artistKeys: Collection<String>): TitleParts {
++    private data class TitleMatchKey(val title: String, val artists: List<String>)
++    private val titleMatchPartsCache = com.music.spotui.util.BoundedMemoizer<TitleMatchKey, TitleParts>(512)
++    private fun parseTitle(title: String, artistKeys: Collection<String>): TitleParts =
++        titleMatchPartsCache.getOrCompute(TitleMatchKey(title, artistKeys.toList())) {
++            parseTitleUncached(title, artistKeys)
++        }
++
++    private fun parseTitleUncached(title: String, artistKeys: Collection<String>): TitleParts {
+         var current = title
+         val first = current.split(dashSplitRegex, limit = 2)
+         if (first.size == 2 && artistKeys.any { sameArtist(cleanTextForMatch(first[0]), it) }) {
+@@ -2396,7 +2448,11 @@
+     private val coverCreditRegex = Regex("""\b(in the style of|originally performed by|originally by|made famous by|as made famous|as performed by|performed by|made popular by|tribute to)\b""")
+     private val karaokeCreditRegex = Regex("""\b(karaoke|backing track|instrumental version)\b""")
+ 
+-    private fun fullTitleFlags(title: String): Set<String> {
++    private val fullTitleMatchFlagsCache = com.music.spotui.util.BoundedMemoizer<String, Set<String>>(512)
++    private fun fullTitleFlags(title: String): Set<String> =
++        fullTitleMatchFlagsCache.getOrCompute(title) { fullTitleFlagsUncached(title) }
++
++    private fun fullTitleFlagsUncached(title: String): Set<String> {
+         if (title.isBlank()) return emptySet()
+         val t = Normalizer.normalize(title.lowercase(), Normalizer.Form.NFD).replace(diacriticsRegex, "")
+         val flags = HashSet<String>(2)
+@@ -2425,7 +2481,11 @@
+         RegexOption.IGNORE_CASE,
+     )
+ 
+-    private fun recordingIdentityFlags(text: String): Set<String> {
++    private val recordingMatchFlagsCache = com.music.spotui.util.BoundedMemoizer<String, Set<String>>(512)
++    private fun recordingIdentityFlags(text: String): Set<String> =
++        recordingMatchFlagsCache.getOrCompute(text) { recordingIdentityFlagsUncached(text) }
++
++    private fun recordingIdentityFlagsUncached(text: String): Set<String> {
+         if (text.isBlank()) return emptySet()
+         val flags = versionFlags(text).toMutableSet()
+         if (remasterIdentityRegex.containsMatchIn(text)) flags += "remaster"
+--- a/app/src/main/java/com/music/spotui/ui/screens/PodcastVideoFrame.kt
++++ b/app/src/main/java/com/music/spotui/ui/screens/PodcastVideoFrame.kt
+@@ -144,9 +144,11 @@
+      * No high-resolution probing, audio decoder or use of the active MediaSession. */
+     suspend fun resolvePreview(videoId: String): PodcastVideoQuality? {
+         val now = System.currentTimeMillis()
+-        previewCache[videoId]?.takeIf { now - it.first in 0L..600_000L }
++        previewCache[videoId]?.takeIf { now - it.first in 0L..VIDEO_OPTIONS_TTL_MS }
+             ?.let { return it.second }
+-        val options = resolve(videoId, previewOnly = true)
++        // Hover should reuse current podcast metadata when possible, never
++        // create another three-client lookup just for a muted thumbnail.
++        val options = resolveUnshared(videoId, previewOnly = true)
+         val selected = options.filter { !it.muxed }
+             .sortedBy { kotlin.math.abs(it.height - 360) }
+             .firstOrNull { isReadable(it.url) }
+@@ -220,14 +222,14 @@
+ 
+     private suspend fun resolveUnshared(videoId: String, previewOnly: Boolean): List<PodcastVideoQuality> = withContext(Dispatchers.IO) {
+         val now = System.currentTimeMillis()
+-        if (!previewOnly) videoOptionsCache[videoId]?.let { (savedAt, streams) ->
++        videoOptionsCache[videoId]?.let { (savedAt, streams) ->
+             if (now >= savedAt && now - savedAt < VIDEO_OPTIONS_TTL_MS && streams.isNotEmpty()) {
+                 return@withContext streams
+             }
+         }
+         // Reuse exact-episode player metadata already fetched by the podcast
+         // audio resolver. No extra requests or speculative video decoder.
+-        if (!previewOnly) {
++        run {
+             com.metrolist.music.utils.YTPlayerUtils.recentVideoResponse(videoId)?.let { response ->
+                 val fromAudio = videoOnlyFormats(response, videoId)
+                 if (fromAudio.isNotEmpty()) {
+@@ -239,10 +241,10 @@
+         }
+         val result = withTimeoutOrNull(if (previewOnly) 12_000L else 16_000L) {
+             val bestByHeight = LinkedHashMap<Int, PodcastVideoQuality>()
+-            val clients = listOf(YouTubeClient.WEB, YouTubeClient.ANDROID_VR_NO_AUTH, YouTubeClient.MOBILE)
+-            // First *usable* client wins the startup race, instead of waiting
+-            // for WEB even if another client has already returned working video.
+-            // Give other clients a short grace period to add HD qualities.
++            // Two Innertube clients in parallel; a third is a FALLBACK, not
++            // another speculative connection. The fast-but-unstable build fanned
++            // out too many player calls when several previews/episodes changed.
++            val clients = listOf(YouTubeClient.WEB, YouTubeClient.ANDROID_VR_NO_AUTH)
+             kotlinx.coroutines.coroutineScope {
+                 val pending = clients.map { client ->
+                     async { runCatching { YouTube.player(videoId, client = client).getOrNull() }.getOrNull() }
+@@ -257,7 +259,7 @@
+                         }
+                     }
+                     val next = if (firstUsableVideoAt != 0L) {
+-                        val left = (firstUsableVideoAt + 400L - android.os.SystemClock.elapsedRealtime())
++                        val left = (firstUsableVideoAt + 180L - android.os.SystemClock.elapsedRealtime())
+                             .coerceAtLeast(1L)
+                         withTimeoutOrNull(left) { awaitNext() } ?: break
+                     } else awaitNext()
+@@ -268,7 +270,7 @@
+                         bestByHeight.putIfAbsent(quality.height, quality)
+                     }
+                     // Do not wait for a slow client once any video-only
+-                    // rendition exists. Allow at most 400 ms for additional
++                    // rendition exists. Allow at most 180 ms for additional
+                     // qualities before handing a URL to the visual decoder.
+                     if (bestByHeight.values.any { !it.muxed }) {
+                         if (previewOnly && bestByHeight.keys.any { it <= 480 }) break
+@@ -280,6 +282,18 @@
+                     }
+                 }
+                 pending.forEach { if (it.isActive) it.cancel() }
++            }
++            if (bestByHeight.isEmpty()) {
++                // The third client is queried only if both preferred client
++                // paths returned no playable video; never skip this fallback.
++                val mobileResponse = runCatching {
++                    YouTube.player(videoId, client = YouTubeClient.MOBILE).getOrNull()
++                }.getOrNull()
++                if (mobileResponse?.playabilityStatus?.status == "OK") {
++                    videoOnlyFormats(mobileResponse, videoId).forEach { quality ->
++                        bestByHeight.putIfAbsent(quality.height, quality)
++                    }
++                }
+             }
+             if (bestByHeight.isEmpty()) {
+                 val fallback = runCatching { YouTube.getNewPipeStreamUrls(videoId) }.getOrDefault(emptyList())
+@@ -458,7 +472,7 @@
+             androidx.media3.datasource.DefaultDataSource.Factory(context, http)
+         )
+         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+-            .setBufferDurationsMs(5_000, 25_000, 500, 1_000).build()
++            .setBufferDurationsMs(9_000, 35_000, 800, 1_500).build()
+         val visualPlayer = ExoPlayer.Builder(context)
+             .setMediaSourceFactory(factory)
+             .setLoadControl(loadControl)
+--- a/app/src/main/java/com/music/spotui/util/BoundedMemoizer.kt
++++ b/app/src/main/java/com/music/spotui/util/BoundedMemoizer.kt
+@@ -0,0 +1,25 @@
++package com.music.spotui.util
++
++/** Thread-safe LRU for deterministic CPU-only computations. Never caches remote results.
++ * Compute outside the monitor so unrelated matches never block one another.
++ */
++internal class BoundedMemoizer<K : Any, V : Any>(private val maxEntries: Int) {
++    init { require(maxEntries > 0) }
++    private val values = LinkedHashMap<K, V>(16, .75f, true)
++
++    fun getOrCompute(key: K, compute: () -> V): V {
++        synchronized(values) { values[key]?.let { return it } }
++        val computed = compute() // Failures are deliberately not memoized.
++        return synchronized(values) {
++            values[key] ?: computed.also {
++                values[key] = it
++                if (values.size > maxEntries) {
++                    val oldest = values.entries.iterator()
++                    oldest.next()
++                    oldest.remove()
++                }
++            }
++        }
++    }
++    fun clear() { synchronized(values) { values.clear() } }
++}
