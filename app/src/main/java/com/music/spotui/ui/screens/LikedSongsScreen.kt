@@ -381,7 +381,7 @@ fun LikedSongsScreen(navController: NavController) {
                                                         interactionSource = remember { MutableInteractionSource() },
                                                         indication = null,
                                                     ) {
-                                                        likedSongsViewModel.startShuffled(songs)?.let { first ->
+                                                        likedSongsViewModel.startShuffled(songs, sourceName = "Liked Songs")?.let { first ->
                                                             likedSongsViewModel.updateSongState(
                                                                 first.coverUri,
                                                                 first.title,
@@ -415,7 +415,7 @@ fun LikedSongsScreen(navController: NavController) {
                                                 when {
                                                     currentInList -> likedSongsViewModel.setPlaying(!playing)
                                                     else -> {
-                                                        likedSongsViewModel.updateQueue(songs)
+                                                        likedSongsViewModel.updateQueue(songs, sourceName = "Liked Songs")
                                                         likedSongsViewModel.updateSongState(
                                                             songs[0].coverUri,
                                                             songs[0].title,
@@ -497,7 +497,7 @@ fun LikedSongsScreen(navController: NavController) {
                                             indication = null,
                                             onLongClick = { menuSong = song },
                                             onClick = {
-                                                likedSongsViewModel.updateQueue(filteredSongs.drop(index))
+                                                likedSongsViewModel.updateQueue(filteredSongs, startSongId = song.id, sourceName = "Liked Songs")
                                                 likedSongsViewModel.updateSongState(
                                                     song.coverUri,
                                                     song.title,

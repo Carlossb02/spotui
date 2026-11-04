@@ -85,18 +85,20 @@ fun SavedInSheet(
     onLikedChanged: (Boolean) -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var liked by remember { mutableStateOf(isSongLiked(context, song.id.toString())) }
+    var liked by remember(song.id, song.url) { mutableStateOf(isSongLiked(context, song.id.toString())) }
     var localPlaylists by remember { mutableStateOf<List<LocalPlaylist>>(emptyList()) }
     var remotePlaylists by remember { mutableStateOf<List<SpotifyPlaylist>?>(null) }
     val writableRemoteIds = remember { mutableStateMapOf<String, Boolean>() }
     // playlistId → does it contain this track (filled lazily/locally per row).
-    val membership = remember { mutableStateMapOf<String, Boolean>() }
+    val membership = remember(song.id, song.url) { mutableStateMapOf<String, Boolean>() }
+    val membershipErrors = remember(song.id, song.url) { mutableStateMapOf<String, Boolean>() }
+    var libraryError by remember { mutableStateOf(false) }
     var creating by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     var isCreatingPlaylist by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(song.id, song.url) {
         fun cleanId(id: String): String =
             id.removePrefix("spotify:playlist:")
               .removePrefix("playlist:")
@@ -107,16 +109,19 @@ fun SavedInSheet(
         localPlaylists = locals
 
         val localIds = locals.map { cleanId(it.id) }.filter { it.isNotBlank() }.toSet()
-        val localNames = locals.map { it.name.trim().lowercase() }.toSet()
 
-        remotePlaylists = withContext(Dispatchers.IO) {
-            val items = Spotify.myPlaylists().getOrNull()?.items?.filter { it.id.isNotBlank() } ?: emptyList()
-            items.distinctBy { cleanId(it.id).ifBlank { it.name.trim().lowercase() } }
-                .filterNot { item ->
-                    val cid = cleanId(item.id)
-                    (cid.isNotBlank() && localIds.contains(cid)) || localNames.contains(item.name.trim().lowercase())
-                }
+        val loaded = withContext(Dispatchers.IO) {
+            try {
+                SpotifySync.allLibraryPlaylists(context).filter { it.id.isNotBlank() }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
         }
+        libraryError = loaded == null
+        remotePlaylists = loaded.orEmpty().distinctBy { cleanId(it.id) }
+            .filterNot { cleanId(it.id) in localIds }
     }
 
     LaunchedEffect(remotePlaylists) {
@@ -222,6 +227,12 @@ fun SavedInSheet(
             }
 
             LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                if (libraryError) item {
+                    Text(
+                        uiLocalized("No se pudieron cargar las listas. Vuelve a abrir este panel para reintentar."),
+                        color = Color.Gray, modifier = Modifier.padding(16.dp),
+                    )
+                }
                 // ── Liked Songs ──
                 item {
                     SavedInRow(
@@ -287,17 +298,23 @@ fun SavedInSheet(
                 }
 
                 // ── Remote Spotify Playlists ──
-                val remoteList = remotePlaylists.orEmpty().filter { writableRemoteIds[it.id] == true }
+                val remoteList = remotePlaylists.orEmpty()
                 val cleanTrackId = SpotifySync.cleanTrackId(song.spotifyTrackId)
                 items(remoteList.size, key = { "remote_${remoteList[it].id}_$it" }) { i ->
                     val pl = remoteList[i]
                     LaunchedEffect(pl.id, cleanTrackId, song.url) {
                         if (membership[pl.id] == null) {
                             if (cleanTrackId.isNotBlank()) {
-                                membership[pl.id] = withContext(Dispatchers.IO) {
-                                    com.music.spotui.data.preferences.PlaylistSyncedPendingPref.contains(
-                                        context, pl.id, cleanTrackId
-                                    ) || SpotifySync.playlistTrackIds(context, pl.id).contains(cleanTrackId)
+                                try {
+                                    membership[pl.id] = withContext(Dispatchers.IO) {
+                                        com.music.spotui.data.preferences.PlaylistSyncedPendingPref.contains(
+                                            context, pl.id, cleanTrackId
+                                        ) || SpotifySync.playlistTrackIds(context, pl.id).contains(cleanTrackId)
+                                    }
+                                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                    throw cancelled
+                                } catch (_: Exception) {
+                                    membershipErrors[pl.id] = true
                                 }
                             } else if (song.url.startsWith("yt_local:")) {
                                 // YouTube additions to Spotify playlists exist only in Spotui.
@@ -313,7 +330,12 @@ fun SavedInSheet(
                     val saved = membership[pl.id] == true
                     SavedInRow(
                         name = pl.name,
-                        subtitle = pl.tracks?.total?.let { n -> "$n song" + (if (n == 1) "" else "s") } ?: "",
+                        subtitle = when {
+                            membershipErrors[pl.id] == true -> uiLocalized("No se pudo comprobar")
+                            membership[pl.id] == null -> uiLocalized("Comprobando…")
+                            writableRemoteIds[pl.id] != true -> uiLocalized("Solo lectura")
+                            else -> pl.tracks?.total?.let { n -> "$n song" + (if (n == 1) "" else "s") }.orEmpty()
+                        },
                         saved = saved,
                         isLocal = false,
                         cover = {
@@ -329,6 +351,7 @@ fun SavedInSheet(
                             )
                         },
                     ) {
+                        if (writableRemoteIds[pl.id] != true || membership[pl.id] == null) return@SavedInRow
                         if (cleanTrackId.isNotBlank()) {
                             // Reflect only confirmed Spotify writes; never show success optimistically.
                             if (saved) SpotifySync.removeTrackFromPlaylist(context, pl.id, cleanTrackId) { ok ->

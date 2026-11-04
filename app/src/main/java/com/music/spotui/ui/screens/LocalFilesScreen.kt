@@ -209,7 +209,7 @@ fun LocalFilesScreen(navController: NavController) {
                                         toast("Removed from library")
                                     },
                                     onClick = {
-                                        playerViewModel.updateQueue(songs.drop(index), isManualEdit = true)
+                                        playerViewModel.updateQueue(songs, startSongId = song.id, sourceName = "Local files")
                                         playerViewModel.updateSongState(
                                             song.coverUri, song.title, song.singer,
                                             true, song.id, 0, song.album,

@@ -22,7 +22,7 @@ fun getCachedStream(
     val prefs = context.getSharedPreferences(PREF_STREAM_CACHE, Context.MODE_PRIVATE)
     val url = prefs.getString(query + SUFFIX_URL, null) ?: return null
     val cachedTier = prefs.getString(query + SUFFIX_TIER, null)
-    if (expectedTier != null && cachedTier != null && cachedTier != expectedTier) {
+    if (expectedTier != null && cachedTier != expectedTier) {
         return null
     }
     val expiresAt = prefs.getLong(query + SUFFIX_EXPIRES, 0L)

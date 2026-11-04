@@ -58,11 +58,26 @@ class CurrentSongState @Inject constructor() {
     private val _queue: MutableState<List<SongsModel>> = mutableStateOf(emptyList())
     val queue: State<List<SongsModel>> get() = _queue
 
-    fun updateQueue(songs: List<SongsModel>, isManualEdit: Boolean = false) {
+    private val _sourceName = mutableStateOf(
+        com.music.spotui.data.preferences.loadPlaybackSource(com.music.spotui.MyApplication.instance)
+    )
+    val sourceName: State<String> get() = _sourceName
+
+    fun updateQueue(
+        songs: List<SongsModel>, isManualEdit: Boolean = false,
+        startSongId: Int? = null, sourceName: String? = null,
+    ) {
+        if (!isManualEdit) {
+            _sourceName.value = sourceName ?: songs.firstOrNull()?.album.orEmpty()
+        } else if (sourceName != null) {
+            _sourceName.value = sourceName
+        }
+        com.music.spotui.data.preferences.savePlaybackSource(
+            com.music.spotui.MyApplication.instance, _sourceName.value
+        )
         var finalSongs = songs
         if (shuffle.value && !isManualEdit) {
-            val curId = _songId.value
-            val curSong = songs.firstOrNull { it.id == curId } ?: songs.firstOrNull()
+            val curSong = songs.firstOrNull { it.id == startSongId } ?: songs.firstOrNull()
             if (curSong != null) {
                 finalSongs = listOf(curSong) + songs.filter { it.id != curSong.id }.shuffled()
             } else {
@@ -70,7 +85,12 @@ class CurrentSongState @Inject constructor() {
             }
             unshuffledQueue = songs
         } else if (isManualEdit && shuffle.value) {
-            unshuffledQueue = songs
+            val original = unshuffledQueue.orEmpty()
+            val byId = songs.associateBy { it.id }
+            val originalIds = original.map { it.id }.toSet()
+            unshuffledQueue = original.mapNotNull { byId[it.id] } + songs.filter { it.id !in originalIds }
+        } else if (!shuffle.value) {
+            unshuffledQueue = null
         }
         _queue.value = finalSongs
         // Seed the lossless resolver: map each track's play query → its Spotify id so
@@ -98,7 +118,7 @@ class CurrentSongState @Inject constructor() {
         // color-lyrics endpoint (exact synced lyrics) instead of LRCLIB matching.
         com.music.spotui.data.api.LyricsApi.registerTracks(songs)
         // Persist the current queue so a fresh launch can restore it.
-        com.music.spotui.data.preferences.saveLastQueue(com.music.spotui.MyApplication.instance, songs)
+        com.music.spotui.data.preferences.saveLastQueue(com.music.spotui.MyApplication.instance, finalSongs, unshuffledQueue ?: finalSongs)
     }
 
     fun updateTrackInQueue(targetSong: SongsModel, newTitle: String, newArtist: String, newAlbum: String, newCoverUri: String) {
@@ -144,7 +164,9 @@ class CurrentSongState @Inject constructor() {
 
     // Original queue order, kept while shuffle is on so turning it off restores
     // the list instead of leaving it permanently scrambled.
-    private var unshuffledQueue: List<SongsModel>? = null
+    private var unshuffledQueue: List<SongsModel>? =
+        com.music.spotui.data.preferences.loadOriginalQueue(com.music.spotui.MyApplication.instance)
+            .takeIf { it.isNotEmpty() }
 
     /**
      * Toggling shuffle reorders the queue ONCE: the current track stays where it
@@ -177,7 +199,7 @@ class CurrentSongState @Inject constructor() {
                 unshuffledQueue = null
             }
         }
-        com.music.spotui.data.preferences.saveLastQueue(com.music.spotui.MyApplication.instance, _queue.value)
+        com.music.spotui.data.preferences.saveLastQueue(com.music.spotui.MyApplication.instance, _queue.value, unshuffledQueue ?: _queue.value)
     }
 
     /**
@@ -185,7 +207,7 @@ class CurrentSongState @Inject constructor() {
      * playlist/album/liked screens): the queue becomes a freshly shuffled copy
      * starting with a new random track, shuffle turns on, and the caller plays it.
      */
-    fun startShuffled(songs: List<SongsModel>): SongsModel? {
+    fun startShuffled(songs: List<SongsModel>, sourceName: String? = null): SongsModel? {
         if (songs.isEmpty()) return null
         val shuffled = songs.shuffled()
         unshuffledQueue = songs
@@ -193,7 +215,7 @@ class CurrentSongState @Inject constructor() {
         com.music.spotui.data.preferences.saveShuffleEnabled(
             com.music.spotui.MyApplication.instance, true
         )
-        updateQueue(shuffled, isManualEdit = true)
+        updateQueue(shuffled, isManualEdit = true, sourceName = sourceName ?: songs.firstOrNull()?.album.orEmpty())
         // updateQueue on a manually ordered queue otherwise overwrites this.
         unshuffledQueue = songs
         return _queue.value.firstOrNull()
@@ -244,7 +266,7 @@ class CurrentSongState @Inject constructor() {
      *  play/pause button immediately shows Pause (is playing = true) and never
      *  gets stuck displaying Play (is playing = false). */
     fun syncWithPlayer() {
-        val realIsPlaying = SongPlayer.isPlaying()
+        val realIsPlaying = SongPlayer.isResolvingOrPlaying()
         if (_playingState.value != realIsPlaying) {
             _playGen++
             if (realIsPlaying) _lastPlayGen = _playGen
@@ -263,7 +285,7 @@ class CurrentSongState @Inject constructor() {
      *  events until a manual UI play tap. Syncing generation counters when audio plays
      *  prevents UI desynchronization permanently. */
     fun updatePlayingState(playing: Boolean) {
-        val realIsPlaying = SongPlayer.isPlaying()
+        val realIsPlaying = SongPlayer.isResolvingOrPlaying()
         if (playing || realIsPlaying) {
             _playGen++
             _lastPlayGen = _playGen
@@ -290,7 +312,7 @@ class CurrentSongState @Inject constructor() {
     fun updateSongState(coverUri: String, title: String, singer: String, playingState: Boolean, songId : Int, songIndex : Int, album : String, artistIds: String = "") {
         _coverUri.value = coverUri
         _title.value = title
-        _album.value = album
+        _album.value = _queue.value.firstOrNull { it.id == songId }?.album ?: album
         _singer.value = singer
         if (artistIds.isNotBlank()) {
             _artistIds.value = artistIds
@@ -300,6 +322,7 @@ class CurrentSongState @Inject constructor() {
             val queueSong = _queue.value.firstOrNull { it.id == songId }
             _artistIds.value = queueSong?.artistIds.orEmpty()
         }
+        _playingState.value = playingState
         _playGen++
         if (playingState) _lastPlayGen = _playGen
         val actualIndex = _queue.value.indexOfFirst { it.id == songId }
@@ -326,7 +349,11 @@ class CurrentSongState @Inject constructor() {
         // Warm the lyrics cache in the background so they're already loaded by the
         // time the user opens the player / scrolls to the lyrics card.
         if (playingState && title.isNotBlank()) {
-            com.music.spotui.data.api.LyricsApi.prefetch(title, singer, album)
+            _queue.value.firstOrNull { it.id == songId }?.let { track ->
+                com.music.spotui.data.api.LyricsApi.prefetch(
+                    track.title, track.singer, track.album, track.durationMs / 1000, track.spotifyTrackId
+                )
+            }
             // Resolve the play-query URL for this track so tapping it in history
             // can re-play it.  Falls back to the stored URL (set by SongPlayer)
             // or an empty string for tracks played before this field was added.

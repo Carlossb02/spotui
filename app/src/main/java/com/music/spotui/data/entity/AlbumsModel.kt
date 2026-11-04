@@ -7,7 +7,8 @@ data class AlbumsModel(
     val name : String,
     val time : String,
     // Release kind from Spotify: "album", "single", "compilation"... Empty when unknown.
-    val type : String = ""
+    val type : String = "",
+    val spotifyAlbumId: String = ""
 ){
     constructor() : this( -1,"" ,"" ,"", "")
 }

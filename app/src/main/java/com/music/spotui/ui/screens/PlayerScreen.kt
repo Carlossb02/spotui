@@ -535,8 +535,8 @@ fun PlayerScreen(
 
     // External track changes (auto-advance, prev/next buttons, queue edits) → snap the
     // pager to the new track. Guard on settled state so we don't fight an in-progress swipe.
-    LaunchedEffect(currentIndex, queueSongs.size) {
-        if (currentIndex in 0 until queueSongs.size &&
+    LaunchedEffect(songId, currentIndex, queueSongs, artworkPagerState.isScrollInProgress, wasUserDragged) {
+        if (!wasUserDragged && currentIndex in 0 until queueSongs.size &&
             artworkPagerState.currentPage != currentIndex &&
             !artworkPagerState.isScrollInProgress
         ) {
@@ -611,6 +611,7 @@ fun PlayerScreen(
     }
 
 
+    val lyricsTrack = queueSongs.firstOrNull { it.id == songId }
     val currentEpisode = queueSongs.firstOrNull { it.id == songId }
         ?.takeIf { it.url.startsWith("yt_ep:") }
     val podcastVideoId = remember(currentEpisode?.url) {
@@ -799,7 +800,7 @@ fun PlayerScreen(
                             PlayerTopBar(
                                 navController = navController,
                                 onMenuClick = { showMenu = true },
-                                contextName = playerViewModel.currentSongAlbum.value,
+                                contextName = playerViewModel.playbackSource.value.ifBlank { playerViewModel.currentSongAlbum.value },
                                 onBackClick = { dismissPlayer() },
                                 onFullscreenClick = if (embedded) { { navController.navigate(com.music.spotui.ui.navigation.Routes.Player.route) } } else null,
                                 podcastVideoEnabled = showPodcastVideo,
@@ -922,7 +923,7 @@ fun PlayerScreen(
                         PlayerTopBar(
                             navController = navController,
                             onMenuClick = { showMenu = true },
-                            contextName = playerViewModel.currentSongAlbum.value,
+                            contextName = playerViewModel.playbackSource.value.ifBlank { playerViewModel.currentSongAlbum.value },
                             onBackClick = { dismissPlayer() },
                             onFullscreenClick = if (embedded) { { navController.navigate(com.music.spotui.ui.navigation.Routes.Player.route) } } else null,
                         )
@@ -1154,6 +1155,8 @@ fun PlayerScreen(
                         album = playerViewModel.currentSongAlbum.value,
                         accentColor = dominentColor,
                         onExpand = { showLyrics = true },
+                        trackId = lyricsTrack?.spotifyTrackId.orEmpty(),
+                        trackDurationSec = (lyricsTrack?.durationMs ?: 0) / 1000,
                     )
                 }
             }
@@ -1173,7 +1176,9 @@ fun PlayerScreen(
                 artist = songSinger,
                 album = playerViewModel.currentSongAlbum.value,
                 accentColor = dominentColor,
-                onClose = { showLyrics = false }
+                onClose = { showLyrics = false },
+                trackId = lyricsTrack?.spotifyTrackId.orEmpty(),
+                trackDurationSec = (lyricsTrack?.durationMs ?: 0) / 1000,
             )
         }
 

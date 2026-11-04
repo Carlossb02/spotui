@@ -53,7 +53,7 @@ class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
             updateGainFromCurrentSettings()
         }
 
-    /** Modo de normalización (Desactivado, Suave o Equilibrado Beta). */
+    /** Modo de normalización; YouTube usa sus propios metadatos de la fuente. */
     @Volatile
     var mode: com.music.spotui.data.preferences.NormalizationMode =
         com.music.spotui.data.preferences.NormalizationMode.SUAVE
@@ -85,7 +85,9 @@ class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
 
     private data class TrackMetadata(
         val gainDb: Double?,
-        val truePeakDbtp: Double?
+        val truePeakDbtp: Double?,
+        val youtubeGainDb: Double? = null,
+        val youtubePeakDbtp: Double? = null
     )
 
     private data class TrackStart(val id: Long, val metadata: TrackMetadata)
@@ -98,7 +100,7 @@ class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
     // Estado del hilo de audio; nunca se recalcula en función de las muestras recibidas.
     private var appliedTrackId = 0L
     private var trackLocked = false
-    private var linearGain = 1.0
+    @Volatile private var linearGain = 1.0
     private var encoding = C.ENCODING_INVALID
     private var channelCount = 0
 
@@ -145,6 +147,14 @@ class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
         preparedTrack = TrackMetadata(
             gainDb?.takeIf { it.isFinite() },
             truePeakDbtp?.takeIf { it.isFinite() }
+        )
+    }
+
+    /** A scalar for the exact YouTube stream, separate from legacy relative loudness. */
+    fun setYouTubeGainDb(gainDb: Double?, truePeakDbtp: Double? = null) {
+        preparedTrack = preparedTrack.copy(
+            youtubeGainDb = gainDb?.takeIf { it.isFinite() }?.coerceIn(-30.0, 6.0),
+            youtubePeakDbtp = truePeakDbtp?.takeIf { it.isFinite() },
         )
     }
 
@@ -229,38 +239,20 @@ class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
                     if (scaled > Short.MAX_VALUE || scaled < Short.MIN_VALUE) {
                         clippedInBuffer++
                     }
-                    out.putShort(softClip16(scaled))
+                    out.putShort(scaled.roundToInt().coerceIn(-32768, 32767).toShort())
                 }
             }
             C.ENCODING_PCM_FLOAT -> {
                 repeat(samples) {
                     val scaled = (inputBuffer.float.toDouble() * linearGain).toFloat()
                     if (scaled > 1f || scaled < -1f) clippedInBuffer++
-                    out.putFloat(softClipFloat(scaled))
+                    out.putFloat(scaled.coerceIn(-1f, 1f))
                 }
             }
         }
 
         if (clippedInBuffer > 0) clippedSampleCount += clippedInBuffer
         out.flip()
-    }
-
-    private fun softClip16(scaled: Double): Short {
-        val norm = scaled / 32768.0
-        val clipped = when {
-            norm > 0.9 -> 0.9 + 0.1 * kotlin.math.tanh((norm - 0.9) / 0.1)
-            norm < -0.9 -> -0.9 + 0.1 * kotlin.math.tanh((norm + 0.9) / 0.1)
-            else -> norm
-        }
-        return (clipped * 32767.0).roundToInt().coerceIn(-32768, 32767).toShort()
-    }
-
-    private fun softClipFloat(scaled: Float): Float {
-        return when {
-            scaled > 0.9f -> (0.9 + 0.1 * kotlin.math.tanh(((scaled - 0.9f) / 0.1f).toDouble())).toFloat()
-            scaled < -0.9f -> (-0.9 + 0.1 * kotlin.math.tanh(((scaled + 0.9f) / 0.1f).toDouble())).toFloat()
-            else -> scaled
-        }
     }
 
     /**
@@ -286,16 +278,18 @@ class VolumeNormalizationAudioProcessor : BaseAudioProcessor() {
     }
 
     private fun lockGainForTrack(metadata: TrackMetadata) {
-        val desiredGainDb = metadata.gainDb ?: 0.0
+        val youtube = mode == com.music.spotui.data.preferences.NormalizationMode.YOUTUBE_METADATA
+        val desiredGainDb = (if (youtube) metadata.youtubeGainDb else metadata.gainDb) ?: 0.0
+        val peak = if (youtube) metadata.youtubePeakDbtp else metadata.truePeakDbtp
         val safeGainDb = when {
             !enabled || mode == com.music.spotui.data.preferences.NormalizationMode.OFF -> 0.0
             desiredGainDb <= 0.0 -> desiredGainDb
             mode == com.music.spotui.data.preferences.NormalizationMode.BALANCED_BETA -> desiredGainDb
-            metadata.truePeakDbtp == null -> 0.0
+            peak == null -> 0.0
             else -> {
                 // Solo subir el volumen si TODO el audio cabe bajo -1 dBTP.
                 val availableHeadroom =
-                    (POSITIVE_GAIN_CEILING_DBTP - metadata.truePeakDbtp).coerceAtLeast(0.0)
+                    (POSITIVE_GAIN_CEILING_DBTP - peak).coerceAtLeast(0.0)
                 min(desiredGainDb, availableHeadroom)
             }
         }

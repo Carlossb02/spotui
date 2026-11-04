@@ -878,8 +878,8 @@ class PlaybackService : MediaLibraryService() {
     /** Canción que la app considera actual, resuelta sin depender de nombres de campos extra. */
     private fun currentSong(): SongsModel? {
         val id = currentSongState.songId.value
-        return trackById["song/$id"]
-            ?: currentSongState.queue.value.firstOrNull { it.id == id }
+        return currentSongState.queue.value.firstOrNull { it.id == id }
+            ?: trackById["song/$id"]
     }
 
     /** Completa los metadatos del item actual con título/artista y los bytes de la carátula. */
@@ -1152,7 +1152,7 @@ class PlaybackService : MediaLibraryService() {
             val resolvedIndex: Int
             if (song != null) {
                 val queue = queueByTrackId[requested?.mediaId] ?: listOf(song)
-                currentSongState.updateQueue(queue)
+                currentSongState.updateQueue(queue, startSongId = song.id)
                 val idx = queue.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
                 currentSongState.updateSongState(
                     song.coverUri, song.title, song.singer, true,
@@ -1193,7 +1193,7 @@ class PlaybackService : MediaLibraryService() {
                 else persisted?.second?.coerceAtLeast(0L) ?: 0L
 
                 if (currentSongState.queue.value.isEmpty()) {
-                    currentSongState.updateQueue(currentQueue)
+                    currentSongState.updateQueue(currentQueue, isManualEdit = true)
                     currentSongState.updateSongState(
                         song.coverUri, song.title, song.singer,
                         false, song.id, idx, song.album

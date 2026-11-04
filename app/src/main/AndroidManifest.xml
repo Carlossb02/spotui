@@ -85,6 +85,10 @@
             </intent-filter>
         </activity>
 
+        <meta-data
+            android:name="androidx.car.app.TintableAttributionIcon"
+            android:resource="@drawable/ic_spotui_notification_monochrome" />
+
         <!-- Android Auto: declares the app as a media app for the car. -->
         <meta-data
             android:name="com.google.android.gms.car.application"

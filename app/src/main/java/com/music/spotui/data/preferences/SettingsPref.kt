@@ -228,6 +228,7 @@ enum class NormalizationMode(val id: String) {
     OFF("off"),
     SUAVE("suave"),
     BALANCED_BETA("balanced_beta"),
+    YOUTUBE_METADATA("youtube_metadata"),
 }
 
 fun getAudioNormalizationMode(c: Context): NormalizationMode {
@@ -235,6 +236,7 @@ fun getAudioNormalizationMode(c: Context): NormalizationMode {
     if (raw != null) {
         return when (raw) {
             NormalizationMode.SUAVE.id, NormalizationMode.BALANCED_BETA.id -> NormalizationMode.SUAVE
+            NormalizationMode.YOUTUBE_METADATA.id -> NormalizationMode.YOUTUBE_METADATA
             else -> NormalizationMode.OFF
         }
     }

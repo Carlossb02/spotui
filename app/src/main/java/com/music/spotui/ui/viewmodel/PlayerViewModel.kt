@@ -44,7 +44,10 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
 
     val queue : State<List<SongsModel>> get() = currentSongState.queue
 
-    fun updateQueue(songs: List<SongsModel>, isManualEdit: Boolean = false) = currentSongState.updateQueue(songs, isManualEdit)
+    val playbackSource: State<String> get() = currentSongState.sourceName
+
+    fun updateQueue(songs: List<SongsModel>, isManualEdit: Boolean = false, startSongId: Int? = null, sourceName: String? = null) =
+        currentSongState.updateQueue(songs, isManualEdit, startSongId, sourceName)
 
     /** Insert a track right after the one currently playing ("Play next"). */
     fun playNext(song: SongsModel) {
@@ -165,7 +168,7 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
                 val existing = currentSongState.queue.value
                 val existingIds = existing.map { it.id }.toSet()
                 val fresh = recs.filter { it.id !in existingIds }
-                if (fresh.isNotEmpty()) currentSongState.updateQueue(existing + fresh)
+                if (fresh.isNotEmpty()) currentSongState.updateQueue(existing + fresh, isManualEdit = true)
             } finally {
                 radioLoading = false
             }
@@ -252,14 +255,15 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
         _canvasUrl.value = null
     }
 
-    fun goToArtist(trackId: String, fallbackName: String, navigate: (route: String) -> Unit) {
+    fun goToArtist(trackId: String, fallbackName: String, song: SongsModel? = null, navigate: (route: String) -> Unit) {
+        val activeSong = song ?: currentSongState.queue.value.firstOrNull {
+            it.id == currentSongId.value && (trackId.isBlank() || it.spotifyTrackId == trackId)
+        }
         viewModelScope.launch {
             val route = withContext(Dispatchers.IO) {
-                val activeSong = currentSongState.queue.value.firstOrNull { it.id == currentSongId.value }
                 val isPodcast = activeSong != null && (
                         activeSong.url.startsWith("yt_ep:") ||
-                        activeSong.url.startsWith("episode:") ||
-                        activeSong.album == "Podcast"
+                        activeSong.url.startsWith("episode:")
                 )
                 if (isPodcast && activeSong != null) {
                     val rawId = activeSong.url.removePrefix("yt_ep:").removePrefix("episode:").substringBefore("|")

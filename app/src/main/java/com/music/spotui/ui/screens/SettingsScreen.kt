@@ -446,7 +446,8 @@ fun SettingsScreen(navController: NavController) {
             ) {
                 for (mode in listOf(
                     com.music.spotui.data.preferences.NormalizationMode.OFF,
-                    com.music.spotui.data.preferences.NormalizationMode.SUAVE
+                    com.music.spotui.data.preferences.NormalizationMode.SUAVE,
+                    com.music.spotui.data.preferences.NormalizationMode.YOUTUBE_METADATA
                 )) {
                     val isSel = mode == normalizationMode
                     val (modeTitle, modeDesc) = when (mode) {
@@ -454,6 +455,8 @@ fun SettingsScreen(navController: NavController) {
                             stringResource(R.string.normalization_off) to stringResource(R.string.normalization_off_desc)
                         com.music.spotui.data.preferences.NormalizationMode.SUAVE ->
                             stringResource(R.string.normalization_suave) to stringResource(R.string.normalization_suave_desc)
+                        com.music.spotui.data.preferences.NormalizationMode.YOUTUBE_METADATA ->
+                            stringResource(R.string.normalization_youtube) to stringResource(R.string.normalization_youtube_desc)
                         com.music.spotui.data.preferences.NormalizationMode.BALANCED_BETA ->
                             stringResource(R.string.normalization_balanced_beta) to stringResource(R.string.normalization_balanced_beta_desc)
                     }

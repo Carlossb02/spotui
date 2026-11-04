@@ -218,6 +218,24 @@ object SongPlayer {
     private const val STREAM_REVALIDATE_MS = 5 * 60_000L
     // Cache of track integrated loudness (in dB relative to -14 LUFS) for volume normalization
     private val loudnessCache = java.util.concurrent.ConcurrentHashMap<String, Double>()
+    private val youtubeGainCache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Double>>()
+
+    private fun rememberYouTubeGain(context: Context, query: String, sourceUrl: String, relative: Double?, perceptual: Double?) {
+        val gain = com.music.spotui.audio.YouTubeVolume.correctionDb(relative, perceptual)
+        if (gain != null) youtubeGainCache[query] = sourceUrl to gain else youtubeGainCache.remove(query)
+        com.music.spotui.data.preferences.AudioLoudnessPref.put(context, query, sourceUrl, gain)
+    }
+
+    private fun prepareNormalization(normalizer: com.music.spotui.audio.VolumeNormalizationAudioProcessor?, query: String, sourceUrl: String) {
+        val ctx = appCtx ?: com.music.spotui.MyApplication.instance
+        val gain = youtubeGainCache[query]?.takeIf { it.first == sourceUrl }?.second
+            ?: com.music.spotui.data.preferences.AudioLoudnessPref.get(ctx, query, sourceUrl)
+        normalizer?.apply {
+            setTrackLoudness(loudnessCache[query])
+            setYouTubeGainDb(gain)
+            beginTrack()
+        }
+    }
 
     @kotlin.OptIn(androidx.media3.common.util.UnstableApi::class)
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -231,6 +249,7 @@ object SongPlayer {
         streamValidatedAt.clear()
         streamExpiresAt.clear()
         loudnessCache.clear()
+        youtubeGainCache.clear()
         inFlightResolutions.values.forEach { runCatching { it.cancel() } }
         inFlightResolutions.clear()
         // Preserve song -> manual stream key mapping for the current queue.
@@ -277,11 +296,7 @@ object SongPlayer {
                 if (loadedQuery == currentSong || currentRequest == currentSong) {
                     withContext(Dispatchers.Main) {
                         val activePlayer = player ?: return@withContext
-                        val loudness = loudnessCache[currentSong]
-                        currentPlayerNormalizer?.apply {
-                            setTrackLoudness(loudness)
-                            beginTrack()
-                        }
+                        prepareNormalization(currentPlayerNormalizer, currentSong, newStreamUrl)
                         activePlayer.setMediaItem(
                             buildMediaItem(newStreamUrl, streamMimeType(newStreamUrl)),
                             positionMs,
@@ -443,7 +458,10 @@ object SongPlayer {
     @Volatile private var metaArtist: String = ""
     @Volatile private var metaCover: String = ""
 
+    private val metadataGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+
     fun setNowPlayingMeta(title: String, artist: String, coverUri: String) {
+        val generation = metadataGeneration.incrementAndGet()
         metaTitle = title
         metaArtist = artist
         metaCover = coverUri
@@ -451,11 +469,16 @@ object SongPlayer {
             val id = boundState?.songId?.value ?: 0
             if (id != 0) currentMediaId = "song/$id"
         }
-        refreshArtworkInBackground(currentMediaId, coverUri)
+        val targetMediaId = boundState?.songId?.value?.takeIf { it != 0 }?.let { "song/$it" }
+            ?: currentMediaId
+        refreshArtworkInBackground(targetMediaId, coverUri)
         if (player != null && (title.isNotBlank() || artist.isNotBlank())) {
             scope.launch(Dispatchers.Main) {
+                if (metadataGeneration.get() != generation) return@launch
                 val p = player ?: return@launch
                 val item = p.currentMediaItem ?: return@launch
+                val expectedId = boundState?.songId?.value?.let { "song/$it" }
+                if (expectedId != null && item.mediaId != expectedId) return@launch
                 if (item.mediaMetadata.title != title || item.mediaMetadata.artist != artist) {
                     val updatedMeta = item.mediaMetadata.buildUpon()
                         .setTitle(title)
@@ -470,6 +493,7 @@ object SongPlayer {
 
     private fun refreshArtworkInBackground(songIdStr: String?, coverUrl: String) {
         if (coverUrl.isBlank() || coverUrl.startsWith("file:") || coverUrl.startsWith("content:")) return
+        val generation = metadataGeneration.get()
         val ctx = appCtx ?: com.music.spotui.MyApplication.instance
         val cleanId = songIdStr?.removePrefix("song/")?.removePrefix("playlist/")?.removePrefix("album/")?.trim()
         scope.launch(Dispatchers.IO) {
@@ -487,8 +511,12 @@ object SongPlayer {
                     if (!dest.exists()) runCatching { file.copyTo(dest, overwrite = true) }
                 }
                 withContext(Dispatchers.Main) {
+                    if (metadataGeneration.get() != generation || metaCover != coverUrl || currentMediaId != songIdStr) return@withContext
                     val p = player ?: return@withContext
                     val item = p.currentMediaItem ?: return@withContext
+                    if (songIdStr != null && item.mediaId != songIdStr) return@withContext
+                    val expectedId = boundState?.songId?.value?.let { "song/$it" }
+                    if (expectedId != null && item.mediaId != expectedId) return@withContext
                     val contentUri = com.music.spotui.util.ArtworkContentProvider.getContentUri(file)
                     if (item.mediaMetadata.artworkUri == contentUri) return@withContext
                     val metaBuilder = item.mediaMetadata.buildUpon()
@@ -835,7 +863,7 @@ object SongPlayer {
         matchTrack?.let { track ->
             if (track.title.isNotBlank()) metaTitle = track.title
             if (track.singer.isNotBlank()) metaArtist = track.singer
-            if (track.coverUri.isNotBlank()) metaCover = track.coverUri
+            metaCover = track.coverUri
         }
 
         playWhenResolved = true
@@ -867,10 +895,7 @@ object SongPlayer {
                 currentSource = "Downloaded"
                 currentQuality = immediateDownloadedPath.substringAfterLast('.', "").uppercase()
                 val localUri = android.net.Uri.fromFile(java.io.File(immediateDownloadedPath))
-                currentPlayerNormalizer?.apply {
-                    setTrackLoudness(null)
-                    beginTrack()
-                }
+                prepareNormalization(currentPlayerNormalizer, song, localUri.toString())
                 player?.setMediaItem(buildMediaItem(localUri.toString(), streamMimeType(localUri.toString()), song))
                 player?.prepare()
                 // Downloads must honor the saved resume position too; otherwise
@@ -1009,11 +1034,7 @@ object SongPlayer {
                     }
                     ensurePlayer(appContext)
                     val p = player ?: return@withContext
-                    val loudness = loudnessCache[song]
-                    currentPlayerNormalizer?.apply {
-                        setTrackLoudness(loudness)
-                        beginTrack()
-                    }
+                    prepareNormalization(currentPlayerNormalizer, song, streamUrl)
                     // Set the resume position BEFORE prepare. The previous
                     // prepare-at-zero + seek could open a large podcast stream
                     // twice, wasting its first range request and extractor work.
@@ -1348,13 +1369,16 @@ object SongPlayer {
             if (!videoId.matches(Regex("[A-Za-z0-9_-]{11}"))) return null
             val playback = resolveYtPlayback("https://www.youtube.com/watch?v=$videoId", quality.audioQuality, appContext, forPlayback)
                 ?: return null
+            rememberYouTubeGain(appContext, song, playback.streamUrl,
+                playback.audioConfig?.loudnessDb ?: playback.format.loudnessDb,
+                playback.audioConfig?.perceptualLoudnessDb)
             if (forPlayback) {
                 currentSource = "YouTube (local playlist)"
                 currentQuality = "${playback.format.bitrate / 1000} kbps"
             }
             return playback.streamUrl
         }
-        val expectedTier = quality.name
+        val expectedTier = "${quality.name}:audio-v2"
 
         val meta = metadataRegistry[song]
         val matchSong = boundState?.queue?.value?.firstOrNull { it.url == song }
@@ -1399,6 +1423,9 @@ object SongPlayer {
             val podcastAudio = resolveYtPlayback(song, quality.audioQuality, appContext, forPlayback)
                 ?: return null
             val url = podcastAudio.streamUrl
+            rememberYouTubeGain(appContext, song, podcastAudio.streamUrl,
+                podcastAudio.audioConfig?.loudnessDb ?: podcastAudio.format.loudnessDb,
+                podcastAudio.audioConfig?.perceptualLoudnessDb)
             val qualityLabel = "${podcastAudio.format.bitrate / 1000} kbps"
             streamCache[song] = url
             streamExpiresAt[song] = System.currentTimeMillis() +
@@ -1459,9 +1486,8 @@ object SongPlayer {
                     sourceCache[song] = if (forPlayback) currentSource else "Alternative YouTube"
                     qualityCache[song] = if (forPlayback) currentQuality else ytQuality
 
-                    val altLoudness = playback.audioConfig?.loudnessDb
-                        ?: playback.audioConfig?.perceptualLoudnessDb
-                        ?: playback.format.loudnessDb
+                    val altLoudness = playback.audioConfig?.loudnessDb ?: playback.format.loudnessDb
+                    rememberYouTubeGain(appContext, song, playback.streamUrl, altLoudness, playback.audioConfig?.perceptualLoudnessDb)
                     if (altLoudness != null) loudnessCache[song] = altLoudness else loudnessCache.remove(song)
 
                     playback.streamUrl
@@ -1523,7 +1549,7 @@ object SongPlayer {
         if (forPlayback) {
             updateResolveStatus(true, "Checking saved cache...")
         }
-        com.music.spotui.data.preferences.getCachedStream(appContext, song, expectedTier = expectedTier)?.let { (url, source, cachedQuality) ->
+        com.music.spotui.data.preferences.getCachedStream(appContext, song, expectedTier = if (networkAvailable) expectedTier else null)?.let { (url, source, cachedQuality) ->
             val cacheKey = com.music.spotui.audio.LosslessCacheKeyFactory.buildCacheKey(flacSpotifyId, url)
             val hasDiskCache = runCatching {
                 mediaCache(appContext).getCachedBytes(cacheKey, 0, 100_000L) > 0
@@ -1602,9 +1628,8 @@ object SongPlayer {
         sourceCache[song] = "YouTube"
         qualityCache[song] = ytQuality
         qualityTierCache[song] = expectedTier
-        val ytLoudness = playback.audioConfig?.loudnessDb
-            ?: playback.audioConfig?.perceptualLoudnessDb
-            ?: playback.format.loudnessDb
+        val ytLoudness = playback.audioConfig?.loudnessDb ?: playback.format.loudnessDb
+        rememberYouTubeGain(appContext, song, playback.streamUrl, ytLoudness, playback.audioConfig?.perceptualLoudnessDb)
         if (ytLoudness != null) loudnessCache[song] = ytLoudness else loudnessCache.remove(song)
         com.music.spotui.data.preferences.setCachedStream(
             appContext, song, playback.streamUrl, "YouTube", ytQuality,
@@ -1970,10 +1995,15 @@ object SongPlayer {
             return false
         }
         com.music.spotui.data.preferences.addDownload(appContext, song, outFile.absolutePath)
+        rememberYouTubeGain(
+            appContext, song.url, android.net.Uri.fromFile(outFile).toString(),
+            playback.audioConfig?.loudnessDb ?: playback.format.loudnessDb,
+            playback.audioConfig?.perceptualLoudnessDb,
+        )
         downloadCoverImage(song.coverUri, java.io.File(dir, "${song.id}_cover.jpg"))
         LyricsApi.removeFromCache(song.title, song.singer)
         val lyricsOk = runCatching {
-            LyricsApi.fetch(song.title, song.singer, song.album, song.durationMs / 1000)
+            LyricsApi.fetch(song.title, song.singer, song.album, song.durationMs / 1000, song.spotifyTrackId)
         }.getOrNull() != null
         if (!lyricsOk) LyricsApi.removeFromCache(song.title, song.singer)
         return true
@@ -2040,7 +2070,7 @@ object SongPlayer {
         downloadCoverImage(song.coverUri, java.io.File(dir, "${song.id}_cover.jpg"))
         LyricsApi.removeFromCache(song.title, song.singer)
         val lyricsOk = runCatching {
-            LyricsApi.fetch(song.title, song.singer, song.album, song.durationMs / 1000)
+            LyricsApi.fetch(song.title, song.singer, song.album, song.durationMs / 1000, song.spotifyTrackId)
         }.getOrNull() != null
         if (!lyricsOk) LyricsApi.removeFromCache(song.title, song.singer)
         Log.d(TAG, "Lossless downloaded ($source $quality): ${song.title}")
@@ -3717,6 +3747,7 @@ object SongPlayer {
         cancelCrossfade()
         if (webPlaybackActive()) { SpotifyWebPlayer.seekTo(position); return }
         val target = position.coerceAtLeast(0L)
+        com.music.spotui.ui.screens.PodcastVideoSession.seekToAudioPosition(target)
         if (playbackResolving || loadedQuery != currentRequest || player?.currentMediaItem == null) {
             pendingSeekQuery = currentRequest
             pendingSeekMs = target
@@ -4248,11 +4279,7 @@ object SongPlayer {
                         .apply { streamMimeType(nextUrl)?.let { setMimeType(it) } }
                         .setMediaMetadata(metadataBuilder.build())
                         .build()
-                    val nextLoudness = loudnessCache[nextSong.url]
-                    playerComp.normalizer.apply {
-                        setTrackLoudness(nextLoudness)
-                        beginTrack()
-                    }
+                    prepareNormalization(playerComp.normalizer, nextSong.url, nextUrl)
                     playerComp.player.setMediaItem(item)
                     playerComp.player.prepare()
                     playerComp.player.volume = 0f
@@ -4337,6 +4364,10 @@ object SongPlayer {
         // Advance using a monotonic clock instead of assuming every delay() fires
         // on schedule; Doze/GC/CPU pressure can stall coroutines between frames.
         val fadeDurationMs = effectiveMs.coerceAtLeast(150)
+        val naturalNormalization = appCtx?.let {
+            com.music.spotui.data.preferences.getAudioNormalizationMode(it) ==
+                com.music.spotui.data.preferences.NormalizationMode.YOUTUBE_METADATA
+        } == true
         if (djMode) {
             currentPlayerFilter?.apply {
                 filterType = com.music.spotui.audio.BiquadFilter.FilterType.LOW_PASS
@@ -4354,11 +4385,11 @@ object SongPlayer {
                 while (isActive) {
                     val elapsed = (SystemClock.elapsedRealtime() - started).coerceAtLeast(0L)
                     val progress = (elapsed.toFloat() / fadeDurationMs).coerceIn(0f, 1f)
-                    val angle = (progress * PI / 2).toFloat()
                     withContext(Dispatchers.Main) {
                         val focusMultiplier = if (focusDucked) 0.2f else 1f
-                        player?.volume = cos(angle) * focusMultiplier
-                        secondaryPlayer?.volume = sin(angle) * focusMultiplier
+                        val (outgoingGain, incomingGain) = com.music.spotui.audio.YouTubeVolume.crossfadeGains(progress, naturalNormalization)
+                        player?.volume = outgoingGain * focusMultiplier
+                        secondaryPlayer?.volume = incomingGain * focusMultiplier
                         if (djMode) {
                             val fp = sigmoid(progress)
                             currentPlayerFilter?.cutoffFrequencyHz = expInterpolate(CF_LPF_START_HZ, CF_LPF_END_HZ, fp)

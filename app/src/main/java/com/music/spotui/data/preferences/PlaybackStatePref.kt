@@ -21,6 +21,9 @@ private fun songToJson(song: SongsModel): JSONObject {
         put("id", song.id)
         put("title", song.title)
         put("album", song.album)
+        put("artistIds", song.artistIds)
+        put("description", song.description)
+        put("releaseDate", song.releaseDate)
         put("singer", song.singer)
         put("coverUri", song.coverUri)
         put("url", song.url)
@@ -36,6 +39,9 @@ private fun jsonToSong(o: JSONObject): SongsModel {
         id = o.optInt("id", -1),
         title = o.optString("title"),
         album = o.optString("album"),
+        artistIds = o.optString("artistIds"),
+        description = o.optString("description"),
+        releaseDate = o.optString("releaseDate"),
         singer = o.optString("singer"),
         coverUri = o.optString("coverUri"),
         url = o.optString("url"),
@@ -79,7 +85,7 @@ fun loadLastPlayback(context: Context): Pair<SongsModel, Long>? {
 }
 
 /** Saves the current playback queue. */
-fun saveLastQueue(context: Context, queue: List<SongsModel>) {
+fun saveLastQueue(context: Context, queue: List<SongsModel>, originalOrder: List<SongsModel> = queue) {
     val p = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
     val array = JSONArray()
     for (song in queue) {
@@ -87,13 +93,22 @@ fun saveLastQueue(context: Context, queue: List<SongsModel>) {
             array.put(songToJson(song))
         }
     }
-    p.edit().putString(KEY_QUEUE, array.toString()).apply()
+    val original = JSONArray()
+    originalOrder.filter { it.title.isNotBlank() && it.url.isNotBlank() }
+        .forEach { original.put(songToJson(it)) }
+    p.edit().putString(KEY_QUEUE, array.toString())
+        .putString("original_queue", original.toString()).apply()
 }
 
 /** Loads the last saved playback queue. */
-fun loadLastQueue(context: Context): List<SongsModel> {
+fun loadLastQueue(context: Context): List<SongsModel> = loadQueue(context, KEY_QUEUE)
+
+fun loadOriginalQueue(context: Context): List<SongsModel> =
+    loadQueue(context, "original_queue").ifEmpty { loadLastQueue(context) }
+
+private fun loadQueue(context: Context, key: String): List<SongsModel> {
     val p = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-    val raw = p.getString(KEY_QUEUE, null) ?: return emptyList()
+    val raw = p.getString(key, null) ?: return emptyList()
     return runCatching {
         val array = JSONArray(raw)
         val list = mutableListOf<SongsModel>()
@@ -132,3 +147,11 @@ fun saveShuffleEnabled(context: Context, enabled: Boolean) {
 fun loadShuffleEnabled(context: Context): Boolean =
     context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         .getBoolean(KEY_SHUFFLE, false)
+
+fun savePlaybackSource(context: Context, name: String) {
+    context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        .edit().putString("source_name", name).apply()
+}
+
+fun loadPlaybackSource(context: Context): String =
+    context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString("source_name", "").orEmpty()

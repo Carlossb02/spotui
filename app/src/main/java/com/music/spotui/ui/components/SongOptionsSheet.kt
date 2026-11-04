@@ -360,7 +360,7 @@ fun SongOptionsSheet(
             SongMenuRow(Icons.Outlined.People, uiLocalized("Go to artist"), enabled = artist.isNotBlank(), trailingArrow = true) {
                 // Resolve the exact artist (id) from the track so the name can't
                 // fuzzy-match to a different artist.
-                playerViewModel.goToArtist(song.spotifyTrackId, song.singer) { route ->
+                playerViewModel.goToArtist(song.spotifyTrackId, song.singer, song = song) { route ->
                     navController.navigate(route)
                 }
                 onDismiss()

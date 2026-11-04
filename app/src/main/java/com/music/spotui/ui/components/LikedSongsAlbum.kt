@@ -228,7 +228,7 @@ fun LikedSongsScreen(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = null
                                      ) {
-                                        albumViewModel.updateQueue(likedSongs)
+                                        albumViewModel.updateQueue(likedSongs, sourceName = "Liked Songs")
                                         albumViewModel.updateSongState(
                                             likedSongs[0].coverUri,
                                             likedSongs[0].title,
@@ -297,7 +297,7 @@ fun LikedSongsScreen(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null
                                 ) {
-                                    albumViewModel.updateQueue(likedSongs)
+                                    albumViewModel.updateQueue(likedSongs, startSongId = likedSongs[song].id, sourceName = "Liked Songs")
                                     albumViewModel.updateSongState(
                                         likedSongs[song].coverUri,
                                         likedSongs[song].title,

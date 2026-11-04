@@ -53,7 +53,7 @@ class SearchViewModel @Inject constructor(private val repository: AppRepository,
      * if the user has since started something else.
      */
     fun startRadioFromSong(song: SongsModel) {
-        currentSongState.updateQueue(listOf(song), isManualEdit = true)
+        currentSongState.updateQueue(listOf(song), sourceName = song.title)
         val seed = song.spotifyTrackId
         if (seed.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
@@ -62,7 +62,7 @@ class SearchViewModel @Inject constructor(private val repository: AppRepository,
             // Only extend if this radio is still the active queue (user didn't tap away).
             if (current.size == 1 && current.first().id == song.id) {
                 val fresh = recs.filter { it.id != song.id }
-                if (fresh.isNotEmpty()) currentSongState.updateQueue(current + fresh)
+                if (fresh.isNotEmpty()) currentSongState.updateQueue(current + fresh, isManualEdit = true)
             }
         }
     }

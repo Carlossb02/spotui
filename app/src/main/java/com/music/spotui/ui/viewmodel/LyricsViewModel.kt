@@ -52,6 +52,7 @@ class LyricsViewModel @Inject constructor(
     private var loadedTitle: String? = null
     private var loadedArtist: String? = null
     private var loadJob: kotlinx.coroutines.Job? = null
+    private var translationJob: kotlinx.coroutines.Job? = null
 
     var showLanguageBar by mutableStateOf(false)
         private set
@@ -74,8 +75,8 @@ class LyricsViewModel @Inject constructor(
 
     val translationsVisible: Boolean get() = translatedLines != null
 
-    fun load(title: String, artist: String, album: String, durationSec: Int) {
-        val key = "$title|$artist"
+    fun load(title: String, artist: String, album: String, durationSec: Int, trackId: String = "") {
+        val key = "$title|$artist|$album|$durationSec|$trackId"
         if (loadedKey == key && _state.value !is State.NotFound) return
         loadedKey = key
         loadedTitle = title
@@ -84,7 +85,7 @@ class LyricsViewModel @Inject constructor(
         resetTranslationState()
         loadJob?.cancel()
         loadJob = viewModelScope.launch(Dispatchers.IO) {
-            val lyrics = LyricsApi.fetch(title, artist, album, durationSec)
+            val lyrics = LyricsApi.fetch(title, artist, album, durationSec, trackId)
             val detectedLanguage = if (lyrics != null && !lyrics.isEmpty) {
                 val allText = lyrics.lines.joinToString(" ") { it.text }
                 TranslationApi.detectLanguage(allText)
@@ -105,7 +106,7 @@ class LyricsViewModel @Inject constructor(
 
     private fun restoreCachedTranslation(title: String, artist: String, lyrics: Lyrics?) {
         if (lyrics == null || lyrics.isEmpty) return
-        val key = translationCacheKey(title, artist, sourceLanguage, targetLanguage)
+        val key = translationCacheKey(loadedKey ?: title, artist, sourceLanguage, targetLanguage)
         val cached = TranslationCachePref.get(context, key)
         if (cached != null && cached.size == lyrics.lines.size) {
             translatedLines = cached
@@ -116,14 +117,14 @@ class LyricsViewModel @Inject constructor(
         val title = loadedTitle ?: return
         val artist = loadedArtist ?: return
         if (lines.isEmpty()) return
-        val key = translationCacheKey(title, artist, sourceLanguage, targetLanguage)
+        val key = translationCacheKey(loadedKey ?: title, artist, sourceLanguage, targetLanguage)
         TranslationCachePref.put(context, key, lines)
     }
 
     private fun translationCacheKeyForCurrent(): String? {
         val title = loadedTitle ?: return null
         val artist = loadedArtist ?: return null
-        return translationCacheKey(title, artist, sourceLanguage, targetLanguage)
+        return translationCacheKey(loadedKey ?: title, artist, sourceLanguage, targetLanguage)
     }
 
     fun toggleLanguageBar() {
@@ -131,6 +132,8 @@ class LyricsViewModel @Inject constructor(
     }
 
     fun dismissTranslate() {
+        translationJob?.cancel()
+        translationJob = null
         // Remove from disk so it won't auto-show when lyrics load again.
         translationCacheKeyForCurrent()?.let { TranslationCachePref.remove(context, it) }
         showLanguageBar = false
@@ -163,7 +166,7 @@ class LyricsViewModel @Inject constructor(
         translatedLines = null
         modelState = ModelState.Downloading
 
-        viewModelScope.launch(Dispatchers.IO) {
+        translationJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 Log.d(TAG, "Downloading model: $sourceLanguage → $targetLanguage")
                 TranslationApi.ensureModel(sourceLanguage, targetLanguage)
@@ -187,6 +190,8 @@ class LyricsViewModel @Inject constructor(
                     }
                     translationsLoading = false
                 }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 Log.e(TAG, "Translation failed", e)
                 withContext(Dispatchers.Main) {
@@ -225,6 +230,8 @@ class LyricsViewModel @Inject constructor(
     }
 
     private fun resetTranslationState() {
+        translationJob?.cancel()
+        translationJob = null
         showLanguageBar = false
         translationsLoading = false
         translatedLines = null

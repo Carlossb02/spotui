@@ -174,4 +174,6 @@
     <string name="back">Volver</string>
     <string name="track_not_spotify">Esta canción no está en el catálogo de Spotify</string>
     <string name="spotify_add_failed">Spotify no ha permitido añadirla. Comprueba los permisos de la lista.</string>
+    <string name="normalization_youtube">YouTube (Volumen natural)</string>
+    <string name="normalization_youtube_desc">Usa el nivel de YouTube para igualar el volumen. Sin compresión; solo amplifica con margen de pico conocido.</string>
 </resources>

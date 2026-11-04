@@ -28,12 +28,15 @@ class AlbumViewModel @Inject constructor(private val repository: AppRepository, 
 
     private val _albums : MutableStateFlow<Response<List<AlbumsModel>>> = MutableStateFlow(Response.Loading())
     val albums : StateFlow<Response<List<AlbumsModel>>> = _albums
+    private val _albumDetail = MutableStateFlow<AlbumsModel?>(null)
+    val albumDetail: StateFlow<AlbumsModel?> = _albumDetail
 
     val queue: State<List<SongsModel>> get() = currentSongState.queue
 
-    fun updateQueue(songs: List<SongsModel>) = currentSongState.updateQueue(songs, isManualEdit = true)
+    fun updateQueue(songs: List<SongsModel>, startSongId: Int? = null, sourceName: String? = null) =
+        currentSongState.updateQueue(songs, startSongId = startSongId, sourceName = sourceName)
 
-    fun startShuffled(songs: List<SongsModel>) = currentSongState.startShuffled(songs)
+    fun startShuffled(songs: List<SongsModel>, sourceName: String? = null) = currentSongState.startShuffled(songs, sourceName)
 
     /** Pause/resume global playback (the header play button stays visible while playing). */
     fun setPlaying(playing: Boolean) {
@@ -55,14 +58,20 @@ class AlbumViewModel @Inject constructor(private val repository: AppRepository, 
     }
 
     private var albumKey: String? = null
+    private var albumLoadJob: kotlinx.coroutines.Job? = null
 
     /** Loads the tracks for a specific album (resolved via Spotify search). */
     fun loadAlbumSongs(name: String, artist: String = "") {
         val key = "$name|$artist"
         if (albumKey == key) return
         albumKey = key
-        viewModelScope.launch(Dispatchers.IO) {
+        albumLoadJob?.cancel()
+        _albumDetail.value = null
+        _songs.value = Response.Loading()
+        albumLoadJob = viewModelScope.launch(Dispatchers.IO) {
             repository.provideAlbumSongs(name, artist).collect { songs ->
+                if (albumKey != key) return@collect
+                _albumDetail.value = com.music.spotui.data.api.Api.HomeCache.getAlbumDetail(name, artist)
                 _songs.value = songs as Response<List<SongsModel>>
             }
         }

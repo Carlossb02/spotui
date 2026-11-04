@@ -1029,6 +1029,20 @@ object PodcastVideoSession {
         p.playWhenReady = SongPlayer.isPlaying()
     }
 
+    fun seekToAudioPosition(positionMs: Long) {
+        val id = activeVideoId ?: return
+        if (!SongPlayer.isPodcastEpisodeLoaded(id)) return
+        val target = positionMs.coerceAtLeast(0L)
+        player?.let { p ->
+            p.playbackParameters = androidx.media3.common.PlaybackParameters.DEFAULT
+            p.seekTo(target)
+        }
+        lastSyncSeekAt = android.os.SystemClock.elapsedRealtime()
+        lastObservedAudioAt = target
+        lastObservedClockAt = lastSyncSeekAt
+        firstVideoAlignPending = false
+    }
+
     /** Called only for the optional video clock. Never seek the audio player. */
     private fun alignVideoWithAudio(p: ExoPlayer, initial: Boolean = false) {
         if (p.playbackState == Player.STATE_IDLE || p.playbackState == Player.STATE_ENDED) return

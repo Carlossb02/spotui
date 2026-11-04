@@ -897,19 +897,9 @@ object YTPlayerUtils {
                 }
             }
 
-            val codecBonus = when {
-                f.mimeType.contains("opus", ignoreCase = true) -> 10_000L
-                f.mimeType.startsWith("audio/webm") -> 5_000L
-                else -> 0L
-            }
-
-            val bitrateScore = (f.bitrate / 1000L) * when (audioQuality) {
-                AudioQuality.AUTO -> if (connectivityManager.isActiveNetworkMetered) 1 else 10
-                AudioQuality.HIGH -> 10
-                AudioQuality.LOW -> -10
-            }
-
-            score + bitrateScore + codecBonus
+            score + com.music.spotui.audio.AudioFormatPreference.score(
+                f.averageBitrate ?: f.bitrate, f.mimeType, audioQuality == AudioQuality.LOW
+            )
         }
 
         if (selected != null) {

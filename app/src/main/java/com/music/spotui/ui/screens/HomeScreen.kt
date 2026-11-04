@@ -657,7 +657,7 @@ private fun HomeMusicFeedContent(
                     HomeSongRow(
                         song = song,
                         onPlay = {
-                            playerViewModel.updateQueue(topList.drop(i), isManualEdit = true)
+                            playerViewModel.updateQueue(topList, startSongId = song.id, sourceName = context.getString(R.string.top_songs))
                             playerViewModel.updateSongState(song.coverUri, song.title, song.singer,
                                 true, song.id, 0, song.album)
                             SongPlayer.playSong(song.url, context, "song/${song.id}")
@@ -1160,6 +1160,7 @@ private fun HomePodcastsFeedContent(
             )
         LazyColumn(
         modifier = Modifier
+            .fillMaxWidth()
             .weight(1f)
             .background(Color(AppBackground.toArgb()))
     ) {

@@ -4,204 +4,165 @@ import android.util.Log
 import com.music.spotui.MyApplication
 import com.music.spotui.data.entity.LyricLine
 import com.music.spotui.data.entity.Lyrics
+import com.music.spotui.data.entity.SongsModel
 import com.music.spotui.data.preferences.LyricsCachePref
-import kotlinx.coroutines.async
-import kotlinx.coroutines.launch
+import com.music.spotui.lyrics.LyricsMatcher
+import com.music.spotui.lyrics.LyricsText
+import com.music.spotui.lyrics.ExtraLyricsSources
+import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-/**
- * Synced lyrics. Primary source is Spotify's own color-lyrics endpoint (the
- * exact synced lyrics the official client shows, fetched by track id) — with
- * LRCLIB (lrclib.net, free + key-less) as the fallback for tracks Spotify has
- * no lyrics for or when the track id isn't known.
- *
- * LRCLIB asks clients to send a descriptive User-Agent; we oblige.
- */
+/** Spotify identity first, then LRCLIB; KuGou and Lyrics.ovh extend missing coverage. */
 object LyricsApi {
     private const val BASE = "https://lrclib.net/api"
     private const val UA = "SpotuiSpotifyClone (https://github.com/)"
-
-    // In-memory cache keyed by "title|artist" so re-opening the lyrics view (or the
-    // inline card + full-screen view, which both request the same track) is instant
-    // and we never re-hit the network for a track we already resolved this session.
-    // A miss is cached too, but only for MISS_RETRY_MS — a "not found" is often just
-    // a timeout / flaky network, not a fact, so it becomes retryable.
     private class Miss(val at: Long = System.currentTimeMillis())
     private const val MISS_RETRY_MS = 120_000L
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Any>()
+    private val locks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
+    private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val tracks = java.util.concurrent.ConcurrentHashMap<String, SongsModel>()
 
-    private val cache = java.util.concurrent.ConcurrentHashMap<String, Any>() // Lyrics | Miss
-    private val prefetchScope =
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
-
-    private fun cacheKey(title: String, artist: String) =
-        "${cleanTitle(title).lowercase()}|${artist.substringBefore(",").trim().lowercase()}"
-
-    // Strip the noise Spotify puts in titles that LRCLIB doesn't know about:
-    // "Song - 2011 Remaster", "Song (feat. X)", "Song [Bonus Track]".
-    private val featTag = Regex("""\s*[(\[][^)\]]*(feat\.?|ft\.?|with )[^)\]]*[)\]]""", RegexOption.IGNORE_CASE)
-    private val bracketTag = Regex("""\s*[(\[][^)\]]*(remaster|remastered|live|version|edit|mono|stereo|deluxe|bonus)[^)\]]*[)\]]""", RegexOption.IGNORE_CASE)
-    private fun cleanTitle(title: String) =
-        title.substringBefore(" - ")
-            .replace(featTag, "")
-            .replace(bracketTag, "")
-            .trim()
-
-    // Play-queue registry: "title|artist" → Spotify track id, seeded by
-    // CurrentSongState.updateQueue so we can hit Spotify's own lyrics endpoint
-    // (the exact lyrics the official client shows) before falling back to LRCLIB.
-    private val trackIds = java.util.concurrent.ConcurrentHashMap<String, String>()
-
-    fun registerTracks(songs: List<com.music.spotui.data.entity.SongsModel>) {
-        for (s in songs) {
-            if (s.spotifyTrackId.isNotBlank() && s.title.isNotBlank()) {
-                trackIds[cacheKey(s.title, s.singer)] = s.spotifyTrackId
-            }
-        }
+    fun registerTracks(songs: List<SongsModel>) {
+        songs.filter { it.spotifyTrackId.matches(Regex("[A-Za-z0-9]{22}")) }
+            .forEach { tracks[it.spotifyTrackId] = it }
     }
 
-    /** Remove any cached entry (hit or miss) so the next fetch starts fresh. */
+    private fun prefix(title: String, artist: String) =
+        "lyrics-v4|${LyricsMatcher.normalize(title)}|${LyricsMatcher.normalize(artist)}|"
+
+    private fun exactId(title: String, artist: String, album: String, durationSec: Int, trackId: String): String {
+        if (trackId.matches(Regex("[A-Za-z0-9]{22}"))) return trackId
+        val candidates = tracks.values.filter {
+            LyricsMatcher.normalize(it.title) == LyricsMatcher.normalize(title) &&
+                LyricsMatcher.normalize(it.singer) == LyricsMatcher.normalize(artist) &&
+                (album.isBlank() || LyricsMatcher.normalize(it.album) == LyricsMatcher.normalize(album)) &&
+                (durationSec <= 0 || it.durationMs <= 0 || kotlin.math.abs(it.durationMs / 1000 - durationSec) <= 2)
+        }.map { it.spotifyTrackId }.distinct()
+        return candidates.singleOrNull().orEmpty()
+    }
+
     fun removeFromCache(title: String, artist: String) {
-        cache.remove(cacheKey(title, artist))
+        val prefix = prefix(title, artist)
+        cache.keys.filter { it.startsWith(prefix) }.forEach { cache.remove(it) }
+        LyricsCachePref.removeMatchingPrefix(MyApplication.instance, prefix)
     }
 
-    /** Warm the cache for a track in the background (call when playback starts). */
-    fun prefetch(title: String, artist: String, album: String, durationSec: Int = 0) {
-        if (title.isBlank()) return
-        val key = cacheKey(title, artist)
-        val cached = cache[key]
-        if (cached is Lyrics) return
-        if (cached is Miss && System.currentTimeMillis() - cached.at < MISS_RETRY_MS) return
-        // Disk cache is already warm — populate in-memory cache without network.
-        LyricsCachePref.get(MyApplication.instance, key)?.let { disk ->
-            cache[key] = disk
-            return
-        }
-        prefetchScope.launch { runCatching { fetch(title, artist, album, durationSec) } }
+    fun prefetch(title: String, artist: String, album: String, durationSec: Int = 0, trackId: String = "") {
+        if (title.isNotBlank()) prefetchScope.launch { fetch(title, artist, album, durationSec, trackId) }
     }
 
-    suspend fun fetch(title: String, artist: String, album: String, durationSec: Int): Lyrics? {
-        val key = cacheKey(title, artist)
-        when (val cached = cache[key]) {
-            is Lyrics -> return cached
-            is Miss -> if (System.currentTimeMillis() - cached.at < MISS_RETRY_MS) return null
-        }
-
-        // 2nd-level cache: disk (survives process death). No expiry — lyrics are
-        // static content that never change for a given song.
-        val ctx = MyApplication.instance
-        LyricsCachePref.get(ctx, key)?.let { disk ->
-            cache[key] = disk
-            return disk
-        }
-
-        val primaryArtist = artist.substringBefore(",").trim()
-        val cleaned = cleanTitle(title)
-
-        // 1) Spotify's own color-lyrics — the exact synced lyrics the official app
-        //    shows, keyed by track id, so no title/artist matching can go wrong.
-        // 2) LRCLIB fallback: exact get + fuzzy search fired CONCURRENTLY, then a
-        //    title-only search. Serial fallbacks used to stack 3 × 5s timeouts.
-        val result = fromSpotify(key) ?: kotlinx.coroutines.coroutineScope {
-            val exact = async(kotlinx.coroutines.Dispatchers.IO) {
-                getExact(cleaned, primaryArtist, album, durationSec)
+    suspend fun fetch(title: String, artist: String, album: String, durationSec: Int, trackId: String = ""): Lyrics? = withContext(Dispatchers.IO) {
+        if (title.isBlank() || artist.isBlank()) return@withContext null
+        val id = exactId(title, artist, album, durationSec, trackId)
+        val key = prefix(title, artist) + "${LyricsMatcher.normalize(album)}|${durationSec.coerceAtLeast(0)}|$id"
+        locks.getOrPut(key) { Mutex() }.withLock {
+            when (val cached = cache[key]) {
+                is Lyrics -> return@withLock cached
+                is Miss -> if (System.currentTimeMillis() - cached.at < MISS_RETRY_MS) return@withLock null
             }
-            val fuzzy = async(kotlinx.coroutines.Dispatchers.IO) {
-                search(cleaned, primaryArtist, durationSec)
+            val ctx = MyApplication.instance
+            LyricsCachePref.get(ctx, key)?.let { cache[key] = it; return@withLock it }
+            val track = LyricsMatcher.Track(title, artist, album, durationSec)
+            val result = fromSpotify(id) ?: coroutineScope {
+                val cleaned = LyricsMatcher.searchTitle(title)
+                val primaryArtist = artist.substringBefore(",").trim()
+                val exact = async { getExact(track, cleaned, primaryArtist) }
+                val search = async { searchUrl("$BASE/search?track_name=${enc(cleaned)}&artist_name=${enc(primaryArtist)}", track) }
+                val direct = exact.await()
+                val found = search.await()
+                // Score across both sources: a correct plain transcription wins over a weak synced one.
+                listOfNotNull(direct, found).maxByOrNull { it.first }?.second
+                    ?: searchUrl("$BASE/search?track_name=${enc(cleaned)}", track)?.second
             }
-            exact.await()
-                ?: fuzzy.await()
-                ?: searchTitleOnly(cleaned, primaryArtist, durationSec)
+            val resolved = result ?: expandedFallback(track)
+            cache[key] = resolved ?: Miss()
+            if (resolved != null) LyricsCachePref.put(ctx, key, resolved)
+            resolved
         }
-        cache[key] = result ?: when (cache[key]) {
-            is Lyrics -> return cache[key] as Lyrics
-            else -> Miss()
-        }
-        // Persist successful results to disk so the next launch (or an offline
-        // downloaded track) can serve lyrics without a network round-trip.
-        if (result != null) {
-            LyricsCachePref.put(ctx, key, result)
-        }
-        return result
     }
 
-    private suspend fun fromSpotify(key: String): Lyrics? {
-        val trackId = trackIds[key] ?: return null
-        // The web token expires hourly — refresh before hitting color-lyrics.
-        runCatching {
-            SpotifyTokenProvider.ensureToken(com.music.spotui.MyApplication.instance)
+    private suspend fun fromSpotify(trackId: String): Lyrics? {
+        if (trackId.isBlank()) return null
+        return try {
+            SpotifyTokenProvider.ensureToken(MyApplication.instance)
+            com.metrolist.spotify.Spotify.lyrics(trackId).getOrNull()?.let { sp ->
+                Lyrics(sp.lines.map { LyricLine(it.startMs, it.words) }, sp.synced).takeUnless { it.isEmpty }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            Log.d("LyricsApi", "Spotify lyrics unavailable: ${failure.message}")
+            null
         }
-        return com.metrolist.spotify.Spotify.lyrics(trackId).fold(
-            onSuccess = { sp ->
-                Lyrics(
-                    lines = sp.lines.map { LyricLine(it.startMs, it.words) },
-                    synced = sp.synced,
-                )
-            },
-            onFailure = {
-                Log.d("LyricsApi", "spotify lyrics miss for $trackId: ${it.message}")
-                null
-            },
+    }
+
+    private suspend fun expandedFallback(track: LyricsMatcher.Track): Lyrics? = coroutineScope {
+        val pending = mutableListOf(
+            async { searchUrl("$BASE/search?q=${enc("${LyricsMatcher.plainQueryTitle(track.title)} ${track.artist}")}", track)?.second },
+            async { ExtraLyricsSources.kuGou(track, ::httpGet) },
+            async { ExtraLyricsSources.lyricsOvh(track, ::httpGet) },
         )
+        try {
+            while (pending.isNotEmpty()) {
+                val (finished, lyrics) = kotlinx.coroutines.selects.select<Pair<Deferred<Lyrics?>, Lyrics?>> {
+                    pending.forEach { task -> task.onAwait { task to it } }
+                }
+                pending.remove(finished)
+                if (lyrics != null) return@coroutineScope lyrics
+            }
+            null
+        } finally { pending.forEach { it.cancel() } }
     }
 
-    private fun getExact(title: String, artist: String, album: String, durationSec: Int): Lyrics? {
+    private fun candidate(o: JSONObject, track: LyricsMatcher.Track): Pair<Double, Lyrics>? {
+        val lyrics = parse(o) ?: return null
+        val identity = LyricsMatcher.Candidate(
+            title = o.optString("trackName"), artist = o.optString("artistName"),
+            album = o.optString("albumName"), durationSec = o.optDouble("duration", 0.0).toInt(),
+            synced = lyrics.synced,
+        )
+        val strict = LyricsMatcher.score(track, identity)
+        val timestampsValid = !lyrics.synced || track.durationSec <= 0 ||
+            lyrics.lines.all { it.timeMs <= track.durationSec * 1000L + 5_000L }
+        if (strict != null && timestampsValid) return strict to lyrics
+        val plainScore = LyricsMatcher.plainScore(track, identity) ?: return null
+        val plain = o.optString("plainLyrics").takeIf { it.isNotBlank() && it != "null" }
+            ?.let { LyricsText.plain(it) }
+            ?: LyricsText.plain(lyrics.lines.joinToString("\n") { it.text }) ?: return null
+        return (plainScore - 25) to plain
+    }
+
+    private fun getExact(track: LyricsMatcher.Track, title: String, artist: String): Pair<Double, Lyrics>? {
         val url = buildString {
-            append("$BASE/get?")
-            append("track_name=").append(enc(title))
-            append("&artist_name=").append(enc(artist))
-            if (album.isNotBlank()) append("&album_name=").append(enc(album))
-            if (durationSec > 0) append("&duration=").append(durationSec)
+            append("$BASE/get?track_name=${enc(title)}&artist_name=${enc(artist)}")
+            if (track.album.isNotBlank()) append("&album_name=${enc(track.album)}")
+            if (track.durationSec > 0) append("&duration=${track.durationSec}")
         }
         val body = httpGet(url) ?: return null
-        return runCatching { parse(JSONObject(body)) }.getOrNull()
+        return runCatching { candidate(JSONObject(body), track) }.getOrNull()
     }
 
-    private fun search(title: String, artist: String, durationSec: Int): Lyrics? =
-        searchUrl("$BASE/search?track_name=${enc(title)}&artist_name=${enc(artist)}", null, durationSec)
-
-    /**
-     * Title-only search for when the artist is spelled differently on LRCLIB
-     * (transliterations, "feat." in the artist field, …). Candidates whose artist
-     * loosely matches ours are strongly preferred so we don't sync a cover.
-     */
-    private fun searchTitleOnly(title: String, artist: String, durationSec: Int): Lyrics? =
-        searchUrl("$BASE/search?track_name=${enc(title)}", artist, durationSec)
-
-    private fun searchUrl(url: String, preferArtist: String?, durationSec: Int): Lyrics? {
-        val body = httpGet(url) ?: return null
-        val arr = runCatching { JSONArray(body) }.getOrNull() ?: return null
-        if (arr.length() == 0) return null
-        // Prefer the candidate whose duration is closest, that has synced lyrics,
-        // and (for title-only searches) whose artist loosely matches ours.
-        var best: JSONObject? = null
-        var bestScore = Long.MAX_VALUE
-        for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            val hasSynced = !o.optString("syncedLyrics").isNullOrBlank()
-            val dur = o.optInt("duration", 0)
-            val diff = if (durationSec > 0 && dur > 0) kotlin.math.abs(dur - durationSec).toLong() else 0L
-            val artistMismatch = if (preferArtist != null) {
-                val candidate = o.optString("artistName").lowercase()
-                val ours = preferArtist.lowercase()
-                if (candidate.contains(ours) || ours.contains(candidate)) 0 else 500_000
-            } else 0
-            val score = diff + (if (hasSynced) 0 else 100_000) + artistMismatch
-            if (score < bestScore) { bestScore = score; best = o }
-        }
-        return best?.let { runCatching { parse(it) }.getOrNull() }
+    private fun searchUrl(url: String, track: LyricsMatcher.Track): Pair<Double, Lyrics>? {
+        val arr = httpGet(url)?.let { runCatching { JSONArray(it) }.getOrNull() } ?: return null
+        return (0 until arr.length()).mapNotNull { i ->
+            arr.optJSONObject(i)?.let { runCatching { candidate(it, track) }.getOrNull() }
+        }.maxByOrNull { it.first }
     }
 
     private fun parse(o: JSONObject): Lyrics? {
-        val synced = o.optString("syncedLyrics").takeIf { it.isNotBlank() }
+        val synced = o.optString("syncedLyrics").takeIf { it.isNotBlank() && it != "null" }
         if (synced != null) {
             val lines = parseLrc(synced)
             if (lines.isNotEmpty()) return Lyrics(lines, synced = true)
         }
-        val plain = o.optString("plainLyrics").takeIf { it.isNotBlank() } ?: return null
+        val plain = o.optString("plainLyrics").takeIf { it.isNotBlank() && it != "null" } ?: return null
         val lines = plain.split("\n").map { LyricLine(0L, it) }
         return Lyrics(lines, synced = false)
     }

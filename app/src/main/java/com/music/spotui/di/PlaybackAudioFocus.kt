@@ -18,24 +18,31 @@ import android.util.Log
  */
 internal class PlaybackAudioFocus(context: Context, private val onChange: (Int) -> Unit) {
     private val manager = context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    private val listener = AudioManager.OnAudioFocusChangeListener { onChange(it) }
-    private val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-        .setAudioAttributes(
-            AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                .build()
-        )
-        .setWillPauseWhenDucked(false)
-        .setOnAudioFocusChangeListener(listener, Handler(Looper.getMainLooper()))
-        .build()
+    private var request: AudioFocusRequest? = null
+    private var generation = 0L
     private var held = false
 
     fun acquire(): Boolean {
         if (held) return true
+        val acquiredGeneration = ++generation
+        val candidate = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+            )
+            .setWillPauseWhenDucked(false)
+            .setOnAudioFocusChangeListener({ change ->
+                // A queued loss from an abandoned request must not pause a
+                // newly resumed listening session when the Activity reopens.
+                if (held && generation == acquiredGeneration) onChange(change)
+            }, Handler(Looper.getMainLooper()))
+            .build()
         return try {
-            val granted = manager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            val granted = manager.requestAudioFocus(candidate) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
             held = granted
+            request = if (granted) candidate else null
             if (!granted) Log.w("SpotuiTransition", "Audio focus request denied; playback cannot start")
             granted
         } catch (e: RuntimeException) {
@@ -47,10 +54,17 @@ internal class PlaybackAudioFocus(context: Context, private val onChange: (Int) 
     fun release() {
         if (!held) return
         held = false
-        runCatching { manager.abandonAudioFocusRequest(request) }
+        generation++
+        val previous = request
+        request = null
+        runCatching { previous?.let { manager.abandonAudioFocusRequest(it) } }
             .onFailure { Log.w("SpotuiTransition", "Audio focus release failed", it) }
     }
 
     /** Focus is already lost permanently; don't restart automatically. */
-    fun markLost() { held = false }
+    fun markLost() {
+        held = false
+        generation++
+        request = null
+    }
 }

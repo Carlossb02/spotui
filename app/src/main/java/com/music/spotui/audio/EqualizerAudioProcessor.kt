@@ -162,7 +162,7 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
         val remaining = inputBuffer.remaining()
         if (remaining == 0 || channelCount <= 0) return
 
-        if (!enabled || sampleRate == 0) {
+        if (!enabled || sampleRate == 0 || bandGains.all { it == 0f }) {
             val output = replaceOutputBuffer(remaining)
             copyBuffer(inputBuffer, output, remaining)
             output.flip()

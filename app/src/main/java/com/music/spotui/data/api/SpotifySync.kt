@@ -145,24 +145,49 @@ object SpotifySync {
     // check marks without re-fetching on every open.
     private val membershipCache = ConcurrentHashMap<String, MutableSet<String>>()
 
-    /** Track ids contained in [playlistId] (first call fetches, then cached). */
+    private val membershipFetchedAt = ConcurrentHashMap<String, Long>()
+
+    /** Read the whole library, including playlists beyond the first 50. */
+    suspend fun allLibraryPlaylists(context: Context): List<com.metrolist.spotify.models.SpotifyPlaylist> {
+        check(SpotifyTokenProvider.ensureToken(context.applicationContext)) { "Spotify session unavailable" }
+        val result = mutableListOf<com.metrolist.spotify.models.SpotifyPlaylist>()
+        var offset = 0
+        do {
+            val page = Spotify.myPlaylists(limit = 50, offset = offset).getOrThrow()
+            result.addAll(page.items)
+            val next = page.offset + page.limit.coerceAtLeast(1)
+            check(next > offset) { "Playlist pagination did not advance" }
+            offset = next
+        } while (offset < page.total)
+        return result.distinctBy { it.id }
+    }
+
+    /** Only complete successful scans are cached, briefly, to allow remote edits. */
     suspend fun playlistTrackIds(context: Context, playlistId: String): Set<String> {
         val cleanPl = cleanPlaylistId(playlistId)
         if (cleanPl.isBlank()) return emptySet()
-        membershipCache[cleanPl]?.let { return it }
-        if (!SpotifyTokenProvider.ensureToken(context.applicationContext)) return emptySet()
+        val age = android.os.SystemClock.elapsedRealtime() - (membershipFetchedAt[cleanPl] ?: 0L)
+        if (age in 0L..60_000L && membershipFetchedAt.containsKey(cleanPl)) {
+            membershipCache[cleanPl]?.let { return it.toSet() }
+        }
+        check(SpotifyTokenProvider.ensureToken(context.applicationContext)) { "Spotify session unavailable" }
         val ids = mutableSetOf<String>()
         var offset = 0
         while (true) {
-            val page = Spotify.playlistTracks(cleanPl, limit = 100, offset = offset).getOrNull() ?: break
+            val page = Spotify.playlistTracks(cleanPl, limit = 100, offset = offset).getOrThrow()
             page.items.forEach { item ->
                 item.track?.id?.let { cleanTrackId(it) }?.takeIf { it.isNotBlank() }?.let(ids::add)
             }
-            offset += page.items.size
-            if (page.items.isEmpty() || offset >= page.total) break
+            // The parser can omit unavailable entries: advance by the raw page
+            // window, never by the number of playable tracks after filtering.
+            val next = page.offset + page.limit.coerceAtLeast(1)
+            check(next > offset) { "Track pagination did not advance" }
+            offset = next
+            if (offset >= page.total) break
         }
         val set = ConcurrentHashMap.newKeySet<String>().apply { addAll(ids) }
         membershipCache[cleanPl] = set
-        return set
+        membershipFetchedAt[cleanPl] = android.os.SystemClock.elapsedRealtime()
+        return set.toSet()
     }
 }

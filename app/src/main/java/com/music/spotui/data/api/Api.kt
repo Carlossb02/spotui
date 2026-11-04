@@ -60,6 +60,11 @@ class Api @Inject constructor(
         @Volatile var home: HomeFeedModel? = null
         @Volatile var library: List<com.music.spotui.data.entity.LibraryEntry>? = null
 
+        private val albumDetailCache = java.util.concurrent.ConcurrentHashMap<String, AlbumsModel>()
+        private fun albumKey(name: String, artist: String) = "${name.trim().lowercase(java.util.Locale.ROOT)}|${artist.trim().lowercase(java.util.Locale.ROOT)}"
+        fun getAlbumDetail(name: String, artist: String): AlbumsModel? = albumDetailCache[albumKey(name, artist)]
+        fun setAlbumDetail(name: String, artist: String, model: AlbumsModel) { albumDetailCache[albumKey(name, artist)] = model }
+
         private val playlistSongsCache = java.util.concurrent.ConcurrentHashMap<String, List<SongsModel>>()
         private val playlistDetailCache = java.util.concurrent.ConcurrentHashMap<String, AlbumsModel>()
 
@@ -89,6 +94,7 @@ class Api @Inject constructor(
             albums = null; artists = null; songs = null; home = null; library = null
             playlistSongsCache.clear()
             playlistDetailCache.clear()
+            albumDetailCache.clear()
         }
     }
 
@@ -164,6 +170,7 @@ class Api @Inject constructor(
         name = name,
         time = releaseDate ?: "",
         type = albumType.orEmpty(),
+        spotifyAlbumId = id,
     )
 
     private fun SpotifyArtist.toArtistModel(): ArtistsModel = ArtistsModel(
@@ -659,6 +666,7 @@ class Api @Inject constructor(
         } else null
 
         if (directAlbum != null) {
+            HomeCache.setAlbumDetail(albumName, artist, directAlbum.toAlbumModel())
             emit(Response.Success(directAlbum.tracks?.items.orEmpty().map { it.toSongModel() }))
             return@flow
         }
@@ -676,7 +684,10 @@ class Api @Inject constructor(
             emit(Response.Success(emptyList())); return@flow
         }
         Spotify.album(albumId).fold(
-            onSuccess = { full -> emit(Response.Success(full.tracks?.items.orEmpty().map { it.toSongModel() })) },
+            onSuccess = { full ->
+                HomeCache.setAlbumDetail(albumName, artist, full.toAlbumModel())
+                emit(Response.Success(full.tracks?.items.orEmpty().map { it.toSongModel() }))
+            },
             onFailure = { Log.e("Api", "getAlbumSongs failed", it); emit(Response.Error(it.message ?: "error")) },
         )
     }

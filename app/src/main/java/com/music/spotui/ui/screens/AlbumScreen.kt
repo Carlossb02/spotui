@@ -84,11 +84,8 @@ import com.music.spotui.R
 import com.music.spotui.data.api.Response
 import com.music.spotui.data.entity.AlbumsModel
 import com.music.spotui.data.entity.SongsModel
-import com.music.spotui.data.preferences.addLikedAlbumId
 import com.music.spotui.data.preferences.addLikedSongId
-import com.music.spotui.data.preferences.isAlbumLiked
 import com.music.spotui.data.preferences.isSongLiked
-import com.music.spotui.data.preferences.removeLikedAlbumId
 import com.music.spotui.data.preferences.removeLikedSongId
 import com.music.spotui.di.Palette
 import com.music.spotui.di.SongPlayer
@@ -96,6 +93,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
@@ -115,6 +113,7 @@ import com.music.spotui.ui.viewmodel.AlbumViewModel
 import com.music.spotui.ui.viewmodel.PlayerViewModel
 import com.music.spotui.ui.components.SwipeToPlayNextWrapper
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 
 @Composable
@@ -179,6 +178,7 @@ fun SumUpAlbumScreen(
     val playerViewModel: PlayerViewModel = hiltViewModel()
     // `songs` is already this album's track list (loaded by AlbumViewModel).
     val albumSongs: List<SongsModel> = songs
+    val resolvedAlbum by albumViewModel.albumDetail.collectAsState()
 
     // Warm the stream cache for the first few tracks so the first tap plays
     // (near-)instantly instead of resolving YouTube on the tap.
@@ -191,7 +191,8 @@ fun SumUpAlbumScreen(
     val albumByName : Map<String, List<AlbumsModel>> = albums.groupBy { it.name }
     // The album may not be in the cached new-releases list (e.g. opened from
     // search) — fall back to a model built from the album's first track.
-    val album : List<AlbumsModel> = albumByName[albumName]
+    val album : List<AlbumsModel> = resolvedAlbum?.let { listOf(it) }
+        ?: albumByName[albumName]?.filter { artist.isBlank() || it.artists.equals(artist, ignoreCase = true) }?.takeIf { it.isNotEmpty() }
         ?: listOf(
             AlbumsModel(
                 id = albumName.hashCode() and 0x7fffffff,
@@ -220,11 +221,36 @@ fun SumUpAlbumScreen(
     var dominentColor by remember {
         mutableStateOf(Color(AppBackground.toArgb()))
     }
-    Palette().extractSecondColorFromCoverUrl(context = context, album[0].coverUri){ color ->
-        dominentColor = color
+    LaunchedEffect(album[0].coverUri) {
+        Palette().extractSecondColorFromCoverUrl(context = context, album[0].coverUri) { color ->
+            dominentColor = color
+        }
     }
 
-    var isAlbumLiked by remember { mutableStateOf( isAlbumLiked(context, album[0].id.toString())) }
+    val albumSpotifyId = album[0].spotifyAlbumId
+    var albumSaved by remember(albumSpotifyId, album[0].id) {
+        mutableStateOf(com.music.spotui.data.api.AlbumLibrary.cached(context, albumSpotifyId, album[0].id))
+    }
+    var albumSaveKnown by remember(albumSpotifyId) { mutableStateOf(false) }
+    var albumSaveBusy by remember(albumSpotifyId) { mutableStateOf(false) }
+    var albumCheckRevision by remember { mutableStateOf(0) }
+    var albumSaveGeneration by remember(albumSpotifyId) { mutableStateOf(0) }
+    val albumSaveScope = androidx.compose.runtime.rememberCoroutineScope()
+    val albumLifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(albumLifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) albumCheckRevision++
+        }
+        albumLifecycle.lifecycle.addObserver(observer)
+        onDispose { albumLifecycle.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(albumSpotifyId, albumCheckRevision) {
+        val generation = albumSaveGeneration
+        val saved = com.music.spotui.data.api.AlbumLibrary.read(context, albumSpotifyId, album[0].id)
+        if (saved != null && generation == albumSaveGeneration && !albumSaveBusy) {
+            albumSaved = saved; albumSaveKnown = true
+        }
+    }
 
     var snackbarMessage by remember {
         mutableStateOf("")
@@ -255,6 +281,13 @@ fun SumUpAlbumScreen(
         }
     }
 
+    val totalDurationSec = remember(albumSongs) { albumSongs.sumOf { it.durationMs.toLong() } / 1000L }
+    val trackNumbers = remember(albumSongs) { albumSongs.mapIndexed { index, track -> track.url to index + 1 }.toMap() }
+    val releaseKind = when (album[0].type.lowercase()) {
+        "single" -> "Single"
+        "compilation" -> uiLocalized("Compilación")
+        else -> uiLocalized("Álbum")
+    }
     val albumArtists = album[0].artists.ifBlank { albumSongs.firstOrNull()?.singer ?: artist }
     val albumArtistList = remember(albumArtists) {
         albumArtists.split(",").map { it.trim() }.filter { it.isNotBlank() }
@@ -339,7 +372,11 @@ fun SumUpAlbumScreen(
                     titleContentColor = Color.White,
                 ),
                 title = {
-                    Text(text = "")
+                    if (listState.firstVisibleItemIndex > 1) Text(
+                        text = albumName, maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        fontSize = 17.sp, fontWeight = FontWeight.Bold,
+                    )
                 }
             )
         }
@@ -359,12 +396,12 @@ fun SumUpAlbumScreen(
                         placeholder = uiLocalized("Buscar en el álbum")
                     )
                 }
-                item(key = "album_content") {
+                item(key = "album_header") {
                     Column {
             if (!keyboardVisible && !searchReveal.expanded && searchQuery.isBlank()) {
                 Column(
                     modifier = Modifier.fillMaxWidth()
-                        .heightIn(min = if (tabletCollectionLayout) 260.dp else 440.dp)
+                        .heightIn(min = if (tabletCollectionLayout) 260.dp else 400.dp)
                         .padding(bottom = 8.dp),
                     verticalArrangement = Arrangement.Center
                 ) {
@@ -400,8 +437,12 @@ fun SumUpAlbumScreen(
                     )
                     Spacer(modifier = Modifier.height(7.dp))
                     Text(
-                        text = "${albumSongs.size} canciones" +
-                            if (album[0].time.isNotBlank()) " • ${album[0].time}" else "",
+                        text = listOfNotNull(
+                            releaseKind,
+                            album[0].time.takeIf { it.isNotBlank() },
+                            "${albumSongs.size} ${uiLocalized("canciones")}",
+                            totalDurationSec.takeIf { it > 0 }?.let { "${it / 60} min" },
+                        ).joinToString(" • "),
                         color = Color(0xFFB3B3B3), fontSize = 12.sp,
                         modifier = Modifier.padding(horizontal = 20.dp)
                     )
@@ -422,22 +463,29 @@ fun SumUpAlbumScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Icon(
-                                    painter = if (isAlbumLiked) painterResource(R.drawable.added)
-                                        else painterResource(R.drawable.ic_add),
-                                    contentDescription = uiLocalized("Guardar álbum"),
-                                    tint = if (isAlbumLiked) Color(AppPalette.toArgb()) else Color.White,
-                                    modifier = Modifier.size(27.dp).clickable {
-                                        if (isAlbumLiked) {
-                                            removeLikedAlbumId(context, album[0].id.toString())
-                                            snackbarMessage = "Removed from Library"
-                                        } else {
-                                            addLikedAlbumId(context, album[0].id.toString())
-                                            snackbarMessage = "Added to Library"
+                                com.music.spotui.ui.components.LibrarySaveIcon(
+                                    saved = albumSaved,
+                                    enabled = !albumSaveBusy && albumSpotifyId.isNotBlank(),
+                                    onClick = {
+                                        if (!albumSaveBusy) {
+                                            val desiredSaved = !albumSaved
+                                            albumSaveBusy = true
+                                            albumSaveGeneration++
+                                            albumSaveScope.launch {
+                                                try {
+                                                    val before = if (albumSaveKnown) albumSaved else
+                                                        com.music.spotui.data.api.AlbumLibrary.read(context, albumSpotifyId, album[0].id)
+                                                    if (before != null && (before == desiredSaved || com.music.spotui.data.api.AlbumLibrary.setSaved(
+                                                            context, albumSpotifyId, album[0].id, desiredSaved))) {
+                                                        albumSaved = desiredSaved
+                                                        albumSaveKnown = true
+                                                        snackbarMessage = if (albumSaved) "Álbum añadido a tu biblioteca" else "Álbum quitado de tu biblioteca"
+                                                    } else snackbarMessage = "No se pudo actualizar el álbum. Comprueba tu conexión."
+                                                    snackbarVisible = true
+                                                } finally { albumSaveBusy = false }
+                                            }
                                         }
-                                        isAlbumLiked = isAlbumLiked(context, album[0].id.toString())
-                                        snackbarVisible = true
-                                    }
+                                    },
                                 )
                                 if (albumSongs.isNotEmpty()) {
                                     Icon(
@@ -477,7 +525,7 @@ fun SumUpAlbumScreen(
                                         painter = painterResource(R.drawable.ic_player_shuffle),
                                         tint = Color.White,
                                         modifier = Modifier.size(24.dp).clickable {
-                                            albumViewModel.startShuffled(albumSongs)?.let { first ->
+                                            albumViewModel.startShuffled(albumSongs, sourceName = albumName)?.let { first ->
                                                 albumViewModel.updateSongState(
                                                     first.coverUri, first.title, first.singer, true,
                                                     first.id, 0, albumName)
@@ -499,7 +547,7 @@ fun SumUpAlbumScreen(
                                         if (currentInList) albumViewModel.setPlaying(!playing)
                                         else {
                                             val first = filteredSongs.firstOrNull() ?: albumSongs.first()
-                                            albumViewModel.updateQueue(filteredSongs.ifEmpty { albumSongs })
+                                            albumViewModel.updateQueue(filteredSongs.ifEmpty { albumSongs }, sourceName = albumName)
                                             albumViewModel.updateSongState(
                                                 first.coverUri, first.title, first.singer, true,
                                                 first.id, 0, albumName)
@@ -520,13 +568,17 @@ fun SumUpAlbumScreen(
                 }
             }
 
+                    } // album header column
+                } // album header item
             if (albumSongs.isNotEmpty()) {
-                CollectionSortRow(
-                    label = currentSort.getDescriptiveLabel(isDescending),
-                    onClick = { showSortSheet = true }
-                )
-
+                item(key = "album_sort") {
+                    CollectionSortRow(
+                        label = currentSort.getDescriptiveLabel(isDescending),
+                        onClick = { showSortSheet = true }
+                    )
+                }
                 if (filteredSongs.isEmpty() && searchQuery.isNotBlank()) {
+                    item(key = "album_empty_search") {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -540,9 +592,9 @@ fun SumUpAlbumScreen(
                             fontWeight = FontWeight.Medium
                         )
                     }
+                    }
                 } else {
-                    repeat(filteredSongs.size) { songIdx ->
-                        val targetSong = filteredSongs[songIdx]
+                    itemsIndexed(filteredSongs, key = { index, track -> "${track.id}|${track.url}|$index" }) { songIdx, targetSong ->
 
                         var isLiked by remember(targetSong.id) {
                             mutableStateOf(isSongLiked(context, targetSong.id.toString()))
@@ -585,7 +637,7 @@ fun SumUpAlbumScreen(
                                         indication = null,
                                         onLongClick = { menuSong = targetSong },
                                         onClick = {
-                                            albumViewModel.updateQueue(filteredSongs.drop(songIdx))
+                                            albumViewModel.updateQueue(filteredSongs, startSongId = targetSong.id, sourceName = albumName)
                                             albumViewModel.updateSongState(
                                                 targetSong.coverUri,
                                                 targetSong.title,
@@ -603,8 +655,14 @@ fun SumUpAlbumScreen(
                                 Row(
                                     horizontalArrangement = Arrangement.Start,
                                     verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.width(200.dp)
+                                    modifier = Modifier.weight(1f).padding(end = 12.dp)
                                 ) {
+                                    Text(
+                                        text = (trackNumbers[targetSong.url] ?: songIdx + 1).toString(),
+                                        color = if (songId == albumViewModel.currentSongId.value) currentPlayingIndicatorColor else Color.Gray,
+                                        fontSize = 13.sp,
+                                        modifier = Modifier.width(28.dp).padding(top = 3.dp),
+                                    )
                                     Column {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             if (targetSong.explicit) {
@@ -635,9 +693,16 @@ fun SumUpAlbumScreen(
                                     }
                                 }
 
+                                if (tabletCollectionLayout && targetSong.durationMs > 0) {
+                                    Text(
+                                        text = "%d:%02d".format(targetSong.durationMs / 60000, (targetSong.durationMs / 1000) % 60),
+                                        color = Color.Gray, fontSize = 12.sp,
+                                        modifier = Modifier.padding(end = 18.dp),
+                                    )
+                                }
                                 Icon(
                                     modifier = Modifier
-                                        .size(20.dp)
+                                        .size(24.dp)
                                         .combinedClickable(
                                             interactionSource = remember { MutableInteractionSource() },
                                             indication = null,
@@ -662,17 +727,26 @@ fun SumUpAlbumScreen(
                                     } else {
                                         Color.Gray
                                     },
-                                    contentDescription = ""
+                                    contentDescription = uiLocalized("Guardar canción")
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.MoreVert,
+                                    contentDescription = uiLocalized("Más opciones"), tint = Color.Gray,
+                                    modifier = Modifier.padding(start = 12.dp).size(28.dp)
+                                        .clickable { menuSong = targetSong },
                                 )
                             }
                         }
                     }
                 }
             }
-
-            Spacer(modifier = Modifier.height(220.dp))
-                    } // album content column
-                } // album content item
+            item(key = "album_footer") {
+                Text(
+                    text = albumName + " • " + albumArtists,
+                    color = Color.Gray, fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 24.dp),
+                )
+            }
             } // lazy album list
         com.music.spotui.ui.components.FastScrollbarForLazyList(
             state = listState,

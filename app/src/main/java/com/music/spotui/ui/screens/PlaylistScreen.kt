@@ -656,11 +656,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                         modifier = Modifier.weight(1f)
                                     ) {
                                         if (externalReadOnly) {
-                                            Icon(
-                                                imageVector = if (favoritePlaylist) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                                tint = if (favoritePlaylist) Color(0xFF1ED760) else Color.White,
-                                                contentDescription = if (favoritePlaylist) "Quitar de tu biblioteca" else "Guardar en tu biblioteca",
-                                                modifier = Modifier.size(27.dp).clickable { togglePlaylistFavorite() },
+                                            com.music.spotui.ui.components.LibrarySaveIcon(
+                                                saved = favoritePlaylist, onClick = { togglePlaylistFavorite() },
                                             )
                                             Spacer(Modifier.width(18.dp))
                                         }
@@ -726,7 +723,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                                         interactionSource = remember { MutableInteractionSource() },
                                                         indication = null,
                                                     ) {
-                                                        playlistViewModel.startShuffled(songs)?.let { first ->
+                                                        playlistViewModel.startShuffled(songs, sourceName = playlist.name)?.let { first ->
                                                             playlistViewModel.updateSongState(
                                                                 first.coverUri,
                                                                 first.title,
@@ -763,7 +760,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                                 when {
                                                     currentInList -> playlistViewModel.setPlaying(!playing)
                                                     filteredSongs.isNotEmpty() -> {
-                                                        playlistViewModel.updateQueue(filteredSongs)
+                                                        playlistViewModel.updateQueue(filteredSongs, sourceName = playlist.name)
                                                         playlistViewModel.updateSongState(
                                                             filteredSongs[0].coverUri,
                                                             filteredSongs[0].title,
@@ -903,7 +900,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                         indication = null,
                                         onLongClick = { menuSong = song },
                                         onClick = {
-                                            playlistViewModel.updateQueue(filteredSongs.drop(index))
+                                            playlistViewModel.updateQueue(filteredSongs, startSongId = song.id, sourceName = playlist.name)
                                             playlistViewModel.updateSongState(
                                                 song.coverUri,
                                                 song.title,

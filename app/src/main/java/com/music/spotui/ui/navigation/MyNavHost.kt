@@ -77,7 +77,7 @@ fun MyNavHost(
                 val savedQueue = com.music.spotui.data.preferences.loadLastQueue(context)
                 val queue = if (savedQueue.isNotEmpty()) savedQueue else listOf(song)
                 val idx = queue.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
-                playerViewModel.updateQueue(queue)
+                playerViewModel.updateQueue(queue, isManualEdit = true)
                 playerViewModel.updateSongState(
                     song.coverUri, song.title, song.singer, false, song.id, idx, song.album)
                 com.music.spotui.di.SongPlayer.setRestorePoint(song.url, positionMs)

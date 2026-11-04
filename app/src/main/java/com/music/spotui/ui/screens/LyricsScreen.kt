@@ -127,6 +127,8 @@ fun LyricsScreen(
     album: String,
     accentColor: Color,
     onClose: () -> Unit,
+    trackId: String = "",
+    trackDurationSec: Int = 0,
 ) {
     val vm: LyricsViewModel = hiltViewModel()
     val density = LocalDensity.current
@@ -248,10 +250,9 @@ fun LyricsScreen(
         }
     }
 
-    LaunchedEffect(title, artist) {
-        if (vm.state.value is LyricsViewModel.State.Loaded) return@LaunchedEffect
-        val durationSec = (SongPlayer.getDuration() / 1000).toInt()
-        vm.load(title, artist, album, durationSec)
+    LaunchedEffect(title, artist, album, trackId, trackDurationSec) {
+        val durationSec = trackDurationSec.takeIf { it > 0 } ?: (SongPlayer.getDuration() / 1000).toInt().coerceAtLeast(0)
+        vm.load(title, artist, album, durationSec, trackId)
     }
     val state by vm.state.collectAsState()
     val positionMs by rememberPlaybackPositionMs()
@@ -439,11 +440,13 @@ fun InlineLyrics(
     album: String,
     accentColor: Color,
     onExpand: () -> Unit,
+    trackId: String = "",
+    trackDurationSec: Int = 0,
 ) {
     val vm: LyricsViewModel = hiltViewModel()
-    LaunchedEffect(title, artist) {
-        val durationSec = (SongPlayer.getDuration() / 1000).toInt()
-        vm.load(title, artist, album, durationSec)
+    LaunchedEffect(title, artist, album, trackId, trackDurationSec) {
+        val durationSec = trackDurationSec.takeIf { it > 0 } ?: (SongPlayer.getDuration() / 1000).toInt().coerceAtLeast(0)
+        vm.load(title, artist, album, durationSec, trackId)
     }
     val state by vm.state.collectAsState()
     val positionMs by rememberPlaybackPositionMs()

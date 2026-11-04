@@ -80,9 +80,7 @@ fun ContinuePodcastPreview(
     }.collectAsState()
     val current = currentEpisode ?: entry
 
-    DisposableEffect(entry.episode.url) {
-        onDispose { previewPlayer?.release(); previewPlayer = null }
-    }
+    // The LaunchedEffect below owns creation and release of its exact player.
 
     LaunchedEffect(videoId, shouldPreview, visible) {
         if (!visible || !shouldPreview || videoId == null || unavailable) return@LaunchedEffect
@@ -178,7 +176,7 @@ fun ContinuePodcastPreview(
                     }
                 }
             }
-            .combinedClickable(onClick = onTap, onLongClick = { hovered = !hovered })
+
     ) {
         if (previewPlayer != null) {
             AndroidView(
@@ -229,6 +227,10 @@ fun ContinuePodcastPreview(
                 strokeWidth = 2.dp
             )
         }
+
+        Box(Modifier.matchParentSize().combinedClickable(
+            onClick = onTap, onLongClick = { hovered = !hovered }
+        ))
 
         if (current.fraction > 0f) {
             Box(
