@@ -22,6 +22,8 @@ import com.music.spotui.data.preferences.getPlaylistSortOption
 import com.music.spotui.data.preferences.isPlaylistSortDescending
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
@@ -328,8 +330,9 @@ class Api @Inject constructor(
      * (searchDesktop, not rate-limited). Powers the Search screen so users can
      * find albums and artists, not just songs.
      */
-    suspend fun searchEverything(query: String): Flow<Response<SearchResults>> = kotlinx.coroutines.flow.channelFlow {
+    suspend fun searchEverything(query: String, includePodcasts: Boolean = true): Flow<Response<SearchResults>> = kotlinx.coroutines.flow.channelFlow {
         var currentResults = SearchResults()
+        val resultLock = kotlinx.coroutines.sync.Mutex()
         send(Response.Loading(currentResults))
 
         if (query.isBlank()) {
@@ -346,8 +349,9 @@ class Api @Inject constructor(
                 val spotifyRes = runCatching {
                     Spotify.search(query, types = listOf("track", "album", "artist", "playlist"), limit = 20).getOrNull()
                 }.getOrNull()
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 if (spotifyRes != null) {
-                    synchronized(this@channelFlow) {
+                    resultLock.withLock {
                         currentResults = currentResults.copy(
                             songs = spotifyRes.tracks?.items.orEmpty().map { it.toSongModel() },
                             albums = spotifyRes.albums?.items.orEmpty().map { it.toAlbumModel() },
@@ -362,28 +366,31 @@ class Api @Inject constructor(
                                 )
                             }.distinctBy { it.spotifyId },
                         )
+                        send(Response.Loading(currentResults))
                     }
-                    send(Response.Loading(currentResults))
                 }
             }
 
-            val podcastJob = launch {
+            val podcastJob = if (includePodcasts) launch {
                 try {
+                    kotlinx.coroutines.delay(250L)
                     val (ytShows, ytEpisodes) = com.music.spotui.providers.PodcastProvider.searchPodcasts(query)
-                    synchronized(this@channelFlow) {
+                    resultLock.withLock {
                         currentResults = currentResults.copy(
                             shows = (currentResults.shows + ytShows).distinctBy { it.id },
                             episodes = (currentResults.episodes + ytEpisodes).distinctBy { it.id },
                         )
+                        send(Response.Loading(currentResults))
                     }
-                    send(Response.Loading(currentResults))
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
                 } catch (e: Exception) {
                     Log.e("Api", "searchPodcasts failed for query: $query", e)
                 }
-            }
+            } else null
 
             spotifyJob.join()
-            podcastJob.join()
+            podcastJob?.join()
         }
 
         send(Response.Success(currentResults))

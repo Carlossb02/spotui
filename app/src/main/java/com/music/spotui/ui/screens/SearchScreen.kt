@@ -172,6 +172,8 @@ fun SumUpSearchScreen(
         recents = com.music.spotui.data.preferences.getRecentItems(context)
     }
     var selectedCategory by remember { mutableStateOf("All") }
+    val includePodcasts = selectedCategory == "All" || selectedCategory == "Podcasts"
+    LaunchedEffect(selectedCategory) { searchViewModel.search(text, includePodcasts) }
 
     // Live Spotify search results for the current query.
     val searchedList = results.songs
@@ -192,9 +194,8 @@ fun SumUpSearchScreen(
     // Warm the stream cache for the top search hits so tapping a result plays
     // (near-)instantly instead of resolving YouTube on the tap.
     LaunchedEffect(searchedList) {
-        if (searchedList.isNotEmpty()) {
-            SongPlayer.prefetchList(searchedList.map { it.url }, context, count = 3)
-        }
+        SongPlayer.registerTracksForResolution(searchedList.take(3))
+        SongPlayer.prefetchList(searchedList.map { it.url }, context, count = 3)
     }
 
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -218,7 +219,7 @@ fun SumUpSearchScreen(
                     searchFocusTrigger = searchFocusTrigger,
                 ) {
                     text = it
-                    searchViewModel.search(it)
+                    searchViewModel.search(it, includePodcasts)
                 }
             }
 

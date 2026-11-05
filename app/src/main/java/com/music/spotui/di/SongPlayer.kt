@@ -250,8 +250,9 @@ object SongPlayer {
         streamExpiresAt.clear()
         loudnessCache.clear()
         youtubeGainCache.clear()
-        inFlightResolutions.values.forEach { runCatching { it.cancel() } }
-        inFlightResolutions.clear()
+        streamResolutions.cancelAll()
+        rawYtSearchWork.cancelAll()
+        rawYtSearchCache.clear()
         // Preserve song -> manual stream key mapping for the current queue.
         // It is user data, NOT an ephemeral network resolution cache.
         providerBlocklist.clear()
@@ -635,7 +636,7 @@ object SongPlayer {
         val appContext = context.applicationContext
 
         invalidateResolvedStream(songUrl)
-        inFlightResolutions.remove(songUrl)?.cancel()
+        streamResolutions.cancel(songUrl)
         // The exact query can be a Spotify synthetic search URI rather than a
         // Spotify ID. Map that URI to the same key the UI used to save the override.
         if (songId != null && songId != 0) {
@@ -1145,16 +1146,26 @@ object SongPlayer {
     private val prefetchInFlight: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     @Volatile private var prefetchTargets: Set<String> = emptySet()
 
+    fun registerTracksForResolution(songs: List<com.music.spotui.data.entity.SongsModel>) {
+        registerLossless(songs.map { it.url to it.spotifyTrackId })
+        registerAlternativeKeys(songs.map { it.url to com.music.spotui.data.preferences.alternativeStreamKey(it) })
+        registerExplicit(songs.map { it.url to it.explicit })
+        registerDuration(songs.filter { it.durationMs > 0 }.map { it.url to it.durationMs })
+        registerMetadata(songs.map { it.url to TrackMatchMetadata(it.title, it.singer, it.album) })
+    }
+
     fun prefetch(song: String, context: Context) = prefetchInternal(song, context, listed = false)
 
     private fun prefetchInternal(song: String, context: Context, listed: Boolean) {
         if (song.isBlank()) return
         val appContext = context.applicationContext
         if (webPlaybackActive()) return
+        if (!com.music.spotui.data.preferences.isPreloadEnabled(appContext)) return
         if (!prefetchInFlight.add(song)) return
         scope.launch {
             try {
                 prefetchSemaphore.withPermit {
+                    if (listed && song !in prefetchTargets) return@withPermit
                     // Prioritize the current track. Prefetch is never allowed to
                     // compete with stream resolution during a cold start/transition.
                     kotlinx.coroutines.delay(500L)
@@ -1191,7 +1202,13 @@ object SongPlayer {
         withTimeoutOrNull(timeoutMs) {
             while (true) {
                 val ready = withContext(Dispatchers.Main) {
-                    player?.playbackState == androidx.media3.common.Player.STATE_READY && !playbackResolving
+                    val p = player
+                    val state = p?.playbackState
+                    val hasActiveMedia = p?.currentMediaItem != null &&
+                        state != androidx.media3.common.Player.STATE_IDLE && state != androidx.media3.common.Player.STATE_ENDED
+                    com.music.spotui.audio.PlaybackLoadingPolicy.canPreload(
+                        playbackResolving, hasActiveMedia, state == androidx.media3.common.Player.STATE_READY
+                    )
                 }
                 if (ready) return@withTimeoutOrNull true
                 delay(200L)
@@ -1291,73 +1308,59 @@ object SongPlayer {
             val spec = androidx.media3.datasource.DataSpec.Builder()
                 .setUri(android.net.Uri.parse(url))
                 .setKey(stableKey)
-                .setLength(768L * 1024L) // Initial bytes only, NOT the entire track.
+                .setLength(if (qualityCache[query].orEmpty().contains("FLAC", true)) 512L * 1024L else 256L * 1024L) // Intro only; free the preload slot sooner.
                 .build()
             androidx.media3.datasource.cache.CacheWriter(ds, spec, null, null).cache()
         }.onFailure { Log.d(TAG, "intro preload skipped: ${it.message}") }
     }
 
-    private val inFlightResolutions = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<String?>>()
+    private val streamResolutions = com.music.spotui.util.SharedWork<String, String?>(scope)
 
     internal suspend fun resolveStreamUrl(song: String, appContext: Context, forPlayback: Boolean = false): String? {
         if (song.startsWith("content://") || song.startsWith("file://")) {
             if (forPlayback) {
                 currentSource = "Local file"
-                currentQuality = song.substringBefore('?').substringAfterLast('.', "")
-                    .uppercase().takeIf { it.length in 2..5 }.orEmpty()
+                currentQuality = song.substringBefore('?').substringAfterLast('.', "").uppercase().takeIf { it.length in 2..5 }.orEmpty()
             }
             return song
         }
-
-        val existingDeferred = inFlightResolutions[song]
-        if (existingDeferred != null && existingDeferred.isActive) {
-            val trackMeta = metadataRegistry[song]
-            val fallbackSong = boundState?.queue?.value?.firstOrNull { it.url == song }
-            val logArtist = trackMeta?.artist ?: fallbackSong?.singer ?: metaArtist
-            val logTitle = trackMeta?.title ?: fallbackSong?.title ?: cleanTrackTitle(song, logArtist)
-            if (forPlayback) {
-                logResolution("Awaiting in-flight background resolution for '$logTitle'...")
-                updateResolveStatus(true, "Resolving stream...")
-            }
-            val result = runCatching { existingDeferred.await() }.getOrNull()
-            if (result != null) {
-                if (forPlayback) {
-                    val source = sourceCache[song] ?: "Lossless"
-                    val quality = qualityCache[song] ?: ""
-                    currentSource = source
-                    currentQuality = quality
-                    val note = if (quality.isNotBlank()) "Source: $source • Format: $quality" else "Source: $source"
-                    boundState?.updateResolveDetailNote(note)
-                    updateResolveStatus(false)
-                }
-                return result
-            }
-        }
-
         val startedAtMs = android.os.SystemClock.elapsedRealtime()
-        val deferred = scope.async {
+        suspend fun resolve(): String? {
             var attempt = 0
-            var res: String? = null
             val maxAttempts = if (forPlayback) 3 else 1
-            while (attempt < maxAttempts && res == null && isActive) {
-                if (attempt > 0) {
-                    acquireWakeLock(appContext, "spotui:retry_resolve", 15_000L)
-                    logResolution("Transient resolution issue, retrying (attempt ${attempt + 1}/$maxAttempts)...")
-                    kotlinx.coroutines.delay(1000L * attempt)
-                }
-                res = runCatching { doResolveStreamUrl(song, appContext, forPlayback) }.getOrNull()
+            while (attempt < maxAttempts) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                val retry = attempt > 0
+                if (retry) acquireWakeLock(appContext, "spotui:retry_resolve", 15_000L)
+                val value = try {
+                    if (retry) delay(1000L * attempt)
+                    doResolveStreamUrl(song, appContext, forPlayback)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    Log.w(TAG, "Stream resolution attempt failed", failure)
+                    null
+                } finally { if (retry) releaseWakeLock("spotui:retry_resolve") }
+                if (value != null) return value
                 attempt++
             }
-            res
+            return null
         }
-        inFlightResolutions[song] = deferred
         try {
-            return deferred.await()
+            val shared = streamResolutions.result(song) { resolve() }
+            // A foreground request may inherit a one-attempt speculative miss.
+            val value = shared.value ?: if (forPlayback && shared.reused) streamResolutions.await(song) { resolve() } else null
+            if (value != null && forPlayback && currentRequest == song) {
+                sourceCache[song]?.let { source ->
+                    currentSource = source
+                    currentQuality = qualityCache[song].orEmpty()
+                    boundState?.updateResolveDetailNote("Source: $source • Format: $currentQuality")
+                }
+                updateResolveStatus(false)
+            }
+            return value
         } finally {
-            Log.i("SpotuiStartup", "resolution total=${android.os.SystemClock.elapsedRealtime() - startedAtMs}ms " +
-                "type=${if (song.startsWith("yt_ep:")) "podcast" else "music"} " +
-                "cached=${streamCache.containsKey(song)}")
-            inFlightResolutions.remove(song, deferred)
+            Log.i("SpotuiStartup", "resolution total=${android.os.SystemClock.elapsedRealtime() - startedAtMs}ms cached=${streamCache.containsKey(song)}")
         }
     }
 
@@ -2589,37 +2592,21 @@ object SongPlayer {
     // every candidate, scoring rule, filter and order still see the SAME hits.
     // An in-flight search may be shared by multiple callers (e.g. album / queue),
     // avoiding duplicate network requests and rate-limit contention.
-    private val rawYtSearchCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<SongItem>>>()
-    private val rawYtSearchInFlight = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<List<SongItem>>>()
-    private val rawYtSearchLock = Any()
-    private const val RAW_YT_SEARCH_TTL_MS = 75_000L
+    private val rawYtSearchCache = com.music.spotui.util.ExpiringLruCache<String, List<SongItem>>(128, 75_000L)
+    private val rawYtSearchWork = com.music.spotui.util.SharedWork<String, List<SongItem>>(scope)
 
     private suspend fun sharedYouTubeSearch(q: String, filter: YouTube.SearchFilter): List<SongItem> {
         val key = "${filter.value}|$q"
-        val now = android.os.SystemClock.elapsedRealtime()
-        rawYtSearchCache[key]?.takeIf { now - it.first in 0L..RAW_YT_SEARCH_TTL_MS }
-            ?.let { return it.second }
-        val deferred = synchronized(rawYtSearchLock) {
-            rawYtSearchInFlight[key] ?: scope.async {
-                val result = YouTube.search(q, filter)
-                    .onFailure { Log.w(TAG, "YouTube search failed for $q", it) }
-                    .getOrNull()?.items?.filterIsInstance<SongItem>().orEmpty()
-                if (result.isNotEmpty()) {
-                    val timestamp = android.os.SystemClock.elapsedRealtime()
-                    if (rawYtSearchCache.size > 100) {
-                        rawYtSearchCache.entries.removeIf {
-                            timestamp - it.value.first > RAW_YT_SEARCH_TTL_MS
-                        }
-                    }
-                    rawYtSearchCache[key] = timestamp to result
-                }
-                result
-            }.also { created ->
-                rawYtSearchInFlight[key] = created
-                created.invokeOnCompletion { rawYtSearchInFlight.remove(key, created) }
-            }
+        rawYtSearchCache.get(key)?.let { return it }
+        return rawYtSearchWork.await(key) {
+            rawYtSearchCache.get(key)?.let { return@await it }
+            val result = YouTube.search(q, filter)
+                .onFailure { Log.w(TAG, "YouTube search failed for $q", it) }
+                .getOrNull()?.items?.filterIsInstance<SongItem>().orEmpty()
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (result.isNotEmpty()) rawYtSearchCache.put(key, result)
+            result
         }
-        return deferred.await()
     }
 
     private suspend fun resolveVideoCandidates(
@@ -2695,15 +2682,16 @@ object SongPlayer {
         // trigger rate limits. Start them concurrently only if the first stage fails.
         val combined = filter == YouTube.SearchFilter.FILTER_SONG
         val videoSearches = HashMap<String, kotlinx.coroutines.Deferred<List<SongItem>>>()
+        val primarySearches = HashMap<String, kotlinx.coroutines.Deferred<List<SongItem>>>()
 
         suspend fun searchHits(q: String, f: YouTube.SearchFilter): List<SongItem> =
             sharedYouTubeSearch(q, f)
 
-        val (_, plan, hits) = kotlinx.coroutines.supervisorScope {
-            val searches = HashMap<String, kotlinx.coroutines.Deferred<List<SongItem>>>()
+        val (_, plan, initialHits) = try { kotlinx.coroutines.supervisorScope {
+            val searches = primarySearches
             fun primaryQueries(p: VideoSearchPlan) = if (combined) p.queries else p.videoQueries
             fun launchPlan(p: VideoSearchPlan) {
-                primaryQueries(p).forEach { q -> if (q !in searches) searches[q] = async { searchHits(q, filter) } }
+                primaryQueries(p).forEach { q -> if (q !in searches) searches[q] = scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) { searchHits(q, filter) } }
                 if (combined) {
                     p.videoQueries.forEach { q ->
                         if (q !in videoSearches) videoSearches[q] = scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) { searchHits(q, YouTube.SearchFilter.FILTER_VIDEO) }
@@ -2714,9 +2702,10 @@ object SongPlayer {
             val metadataDeferred = async {
                 runCatching { ensureSpotifyMatchMetadata(query) }.getOrNull()
             }
-            searches[searchText] = async { searchHits(searchText, filter) }
+            searches[searchText] = scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) { searchHits(searchText, filter) }
+            searches.getValue(searchText).start()
             if (combined) videoSearches[searchText] = scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) { searchHits(searchText, YouTube.SearchFilter.FILTER_VIDEO) }
-            // Speculative start from the metadata we already have; unused ones are cancelled below.
+            // Prepare alternatives from known metadata without starting redundant requests.
             launchPlan(buildPlan(null))
 
             val metadataWaitStarted = android.os.SystemClock.elapsedRealtime()
@@ -2728,12 +2717,17 @@ object SongPlayer {
             videoSearches.entries.filter { it.key !in finalPlan.videoQueries }.forEach { it.value.cancel() }
 
             val searchWaitStarted = android.os.SystemClock.elapsedRealtime()
-            val allHits = primaryQueries(finalPlan)
+            val allHits = primaryQueries(finalPlan).take(1)
                 .flatMap { q -> searches.getValue(q).await() }
                 .distinctBy { it.id }
             if (forPlayback) Log.i("SpotuiStartup", "ytSearch networkGate=${android.os.SystemClock.elapsedRealtime() - searchWaitStarted}ms queries=${primaryQueries(finalPlan).size}")
             Triple(exactMeta, finalPlan, allHits)
+        } } catch (failure: Exception) {
+            primarySearches.values.forEach { it.cancel() }
+            videoSearches.values.forEach { it.cancel() }
+            throw failure
         }
+        var hits = initialHits
         val searchQueries = plan.queries
         val targetAlbum: String? = plan.album
         val targetArtist: String? = plan.artist
@@ -2741,10 +2735,10 @@ object SongPlayer {
         val queuedSong = boundState?.queue?.value?.firstOrNull { it.url == query }
         val wantSec: Int? = durationRegistry[query]?.let { it / 1000 }
             ?: queuedSong?.durationMs?.toLong()?.takeIf { it > 0 }?.let { (it / 1000).toInt() }
-        Log.w(TAG, "MATCH '$query': ${hits.size} raw hits from ${searchQueries.size} parallel queries (+${videoSearches.size} video-filter queries)")
+        Log.w(TAG, "MATCH '$query': ${hits.size} raw hits; ${searchQueries.size} available queries (+${videoSearches.size} video-filter queries)")
         logResolution("MATCH '$query': ${hits.size} raw hits")
 
-        class Evaluation(val ids: List<String>, val loose: SongItem?)
+        class Evaluation(val ids: List<String>, val loose: SongItem?, val exactFastPath: Boolean = false)
 
         fun evaluate(
             hits: List<SongItem>,
@@ -2781,6 +2775,7 @@ object SongPlayer {
             Log.d(TAG, "--------------------------------------------------")
             logResolution("▶ MATCHING target='${target.baseKey}' by '$primaryArtistKey' (want ${wantSec}s)")
 
+            val exactCandidates = HashSet<String>()
             val scored = ArrayList<MatchCandidate>()
             // Same artist + same title but failing flags/duration: only usable as a last resort on video search.
             val looseMatches = ArrayList<SongItem>()
@@ -2970,6 +2965,11 @@ object SongPlayer {
                 Log.d(TAG, "  -> '${item.title}' by ${item.artists.joinToString { it.name }} | album='${candAlbumName ?: ""}' | ${itemDur}s | explicit=${item.explicit}")
                 Log.d(TAG, "     artist=${if (artistExact) "exact" else if (artistPartial) "partial" else "no"} extraArtists=$candExtraArtists feat=$candHasFeat titleEq=$titleEq flags=$candFlags recordingFlags=$candRecordingFlags recordingEq=$recordingFlagsEq durDiff=$durDiff albumEq=$albumEq ytType=${item.musicVideoType} ugc=$isUgcUpload officialType=$isOfficialMusicType officialTitle=$hasOfficialTitleMarker -> stage=$stage score=$score")
                 if (stage < 99) {
+                    if (filter == YouTube.SearchFilter.FILTER_SONG && com.music.spotui.audio.PlaybackLoadingPolicy.exactCandidate(
+                            stage, artistExact, cand.baseKey.isNotEmpty() && cand.baseKey == target.baseKey,
+                            candRecordingFlags == targetRecordingFlags && editSubtypeEq,
+                            albumEq, strongAlbumEq, explicitMatch && wantExplicit != null, durDiff,
+                            isOfficialMusicType, isUgcUpload)) exactCandidates.add(item.id)
                     scored.add(MatchCandidate(item, stage, score, index))
                     logResolution("  -> '${item.title}' (${itemDur}s) -> stage $stage, score $score")
                 }
@@ -2987,7 +2987,7 @@ object SongPlayer {
                 Log.w(TAG, "✅ WINNER: '${best.item.title}' (stage $bestStage, score ${best.score}, ID: ${best.item.id})")
                 Log.d(TAG, "==================================================")
 
-                return Evaluation(chosen.map { it.item.id }.distinct(), null)
+                return Evaluation(chosen.map { it.item.id }.distinct(), null, best.item.id in exactCandidates)
             }
 
             if (forPlayback) logResolution("YouTube: no candidate matched (${hits.size} hits, want ${wantSec}s, album '${targetAlbum ?: ""}')")
@@ -3005,6 +3005,12 @@ object SongPlayer {
         }
 
         suspend fun decide(): List<String> {
+            val first = if (hits.isNotEmpty()) evaluate(hits, filter) else Evaluation(emptyList(), null)
+            if (first.exactFastPath) return cacheAndReturn(first.ids)
+            // Ambiguous/missing first results still run the complete original plan and ranking.
+            val remainingQueries = if (combined) plan.queries else plan.videoQueries
+            remainingQueries.forEach { primarySearches.getValue(it).start() }
+            hits = remainingQueries.flatMap { primarySearches.getValue(it).await() }.distinctBy { it.id }
             val primary = if (hits.isNotEmpty()) evaluate(hits, filter) else Evaluation(emptyList(), null)
             if (primary.ids.isNotEmpty()) return cacheAndReturn(primary.ids)
 
@@ -3042,16 +3048,13 @@ object SongPlayer {
             return emptyList()
         }
 
-        if (hits.isEmpty() && videoSearches.isEmpty()) {
-            Log.w(TAG, "resolveVideoId: no YouTube song results for queries: $searchQueries")
-            return emptyList()
-        }
         return try {
             decide().also { result ->
                 Log.i("SpotuiStartup", "ytCandidates total=${android.os.SystemClock.elapsedRealtime() - matchStartedAt}ms " +
                     "matches=${result.size} primaryHits=${hits.size} queries=${searchQueries.size}")
             }
         } finally {
+            primarySearches.values.forEach { it.cancel() }
             videoSearches.values.forEach { it.cancel() }
         }
     }

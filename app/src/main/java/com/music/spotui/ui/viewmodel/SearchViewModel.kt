@@ -36,6 +36,10 @@ class SearchViewModel @Inject constructor(private val repository: AppRepository,
     }
 
     private var searchJob: Job? = null
+    private data class SearchKey(val query: String, val podcasts: Boolean)
+    private val recentSearches = com.music.spotui.util.ExpiringLruCache<SearchKey, SearchResults>(24, 60_000L)
+    @Volatile private var searchGeneration = 0L
+    private var activeSearch: SearchKey? = null
 
     init {
         // Start empty — results come from live searches, not the rate-limited
@@ -71,17 +75,46 @@ class SearchViewModel @Inject constructor(private val repository: AppRepository,
         currentSongState.updateSongState(coverUri, title, singer, playingState, songId, songIndex, album)
     }
 
-    fun search(query: String) {
+    @Synchronized
+    fun search(query: String, includePodcasts: Boolean = true) {
+        val canonical = query.trim().replace(Regex("\\s+"), " ")
+        val key = SearchKey(canonical.lowercase(java.util.Locale.ROOT), includePodcasts)
+        if (key == activeSearch && searchJob?.isActive == true) return
         searchJob?.cancel()
+        val generation = ++searchGeneration
+        activeSearch = key
+        if (canonical.isBlank()) {
+            _results.value = Response.Success(SearchResults())
+            _songs.value = Response.Success(emptyList())
+            return
+        }
+        val cached = recentSearches.get(key) ?: if (!includePodcasts) recentSearches.get(key.copy(podcasts = true)) else null
+        if (cached != null) {
+            _results.value = Response.Success(cached)
+            _songs.value = Response.Success(cached.songs)
+            return
+        }
+        _results.value = Response.Loading(SearchResults())
+        _songs.value = Response.Loading(emptyList())
         searchJob = viewModelScope.launch(Dispatchers.IO) {
-            delay(150) // short debounce for snappy real-time results
-            repository.searchEverything(query).collect { result ->
-                _results.value = result
-                // Keep the legacy songs flow in sync for any remaining consumers.
-                _songs.value = when (result) {
-                    is Response.Success -> Response.Success(result.data.songs)
-                    is Response.Error -> Response.Error(result.error)
-                    is Response.Loading -> Response.Loading()
+            delay(150)
+            repository.searchEverything(canonical, includePodcasts).collect { result ->
+                // Publish atomically with query changes, even when a provider returns late.
+                synchronized(this@SearchViewModel) {
+                    if (generation != searchGeneration) return@synchronized
+                    _results.value = result
+                    _songs.value = when (result) {
+                        is Response.Success -> {
+                            val data = result.data
+                            // Don't cache empty/error-like responses or podcast-only partial failures.
+                            if (data.songs.isNotEmpty() || data.albums.isNotEmpty() || data.artists.isNotEmpty() || data.playlists.isNotEmpty()) {
+                                recentSearches.put(key, data)
+                            }
+                            Response.Success(data.songs)
+                        }
+                        is Response.Error -> Response.Error(result.error)
+                        is Response.Loading -> Response.Loading(result.partialData?.songs)
+                    }
                 }
             }
         }

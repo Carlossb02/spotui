@@ -184,6 +184,7 @@ fun SumUpAlbumScreen(
     // (near-)instantly instead of resolving YouTube on the tap.
     LaunchedEffect(albumSongs) {
         if (albumSongs.isNotEmpty()) {
+            SongPlayer.registerTracksForResolution(albumSongs.take(4))
             SongPlayer.prefetchList(albumSongs.map { it.url }, context)
         }
     }

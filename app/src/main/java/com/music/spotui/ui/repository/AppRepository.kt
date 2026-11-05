@@ -15,7 +15,7 @@ class AppRepository @Inject constructor(private val api : Api) {
 
     suspend fun searchSongs(query: String) = api.searchTracks(query)
 
-    suspend fun searchEverything(query: String) = api.searchEverything(query)
+    suspend fun searchEverything(query: String, includePodcasts: Boolean = true) = api.searchEverything(query, includePodcasts)
 
     suspend fun provideAlbumSongs(albumName: String, artist: String = "") = api.getAlbumSongs(albumName, artist)
 
