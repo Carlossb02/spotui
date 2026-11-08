@@ -299,16 +299,14 @@ class PlaybackService : MediaLibraryService() {
                     RepeatMode.ONE -> {
                         val p = SongPlayer.exoPlayer
                         if (p != null) {
+                            SongPlayer.repeatListeningSession()
                             p.seekTo(0)
                             p.play()
                         } else {
                             val queue = currentSongState.queue.value
                             if (queue.isNotEmpty()) {
                                 val curId = currentSongState.songId.value
-                                val cur = queue.indexOfFirst { it.id == curId }
-                                    .takeIf { it >= 0 }
-                                    ?: queue.indexOfFirst { it.url == currentSongState.songUrl.value }.takeIf { it >= 0 }
-                                    ?: currentSongState.songIndex.value.coerceIn(0, queue.size - 1)
+                                val cur = currentSongState.currentQueueIndex().coerceIn(0, queue.size - 1)
                                 val song = queue[cur]
                                 SongPlayer.playSong(song.url, applicationContext, "song/${song.id}")
                             }
@@ -323,10 +321,7 @@ class PlaybackService : MediaLibraryService() {
                         val queue = currentSongState.queue.value
                         if (queue.isNotEmpty()) {
                             val curId = currentSongState.songId.value
-                            val cur = queue.indexOfFirst { it.id == curId }
-                                .takeIf { it >= 0 }
-                                ?: queue.indexOfFirst { it.url == currentSongState.songUrl.value }.takeIf { it >= 0 }
-                                ?: currentSongState.songIndex.value.coerceIn(0, queue.size - 1)
+                            val cur = currentSongState.currentQueueIndex().coerceIn(0, queue.size - 1)
                             if (cur < queue.size - 1) {
                                 advance(forward = true)
                             }
@@ -355,6 +350,7 @@ class PlaybackService : MediaLibraryService() {
             // on-screen play button stays in sync when the notification controls are used.
             // Ignore transient stops/pauses from the outgoing player during an active crossfade.
             if (SongPlayer.isCrossfadeActive()) return
+            SongPlayer.recordAudibleState(isPlaying)
             if (!isPlaying && SongPlayer.isPreparingTrack()) return
             // Do not leak a manual wake lock across an entire playback session.
             if (!isPlaying) {
@@ -393,7 +389,7 @@ class PlaybackService : MediaLibraryService() {
             )
             val queue = currentSongState.queue.value
             val curId = currentSongState.songId.value
-            val cur = queue.indexOfFirst { it.id == curId }
+            val cur = currentSongState.currentQueueIndex()
             val songUrl = if (cur >= 0) queue[cur].url else currentSongState.songUrl.value
             
             val retries = errorRetryCounts[songUrl] ?: 0
@@ -485,7 +481,7 @@ class PlaybackService : MediaLibraryService() {
                 val savedQueue = com.music.spotui.data.preferences.loadLastQueue(applicationContext)
                 val restoredQueue = savedQueue.ifEmpty { listOf(savedSong) }
                 currentSongState.updateQueue(restoredQueue, isManualEdit = true)
-                val idx = restoredQueue.indexOfFirst { it.id == savedSong.id }.coerceAtLeast(0)
+                val idx = com.music.spotui.data.preferences.loadLastQueueIndex(applicationContext, restoredQueue, savedSong.id)
                 currentSongState.updateSongState(savedSong.coverUri, savedSong.title,
                     savedSong.singer, false, savedSong.id, idx, savedSong.album)
                 SongPlayer.setRestorePoint(savedSong.url, positionMs)
@@ -1185,7 +1181,8 @@ class PlaybackService : MediaLibraryService() {
             if (currentQueue.isNotEmpty()) {
                 val curId = currentSongState.songId.value
                     .takeIf { it != 0 } ?: persisted?.first?.id
-                val idx = currentQueue.indexOfFirst { it.id == curId }.coerceAtLeast(0)
+                val idx = currentSongState.currentQueueIndex().takeIf { it in currentQueue.indices }
+                    ?: com.music.spotui.data.preferences.loadLastQueueIndex(applicationContext, currentQueue, curId ?: 0)
                 val items = currentQueue.map { playable(it) }
                 val song = currentQueue[idx]
                 val position = if (currentSongState.queue.value.isNotEmpty())
@@ -1304,7 +1301,9 @@ class PlaybackService : MediaLibraryService() {
                                 singer = entry.singer,
                                 album = entry.album,
                                 coverUri = entry.image,
-                                url = entry.url
+                                url = entry.url,
+                                spotifyTrackId = entry.spotifyTrackId,
+                                durationMs = entry.durationMs.coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
                             )
                         }
                     registerTracks(NODE_RECENTS, recent)

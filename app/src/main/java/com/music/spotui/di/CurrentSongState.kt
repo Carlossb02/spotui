@@ -63,6 +63,47 @@ class CurrentSongState @Inject constructor() {
     )
     val sourceName: State<String> get() = _sourceName
 
+    private val queueOrder = PlaybackQueueOrder()
+
+    fun currentQueueIndex(): Int {
+        val q = _queue.value
+        val stored = _songIndex.value
+        return stored.takeIf { q.getOrNull(it)?.id == _songId.value }
+            ?: q.indexOfFirst { it.id == _songId.value }.takeIf { it >= 0 }
+            ?: q.indexOfFirst { it.url == _songUrl.value }.takeIf { it >= 0 } ?: -1
+    }
+
+    private fun persistQueue() {
+        com.music.spotui.data.preferences.saveLastQueue(com.music.spotui.MyApplication.instance,
+            _queue.value, queueOrder.originalSongs.ifEmpty { _queue.value }, queueOrder.manualIndices, _songIndex.value, queueOrder.originalIndices)
+    }
+
+    fun enqueue(songs: List<SongsModel>, next: Boolean = false) {
+        queueOrder.enqueue(songs, currentQueueIndex(), next)
+        _queue.value = queueOrder.songs
+        updateQueue(queueOrder.songs, isManualEdit = true)
+    }
+
+    fun moveQueueItem(from: Int, to: Int) {
+        val cur = currentQueueIndex()
+        queueOrder.move(from, to)
+        _songIndex.value = when {
+            cur == from -> to
+            from < cur && to >= cur -> cur - 1
+            from > cur && to <= cur -> cur + 1
+            else -> cur
+        }
+        updateQueue(queueOrder.songs, isManualEdit = true)
+    }
+
+    fun removeQueueItem(at: Int) {
+        val cur = currentQueueIndex()
+        if (at !in _queue.value.indices || at == cur) return
+        queueOrder.remove(at)
+        if (at < cur) _songIndex.value = cur - 1
+        updateQueue(queueOrder.songs, isManualEdit = true)
+    }
+
     fun updateQueue(
         songs: List<SongsModel>, isManualEdit: Boolean = false,
         startSongId: Int? = null, sourceName: String? = null,
@@ -75,24 +116,21 @@ class CurrentSongState @Inject constructor() {
         com.music.spotui.data.preferences.savePlaybackSource(
             com.music.spotui.MyApplication.instance, _sourceName.value
         )
-        var finalSongs = songs
-        if (shuffle.value && !isManualEdit) {
-            val curSong = songs.firstOrNull { it.id == startSongId } ?: songs.firstOrNull()
-            if (curSong != null) {
-                finalSongs = listOf(curSong) + songs.filter { it.id != curSong.id }.shuffled()
-            } else {
-                finalSongs = songs.shuffled()
-            }
-            unshuffledQueue = songs
-        } else if (isManualEdit && shuffle.value) {
-            val original = unshuffledQueue.orEmpty()
-            val byId = songs.associateBy { it.id }
-            val originalIds = original.map { it.id }.toSet()
-            unshuffledQueue = original.mapNotNull { byId[it.id] } + songs.filter { it.id !in originalIds }
-        } else if (!shuffle.value) {
-            unshuffledQueue = null
-        }
-        _queue.value = finalSongs
+        if (!isManualEdit) {
+            queueOrder.replace(songs, shuffle.value, startSongId)
+        } else if (_queue.value.isEmpty()) {
+            val app = com.music.spotui.MyApplication.instance
+            val persisted = com.music.spotui.data.preferences.loadLastQueue(app)
+            val restoring = songs.map { it.id to it.url } == persisted.map { it.id to it.url }
+            queueOrder.replace(songs, false,
+                restoredManual = if (restoring) com.music.spotui.data.preferences.loadManualQueueIndices(app) else emptySet(),
+                restoredOriginal = if (restoring) com.music.spotui.data.preferences.loadOriginalQueue(app) else songs,
+                restoredOriginalIndices = if (restoring) com.music.spotui.data.preferences.loadOriginalQueueIndices(app) else emptyList())
+            _songIndex.value = com.music.spotui.data.preferences.loadLastQueueIndex(
+                com.music.spotui.MyApplication.instance, songs,
+                com.music.spotui.data.preferences.loadLastPlayback(com.music.spotui.MyApplication.instance)?.first?.id ?: _songId.value)
+        } else queueOrder.reconcile(songs)
+        _queue.value = queueOrder.songs
         // Seed the lossless resolver: map each track's play query → its Spotify id so
         // SongPlayer can resolve a FLAC stream from a play site that only has the query.
         SongPlayer.registerLossless(songs.map { it.url to it.spotifyTrackId })
@@ -118,7 +156,7 @@ class CurrentSongState @Inject constructor() {
         // color-lyrics endpoint (exact synced lyrics) instead of LRCLIB matching.
         com.music.spotui.data.api.LyricsApi.registerTracks(songs)
         // Persist the current queue so a fresh launch can restore it.
-        com.music.spotui.data.preferences.saveLastQueue(com.music.spotui.MyApplication.instance, finalSongs, unshuffledQueue ?: finalSongs)
+        persistQueue()
     }
 
     fun updateTrackInQueue(targetSong: SongsModel, newTitle: String, newArtist: String, newAlbum: String, newCoverUri: String) {
@@ -162,62 +200,21 @@ class CurrentSongState @Inject constructor() {
     )
     val likeState = mutableStateOf(false)
 
-    // Original queue order, kept while shuffle is on so turning it off restores
-    // the list instead of leaving it permanently scrambled.
-    private var unshuffledQueue: List<SongsModel>? =
-        com.music.spotui.data.preferences.loadOriginalQueue(com.music.spotui.MyApplication.instance)
-            .takeIf { it.isNotEmpty() }
-
-    /**
-     * Toggling shuffle reorders the queue ONCE: the current track stays where it
-     * is and the rest follow in random order. (Skipping used to re-shuffle the
-     * whole list on every tap, which could repeat or skip songs.)
-     */
+    /** Shuffle changes the context order; manually queued requests keep their priority. */
     fun updateShuffleState(newShuffleState: Boolean) {
         if (newShuffleState == shuffle.value) return
+        _songIndex.value = queueOrder.shuffle(newShuffleState, currentQueueIndex())
+        _queue.value = queueOrder.songs
         shuffle.value = newShuffleState
-        com.music.spotui.data.preferences.saveShuffleEnabled(
-            com.music.spotui.MyApplication.instance, newShuffleState
-        )
-        val q = _queue.value
-        if (newShuffleState) {
-            unshuffledQueue = q
-            val curId = _songId.value
-            val curSong = q.firstOrNull { it.id == curId }
-            if (curSong != null) {
-                _queue.value = listOf(curSong) + q.filter { it.id != curId }.shuffled()
-                _songIndex.value = 0
-            } else {
-                _queue.value = q.shuffled()
-            }
-        } else {
-            val original = unshuffledQueue
-            if (original != null) {
-                _queue.value = original
-                val curIdx = original.indexOfFirst { it.id == _songId.value }
-                if (curIdx >= 0) _songIndex.value = curIdx
-                unshuffledQueue = null
-            }
-        }
-        com.music.spotui.data.preferences.saveLastQueue(com.music.spotui.MyApplication.instance, _queue.value, unshuffledQueue ?: _queue.value)
+        com.music.spotui.data.preferences.saveShuffleEnabled(com.music.spotui.MyApplication.instance, newShuffleState)
+        persistQueue()
     }
 
-    /**
-     * Starts shuffled playback of a full list (the shuffle button on
-     * playlist/album/liked screens): the queue becomes a freshly shuffled copy
-     * starting with a new random track, shuffle turns on, and the caller plays it.
-     */
     fun startShuffled(songs: List<SongsModel>, sourceName: String? = null): SongsModel? {
         if (songs.isEmpty()) return null
-        val shuffled = songs.shuffled()
-        unshuffledQueue = songs
         shuffle.value = true
-        com.music.spotui.data.preferences.saveShuffleEnabled(
-            com.music.spotui.MyApplication.instance, true
-        )
-        updateQueue(shuffled, isManualEdit = true, sourceName = sourceName ?: songs.firstOrNull()?.album.orEmpty())
-        // updateQueue on a manually ordered queue otherwise overwrites this.
-        unshuffledQueue = songs
+        com.music.spotui.data.preferences.saveShuffleEnabled(com.music.spotui.MyApplication.instance, true)
+        updateQueue(songs, startSongId = songs.random().id, sourceName = sourceName)
         return _queue.value.firstOrNull()
     }
     fun updateRepeatState(newRepeatState : RepeatMode){
@@ -310,6 +307,13 @@ class CurrentSongState @Inject constructor() {
     }
 
     fun updateSongState(coverUri: String, title: String, singer: String, playingState: Boolean, songId : Int, songIndex : Int, album : String, artistIds: String = "") {
+        val requestedIndex = songIndex.takeIf { _queue.value.getOrNull(it)?.id == songId }
+            ?: _queue.value.indexOfFirst { it.id == songId }
+        val actualIndex = queueOrder.select(requestedIndex, currentQueueIndex())
+        val queueChanged = _queue.value != queueOrder.songs
+        if (queueChanged) {
+            _queue.value = queueOrder.songs
+        }
         _coverUri.value = coverUri
         _title.value = title
         _album.value = _queue.value.firstOrNull { it.id == songId }?.album ?: album
@@ -325,9 +329,10 @@ class CurrentSongState @Inject constructor() {
         _playingState.value = playingState
         _playGen++
         if (playingState) _lastPlayGen = _playGen
-        val actualIndex = _queue.value.indexOfFirst { it.id == songId }
         _songIndex.value = if (actualIndex >= 0) actualIndex else songIndex
         _songId.value = songId
+        _queue.value.getOrNull(_songIndex.value)?.let { com.music.spotui.data.api.LibraryContentMemory.register(com.music.spotui.MyApplication.instance, it) }
+        if (queueChanged) persistQueue() else com.music.spotui.data.preferences.saveLastQueueCursor(com.music.spotui.MyApplication.instance, _songIndex.value)
         // Feed the system media notification (MediaSession) with the current track.
         SongPlayer.setNowPlayingMeta(title, singer, coverUri)
         // Persist the current track so a fresh launch can restore the session.
@@ -354,24 +359,7 @@ class CurrentSongState @Inject constructor() {
                     track.title, track.singer, track.album, track.durationMs / 1000, track.spotifyTrackId
                 )
             }
-            // Resolve the play-query URL for this track so tapping it in history
-            // can re-play it.  Falls back to the stored URL (set by SongPlayer)
-            // or an empty string for tracks played before this field was added.
-            val trackUrl = _queue.value.firstOrNull { it.id == songId }?.url
-                ?: _songUrl.value
-            // Log the play into the local listening history (History & stats screen).
-            com.music.spotui.data.preferences.addListeningHistory(
-                com.music.spotui.MyApplication.instance,
-                com.music.spotui.data.preferences.HistoryEntry(
-                    ts = System.currentTimeMillis(),
-                    songId = songId,
-                    title = title,
-                    singer = singer,
-                    album = album,
-                    image = coverUri,
-                    url = trackUrl,
-                ),
-            )
+
         }
     }
 }

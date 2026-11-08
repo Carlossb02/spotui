@@ -57,6 +57,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
@@ -133,12 +135,9 @@ fun ExplicitBadge(
 
 @Composable
 private fun MiniOutputRouteButton(onClick: () -> Unit, size: Dp = 36.dp) {
-    val bluetooth by AudioDeviceHelper.bluetoothRouteActiveState
     androidx.compose.material3.IconButton(onClick = onClick, modifier = Modifier.size(size)) {
-        Icon(
-            painter = painterResource(id = R.drawable.ic_devices),
+        AudioOutputIcon(
             contentDescription = "Seleccionar dispositivo de salida",
-            tint = if (bluetooth) Color(0xFF1ED760) else Color.White,
             modifier = Modifier.size(19.dp)
         )
     }
@@ -209,6 +208,7 @@ fun MiniPlayer(
         isLiked = isSongLiked(context, songId.toString())
     }
     val currentTrack = miniPlayerViewModel.queue.value.firstOrNull { it.id == songId }
+    val isSaved = rememberTrackSaved(currentTrack, isLiked)
     var showSavedIn by remember { mutableStateOf(false) }
     var showDevicesSheet by remember { mutableStateOf(false) }
     // Reuse the full player's output selector. A route update is event-driven,
@@ -300,8 +300,8 @@ fun MiniPlayer(
                 androidx.compose.material3.IconButton(
                     onClick = { showSavedIn = true }, modifier = Modifier.size(42.dp)
                 ) {
-                    Icon(if (isLiked) Icons.Default.CheckCircle else Icons.Default.AddCircleOutline,
-                        contentDescription = "Guardar canción", tint = if (isLiked) Color(0xFF1ED760) else Color.White,
+                    Icon(if (isSaved) Icons.Default.CheckCircle else Icons.Default.AddCircleOutline,
+                        contentDescription = "Guardar canción", tint = if (isSaved) Color(0xFF1ED760) else Color.White,
                         modifier = Modifier.size(23.dp))
                 }
                 androidx.compose.material3.IconButton(
@@ -548,7 +548,7 @@ fun MiniPlayer(
 
                 // Plus = save; green check = already saved. A second tap opens the
                 // "Saved in" sheet (Liked Songs + playlists) instead of unliking.
-                if (isLiked) {
+                if (isSaved) {
                     Icon(
                         imageVector = Icons.Default.CheckCircle,
                         tint = Color(0xFF1ED760),
@@ -768,6 +768,11 @@ fun SwipeToPlayNextWrapper(
                 contentAlignment = Alignment.CenterStart,
                 modifier = Modifier
                     .fillMaxSize()
+                    .drawWithContent {
+                        val revealed = runCatching { dismissState.requireOffset() }.getOrDefault(0f)
+                            .coerceIn(0f, size.width)
+                        if (revealed > 0f) clipRect(right = revealed) { this@drawWithContent.drawContent() }
+                    }
                     .background(Color(0xFF1DB954)) // Spotify Green
                     .padding(horizontal = 24.dp)
             ) {

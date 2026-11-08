@@ -37,6 +37,8 @@ class AppRepository @Inject constructor(private val api : Api) {
     fun providePodcastFeedFlow(forceRefresh: Boolean = false) =
         com.music.spotui.providers.PodcastProvider.getYouTubePodcastsFeedFlow(forceRefresh)
 
+    fun cachedLibraryEntries() = api.cachedLibraryEntries()
+
     suspend fun provideLibrary() = api.getLibrary()
 
     suspend fun provideFollowedArtists() = api.getFollowedArtists()
@@ -44,6 +46,11 @@ class AppRepository @Inject constructor(private val api : Api) {
     suspend fun provideCategoryPlaylists(genre: String) = api.getCategoryPlaylists(genre)
 
     suspend fun provideRecommendations(seedTrackIds: List<String>) = api.getRecommendations(seedTrackIds)
+
+    fun cachedLikedSongs() = api.cachedCollectionSongs("liked")
+    fun cachedCollectionSongs(key: String) = api.cachedCollectionSongs(key)
+    fun storedFollowedArtists() = api.storedFollowedArtists()
+    val libraryContentRevision get() = api.contentRevision
 
     suspend fun provideLikedSongs() = api.getLikedSongs()
 

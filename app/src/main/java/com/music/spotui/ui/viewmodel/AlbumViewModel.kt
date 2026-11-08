@@ -67,7 +67,7 @@ class AlbumViewModel @Inject constructor(private val repository: AppRepository, 
         albumKey = key
         albumLoadJob?.cancel()
         _albumDetail.value = null
-        _songs.value = Response.Loading()
+        _songs.value = repository.cachedCollectionSongs("album:$name|$artist")?.let { Response.Success(it) } ?: Response.Loading()
         albumLoadJob = viewModelScope.launch(Dispatchers.IO) {
             repository.provideAlbumSongs(name, artist).collect { songs ->
                 if (albumKey != key) return@collect

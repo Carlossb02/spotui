@@ -63,5 +63,6 @@ object PlaylistAdditionsPref {
         }
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
             .putString(playlistId, arr.toString()).apply()
+        com.music.spotui.data.api.SavedTrackLibrary.localChanged(context)
     }
 }

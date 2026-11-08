@@ -1,81 +1,43 @@
 package com.music.spotui.ui.components
 
-import com.music.spotui.util.uiLocalized
-
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.PhoneAndroid
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bumptech.glide.integration.compose.ExperimentalGlideComposeApi
 import com.bumptech.glide.integration.compose.GlideImage
 import com.bumptech.glide.integration.compose.placeholder
-import com.metrolist.spotify.Spotify
-import com.metrolist.spotify.models.SpotifyPlaylist
 import com.music.spotui.R
 import com.music.spotui.data.api.Api
+import com.music.spotui.data.api.SavedTrackLibrary
 import com.music.spotui.data.api.SpotifySync
+import com.music.spotui.data.entity.SavedPlaylist
 import com.music.spotui.data.entity.SongsModel
-import com.music.spotui.data.preferences.LocalPlaylist
-import com.music.spotui.data.preferences.LocalPlaylistPref
-import com.music.spotui.data.preferences.addLikedSongId
-import com.music.spotui.data.preferences.isSongLiked
-import com.music.spotui.data.preferences.removeLikedSongId
-import kotlinx.coroutines.Dispatchers
+import com.music.spotui.data.preferences.*
+import com.music.spotui.util.uiLocalized
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 private val SpotifyGreen = Color(0xFF1ED760)
 
-/**
- * Spotify-style "Saved in" sheet: Liked Songs plus local playlists and Spotify user playlists.
- * Allows toggling tracks into/out of playlists and creating new local playlists stored on device.
- */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalGlideComposeApi::class)
 @Composable
 fun SavedInSheet(
@@ -84,328 +46,144 @@ fun SavedInSheet(
     onDismiss: () -> Unit,
     onLikedChanged: (Boolean) -> Unit = {},
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val snapshot by SavedTrackLibrary.snapshot.collectAsState()
     var liked by remember(song.id, song.url) { mutableStateOf(isSongLiked(context, song.id.toString())) }
-    var localPlaylists by remember { mutableStateOf<List<LocalPlaylist>>(emptyList()) }
-    var remotePlaylists by remember { mutableStateOf<List<SpotifyPlaylist>?>(null) }
-    val writableRemoteIds = remember { mutableStateMapOf<String, Boolean>() }
-    // playlistId → does it contain this track (filled lazily/locally per row).
-    val membership = remember(song.id, song.url) { mutableStateMapOf<String, Boolean>() }
-    val membershipErrors = remember(song.id, song.url) { mutableStateMapOf<String, Boolean>() }
-    var libraryError by remember { mutableStateOf(false) }
+    var removeCandidate by remember { mutableStateOf<SavedPlaylist?>(null) }
+    var confirmUnlike by remember { mutableStateOf(false) }
+    val localPreview = remember(song.id, song.url) { mutableStateMapOf<String, Boolean>() }
     var creating by remember { mutableStateOf(false) }
-    var newName by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf("") }
+    val operations = remember(song.id, song.url) { mutableStateMapOf<String, Int>() }
     val scope = rememberCoroutineScope()
-    var isCreatingPlaylist by remember { mutableStateOf(false) }
-
-    LaunchedEffect(song.id, song.url) {
-        fun cleanId(id: String): String =
-            id.removePrefix("spotify:playlist:")
-              .removePrefix("playlist:")
-              .trim()
-
-        val locals = LocalPlaylistPref.getLocalPlaylists(context)
-            .distinctBy { cleanId(it.id).ifBlank { it.name.trim().lowercase() } }
-        localPlaylists = locals
-
-        val localIds = locals.map { cleanId(it.id) }.filter { it.isNotBlank() }.toSet()
-
-        val loaded = withContext(Dispatchers.IO) {
-            try {
-                SpotifySync.allLibraryPlaylists(context).filter { it.id.isNotBlank() }
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                null
-            }
-        }
-        libraryError = loaded == null
-        remotePlaylists = loaded.orEmpty().distinctBy { cleanId(it.id) }
-            .filterNot { cleanId(it.id) in localIds }
-    }
-
-    LaunchedEffect(remotePlaylists) {
-        val listings = remotePlaylists.orEmpty()
-        if (listings.isEmpty()) return@LaunchedEffect
-        val me = withContext(Dispatchers.IO) { Spotify.me().getOrNull()?.id.orEmpty() }
-        listings.forEach { pl ->
-            if (pl.owner?.id == me && me.isNotBlank()) writableRemoteIds[pl.id] = true
-            else launch {
-                val editable = com.music.spotui.data.api.PlaylistAccess.load(context, pl.id).canEdit
-                writableRemoteIds[pl.id] = editable
-            }
+    val trackId = SpotifySync.cleanTrackId(song.spotifyTrackId)
+    LaunchedEffect(song.id, song.url) { SavedTrackLibrary.ensureLoaded(context) }
+    val localOverrides = localPreview.toMap()
+    fun contains(list: SavedPlaylist) = localPreview[list.id]
+        ?: SavedTrackLibrary.snapshot.value.playlists.firstOrNull { it.id == list.id }?.contains(song)
+        ?: list.contains(song)
+    val saved = remember(snapshot, song, localOverrides) { snapshot.playlists.filter { contains(it) } }
+    val available = remember(snapshot, song, localOverrides) { snapshot.playlists.filterNot { contains(it) } }
+    LaunchedEffect(snapshot) {
+        localPreview.keys.toList().forEach { id ->
+            if (snapshot.playlists.firstOrNull { it.id == id }?.contains(song) == localPreview[id]) localPreview.remove(id)
         }
     }
 
-    fun createNow() {
-        val name = newName.trim().ifBlank { "My Playlist" }
-        isCreatingPlaylist = true
-        newName = ""
-        val created = LocalPlaylistPref.createPlaylist(context, name, song)
-        localPlaylists = LocalPlaylistPref.getLocalPlaylists(context)
-        membership[created.id] = true
-        Api.HomeCache.library = null
-        android.widget.Toast.makeText(context, "Playlist creada y guardada en Spotui", android.widget.Toast.LENGTH_SHORT).show()
-        creating = false
-        isCreatingPlaylist = false
+    fun toggleLiked() {
+        com.music.spotui.data.api.LibraryContentMemory.register(context, song)
+        liked = !liked
+        if (liked) addLikedSongId(context, song.id.toString()) else removeLikedSongId(context, song.id.toString())
+        SpotifySync.setTrackSaved(context, song.spotifyTrackId, liked)
+        onLikedChanged(liked)
     }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = Color(0xFF1A1A1A),
-    ) {
-        Column(modifier = Modifier.navigationBarsPadding()) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp, 4.dp, 20.dp, 12.dp),
-            ) {
-                Text(uiLocalized("Saved in"), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Text(
-                    uiLocalized("New playlist"),
-                    color = SpotifyGreen,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.clickable(
-                        enabled = !isCreatingPlaylist,
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                    ) { creating = true },
-                )
+    fun toggle(list: SavedPlaylist, removalConfirmed: Boolean = false) {
+        if (!list.checked) return
+        val contains = contains(list)
+        if (contains && !removalConfirmed) { removeCandidate = list; return }
+        if (list.local) {
+            localPreview[list.id] = !contains
+            if (contains) LocalPlaylistPref.removeSongFromPlaylist(context, list.id, song)
+            else LocalPlaylistPref.addSongToPlaylist(context, list.id, song)
+            Api.HomeCache.library = null
+        } else if (trackId.isNotBlank()) {
+            val operation = (operations[list.id] ?: 0) + 1
+            operations[list.id] = operation
+            val done: (Boolean) -> Unit = { ok -> scope.launch {
+                if (ok) {
+                    if (contains) PlaylistSyncedPendingPref.remove(context, list.id, trackId)
+                    else PlaylistSyncedPendingPref.addConfirmed(context, list.id, song.copy(spotifyTrackId = trackId))
+                } else if (operations[list.id] == operation) android.widget.Toast.makeText(context, "No se pudo guardar el cambio. Reinténtalo.", android.widget.Toast.LENGTH_SHORT).show()
+            }; Unit }
+            if (contains) SpotifySync.removeTrackFromPlaylist(context, list.id, trackId, done)
+            else SpotifySync.addTrackToPlaylist(context, list.id, trackId, done)
+        } else if (song.url.startsWith("yt_local:")) {
+            localPreview[list.id] = !contains
+            if (contains) PlaylistAdditionsPref.remove(context, list.id, song.url)
+            else PlaylistAdditionsPref.add(context, list.id, song)
+        }
+    }
+    @Composable fun likedRow() {
+        SavedInRow(uiLocalized("Canciones que te gustan"), uiLocalized("Tu colección de canciones"), liked, cover = {
+            Box(Modifier.size(48.dp).clip(RoundedCornerShape(6.dp))
+                .background(Brush.linearGradient(listOf(Color(0xFF4A39EA), Color(0xFF868AE1)))), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Favorite, null, tint = Color.White, modifier = Modifier.size(22.dp))
             }
-
+        }, onToggle = { if (liked) confirmUnlike = true else toggleLiked() })
+    }
+    @Composable fun playlistRow(list: SavedPlaylist) {
+        SavedInRow(list.name, when {
+            list.failed -> uiLocalized("No se pudo comprobar")
+            !list.checked -> uiLocalized("Tu playlist")
+            list.local -> uiLocalized("Playlist de este dispositivo")
+            else -> uiLocalized("Tu playlist")
+        }, saved = contains(list), isLocal = list.local,
+            enabled = list.checked && (list.local || trackId.isNotBlank() || song.url.startsWith("yt_local:")),
+            cover = {
+                GlideImage(model = list.coverUri, contentDescription = list.name,
+                    contentScale = ContentScale.Crop, failure = placeholder(R.drawable.placeholder), loading = placeholder(R.drawable.placeholder),
+                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(6.dp)))
+            }, onToggle = { toggle(list) })
+    }
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = Color(0xFF181818)) {
+        Column(Modifier.navigationBarsPadding()) {
+            Row(Modifier.fillMaxWidth().padding(20.dp, 4.dp, 20.dp, 16.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(uiLocalized("Guardar canción"), color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                Text(uiLocalized("Nueva playlist"), color = SpotifyGreen, modifier = Modifier.clickable { creating = !creating })
+            }
             if (creating) {
-                TextField(
-                    enabled = !isCreatingPlaylist,
-                    value = newName,
-                    onValueChange = { newName = it },
-                    singleLine = true,
-                    placeholder = { Text(uiLocalized("Playlist name"), color = Color.Gray) },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { createNow() }),
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = Color(0xFF2A2A2A),
-                        unfocusedContainerColor = Color(0xFF2A2A2A),
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        cursorColor = SpotifyGreen,
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent,
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp, 0.dp, 20.dp, 8.dp)
-                        .clip(RoundedCornerShape(8.dp)),
-                )
-                Row(modifier = Modifier.padding(20.dp, 4.dp, 20.dp, 12.dp)) {
-                    Text(
-                        if (isCreatingPlaylist) uiLocalized("Creating...") else uiLocalized("Create"),
-                        color = if (isCreatingPlaylist) Color.Gray else SpotifyGreen,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.clickable(
-                            enabled = !isCreatingPlaylist,
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) { createNow() },
-                    )
-                    Spacer(Modifier.width(24.dp))
-                    Text(
-                        uiLocalized("Cancel"),
-                        color = Color.Gray,
-                        fontSize = 14.sp,
-                        modifier = Modifier.clickable(
-                            enabled = !isCreatingPlaylist,
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) { creating = false; newName = "" },
-                    )
-                }
+                OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true,
+                    label = { Text(uiLocalized("Nombre de la playlist")) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp))
+                TextButton(onClick = {
+                    LocalPlaylistPref.createPlaylist(context, name.trim(), song)
+                    Api.HomeCache.library = null
+                    creating = false; name = ""
+                }, enabled = name.isNotBlank(), modifier = Modifier.padding(horizontal = 12.dp)) { Text(uiLocalized("Crear"), color = SpotifyGreen) }
             }
-
-            LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
-                if (libraryError) item {
-                    Text(
-                        uiLocalized("No se pudieron cargar las listas. Vuelve a abrir este panel para reintentar."),
-                        color = Color.Gray, modifier = Modifier.padding(16.dp),
-                    )
+            LazyColumn(Modifier.heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.65f).dp)) {
+                if (liked || saved.isNotEmpty()) {
+                    item(key = "saved_header") { Text(uiLocalized("Se ha guardado en:"), color = Color.White, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(20.dp, 8.dp)) }
+                    if (liked) item(key = "liked_saved") { likedRow() }
+                    items(saved, key = { "saved_${it.id}" }) { playlistRow(it) }
+                    item(key = "saved_divider") { HorizontalDivider(Modifier.padding(horizontal = 20.dp, vertical = 14.dp), color = Color(0xFF363636)) }
                 }
-                // ── Liked Songs ──
-                item {
-                    SavedInRow(
-                        name = "Liked Songs",
-                        subtitle = "Liked tracks",
-                        saved = liked,
-                        isLocal = false,
-                        cover = {
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(
-                                        Brush.linearGradient(listOf(Color(0xFF4A39EA), Color(0xFF868AE1)))
-                                    ),
-                            ) {
-                                Icon(Icons.Default.Favorite, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
-                            }
-                        },
-                    ) {
-                        liked = !liked
-                        if (liked) addLikedSongId(context, song.id.toString())
-                        else removeLikedSongId(context, song.id.toString())
-                        SpotifySync.setTrackSaved(context, song.spotifyTrackId, liked)
-                        onLikedChanged(liked)
+                item(key = "add_header") { Text(uiLocalized("Añadir a:"), color = Color(0xFFB3B3B3), fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(20.dp, 8.dp)) }
+                if (!liked) item(key = "liked_available") { likedRow() }
+                items(available, key = { "available_${it.id}" }) { playlistRow(it) }
+                if (snapshot.loading && snapshot.playlists.none { it.checked }) item(key = "loading") {
+                    Row(Modifier.padding(20.dp, 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(18.dp), color = SpotifyGreen, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(12.dp))
                     }
                 }
-
-                // ── Local Playlists ──
-                items(localPlaylists.size, key = { "local_${localPlaylists[it].id}_$it" }) { index ->
-                    val pl = localPlaylists[index]
-                    val saved = membership[pl.id] ?: LocalPlaylistPref.isSongInPlaylist(context, pl.id, song)
-                    SavedInRow(
-                        name = pl.name,
-                        subtitle = "${pl.songs.size} song" + (if (pl.songs.size == 1) "" else "s"),
-                        saved = saved,
-                        isLocal = true,
-                        cover = {
-                            GlideImage(
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(RoundedCornerShape(4.dp)),
-                                model = pl.coverUri,
-                                contentScale = ContentScale.Crop,
-                                failure = placeholder(R.drawable.placeholder),
-                                loading = placeholder(R.drawable.placeholder),
-                                contentDescription = "",
-                            )
-                        },
-                    ) {
-                        val isCurrentlySaved = membership[pl.id] ?: LocalPlaylistPref.isSongInPlaylist(context, pl.id, song)
-                        if (isCurrentlySaved) {
-                            LocalPlaylistPref.removeSongFromPlaylist(context, pl.id, song)
-                            membership[pl.id] = false
-                        } else {
-                            LocalPlaylistPref.addSongToPlaylist(context, pl.id, song)
-                            membership[pl.id] = true
-                        }
-                        localPlaylists = LocalPlaylistPref.getLocalPlaylists(context)
-                        Api.HomeCache.library = null
+                if (snapshot.failed) item(key = "retry") {
+                    TextButton(onClick = { SavedTrackLibrary.ensureLoaded(context, force = true) }) {
+                        Text(uiLocalized("No se pudieron comprobar todas las listas. Reintentar"), color = SpotifyGreen)
                     }
                 }
-
-                // ── Remote Spotify Playlists ──
-                val remoteList = remotePlaylists.orEmpty()
-                val cleanTrackId = SpotifySync.cleanTrackId(song.spotifyTrackId)
-                items(remoteList.size, key = { "remote_${remoteList[it].id}_$it" }) { i ->
-                    val pl = remoteList[i]
-                    LaunchedEffect(pl.id, cleanTrackId, song.url) {
-                        if (membership[pl.id] == null) {
-                            if (cleanTrackId.isNotBlank()) {
-                                try {
-                                    membership[pl.id] = withContext(Dispatchers.IO) {
-                                        com.music.spotui.data.preferences.PlaylistSyncedPendingPref.contains(
-                                            context, pl.id, cleanTrackId
-                                        ) || SpotifySync.playlistTrackIds(context, pl.id).contains(cleanTrackId)
-                                    }
-                                } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                                    throw cancelled
-                                } catch (_: Exception) {
-                                    membershipErrors[pl.id] = true
-                                }
-                            } else if (song.url.startsWith("yt_local:")) {
-                                // YouTube additions to Spotify playlists exist only in Spotui.
-                                membership[pl.id] = com.music.spotui.data.preferences.PlaylistAdditionsPref
-                                    .tracks(context, pl.id).any { it.url == song.url }
-                            } else {
-                                val localMatchingPl = LocalPlaylistPref.getLocalPlaylists(context)
-                                    .firstOrNull { it.name.trim().lowercase() == pl.name.trim().lowercase() }
-                                membership[pl.id] = localMatchingPl?.let { LocalPlaylistPref.isSongInPlaylist(context, it.id, song) } ?: false
-                            }
-                        }
-                    }
-                    val saved = membership[pl.id] == true
-                    SavedInRow(
-                        name = pl.name,
-                        subtitle = when {
-                            membershipErrors[pl.id] == true -> uiLocalized("No se pudo comprobar")
-                            membership[pl.id] == null -> uiLocalized("Comprobando…")
-                            writableRemoteIds[pl.id] != true -> uiLocalized("Solo lectura")
-                            else -> pl.tracks?.total?.let { n -> "$n song" + (if (n == 1) "" else "s") }.orEmpty()
-                        },
-                        saved = saved,
-                        isLocal = false,
-                        cover = {
-                            GlideImage(
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(RoundedCornerShape(4.dp)),
-                                model = pl.images.firstOrNull()?.url,
-                                contentScale = ContentScale.Crop,
-                                failure = placeholder(R.drawable.placeholder),
-                                loading = placeholder(R.drawable.placeholder),
-                                contentDescription = "",
-                            )
-                        },
-                    ) {
-                        if (writableRemoteIds[pl.id] != true || membership[pl.id] == null) return@SavedInRow
-                        if (cleanTrackId.isNotBlank()) {
-                            // Reflect only confirmed Spotify writes; never show success optimistically.
-                            if (saved) SpotifySync.removeTrackFromPlaylist(context, pl.id, cleanTrackId) { ok ->
-                                if (ok) {
-                                    com.music.spotui.data.preferences.PlaylistSyncedPendingPref.remove(
-                                        context, pl.id, cleanTrackId
-                                    )
-                                    kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch {
-                                        membership[pl.id] = false
-                                    }
-                                }
-                            } else SpotifySync.addTrackToPlaylist(context, pl.id, cleanTrackId) { ok ->
-                                if (ok) {
-                                    com.music.spotui.data.preferences.PlaylistSyncedPendingPref.addConfirmed(
-                                        context, pl.id, song.copy(spotifyTrackId = cleanTrackId)
-                                    )
-                                    kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch {
-                                        membership[pl.id] = true
-                                    }
-                                }
-                            }
-                        } else if (song.url.startsWith("yt_local:")) {
-                            // Local-only track on a Spotify playlist: never send it to Spotify.
-                            if (saved) com.music.spotui.data.preferences.PlaylistAdditionsPref.remove(
-                                context, pl.id, song.url
-                            ) else com.music.spotui.data.preferences.PlaylistAdditionsPref.add(
-                                context, pl.id, song
-                            )
-                            membership[pl.id] = !saved
-                        } else {
-                            val localPls = LocalPlaylistPref.getLocalPlaylists(context)
-                            var targetPl = localPls.firstOrNull { it.name.trim().lowercase() == pl.name.trim().lowercase() }
-                            if (targetPl == null) {
-                                targetPl = LocalPlaylistPref.createPlaylist(context, pl.name.ifBlank { "My Playlist" })
-                            }
-                            val isCurrentlySaved = LocalPlaylistPref.isSongInPlaylist(context, targetPl.id, song)
-                            if (isCurrentlySaved) {
-                                LocalPlaylistPref.removeSongFromPlaylist(context, targetPl.id, song)
-                                membership[pl.id] = false
-                                android.widget.Toast.makeText(context, "Removed locally from '${pl.name}'", android.widget.Toast.LENGTH_SHORT).show()
-                            } else {
-                                LocalPlaylistPref.addSongToPlaylist(context, targetPl.id, song)
-                                membership[pl.id] = true
-                                android.widget.Toast.makeText(context, "Added locally to '${pl.name}'", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                            localPlaylists = LocalPlaylistPref.getLocalPlaylists(context)
-                            Api.HomeCache.library = null
-                        }
-                    }
-                }
+                item { Spacer(Modifier.height(16.dp)) }
             }
-            Spacer(modifier = Modifier.padding(10.dp))
         }
     }
+    removeCandidate?.let { candidate ->
+        AlertDialog(onDismissRequest = { removeCandidate = null }, containerColor = Color(0xFF242424),
+            title = { Text(uiLocalized("¿Quitar de esta playlist?"), color = Color.White) },
+            text = { Text("${song.title} · ${candidate.name}", color = Color(0xFFB3B3B3)) },
+            confirmButton = { TextButton(onClick = {
+                removeCandidate = null
+                val current = SavedTrackLibrary.snapshot.value.playlists.firstOrNull { it.id == candidate.id }
+                if (current != null && contains(current)) toggle(current, removalConfirmed = true)
+            }) { Text(uiLocalized("Quitar"), color = SpotifyGreen) } },
+            dismissButton = { TextButton(onClick = { removeCandidate = null }) { Text(uiLocalized("Cancelar"), color = Color.White) } })
+    }
+    if (confirmUnlike) AlertDialog(onDismissRequest = { confirmUnlike = false }, containerColor = Color(0xFF242424),
+        title = { Text(uiLocalized("¿Quitar de Canciones que te gustan?"), color = Color.White) },
+        confirmButton = { TextButton(onClick = { confirmUnlike = false; if (liked) toggleLiked() }) { Text(uiLocalized("Quitar"), color = SpotifyGreen) } },
+        dismissButton = { TextButton(onClick = { confirmUnlike = false }) { Text(uiLocalized("Cancelar"), color = Color.White) } })
+
 }
 
 @Composable
@@ -414,6 +192,7 @@ private fun SavedInRow(
     subtitle: String,
     saved: Boolean,
     isLocal: Boolean = false,
+    enabled: Boolean = true,
     cover: @Composable () -> Unit,
     onToggle: () -> Unit,
 ) {
@@ -422,6 +201,7 @@ private fun SavedInRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(
+                enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
             ) { onToggle() }

@@ -22,7 +22,7 @@ enum class LibraryFilterType {
 @HiltViewModel
 class LibraryViewModel @Inject constructor(private val repository: AppRepository) : ViewModel() {
 
-    private val _entries: MutableStateFlow<Response<List<LibraryEntry>>> = MutableStateFlow(Response.Loading())
+    private val _entries: MutableStateFlow<Response<List<LibraryEntry>>> = MutableStateFlow(repository.cachedLibraryEntries()?.let { Response.Success(it) } ?: Response.Loading())
     val entries: StateFlow<Response<List<LibraryEntry>>> = _entries
 
     private val _account: MutableStateFlow<Response<AccountModel>> = MutableStateFlow(Response.Loading())
@@ -60,7 +60,7 @@ class LibraryViewModel @Inject constructor(private val repository: AppRepository
     }
 
     fun load() {
-        loadJob?.cancel()
+        if (loadJob?.isActive == true) return
         loadJob = viewModelScope.launch(Dispatchers.IO) {
             repository.provideLibrary().collect { response ->
                 // Keep showing existing data while a background refresh is in-flight,
@@ -73,6 +73,7 @@ class LibraryViewModel @Inject constructor(private val repository: AppRepository
     }
 
     private fun loadFollowedArtists() = viewModelScope.launch(Dispatchers.IO) {
+        repository.storedFollowedArtists()?.let { _followedArtists.value = it }
         _followedArtists.value = repository.provideFollowedArtists()
     }
 

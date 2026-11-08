@@ -147,7 +147,7 @@ fun LibraryFilterChips(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
-        contentPadding = PaddingValues(horizontal = 16.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp + com.music.spotui.ui.components.LocalCollectionInset.current),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -337,6 +337,7 @@ fun LibraryScreen(navController: NavController) {
         )
     }
 
+    com.music.spotui.ui.components.CollectionContentViewport(Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -399,7 +400,8 @@ fun LibraryScreen(navController: NavController) {
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp, 4.dp, 16.dp, 8.dp)
+                    .padding(start = 16.dp + com.music.spotui.ui.components.LocalCollectionInset.current,
+                        end = 16.dp + com.music.spotui.ui.components.LocalCollectionInset.current, top = 4.dp, bottom = 8.dp)
             ) {
                 // Search Input Field
                 Row(
@@ -463,7 +465,7 @@ fun LibraryScreen(navController: NavController) {
 
         Row(
             modifier = Modifier.fillMaxWidth()
-                .padding(horizontal = 17.dp, vertical = 8.dp),
+                .padding(horizontal = 17.dp + com.music.spotui.ui.components.LocalCollectionInset.current, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
@@ -631,6 +633,8 @@ fun LibraryScreen(navController: NavController) {
     }
 }
 
+}
+
 @OptIn(ExperimentalGlideComposeApi::class)
 @Composable
 private fun AccountAvatar(url: String, size: androidx.compose.ui.unit.Dp) {
@@ -696,6 +700,9 @@ fun SumUpLibraryScreen(
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
+            contentPadding = PaddingValues(
+                start = com.music.spotui.ui.components.LocalCollectionInset.current,
+                end = com.music.spotui.ui.components.LocalCollectionInset.current),
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
@@ -703,7 +710,7 @@ fun SumUpLibraryScreen(
                 .background(Color(0xFF101010))
         ) {
         item { Spacer(modifier = Modifier.height(10.dp)) }
-        items(entries) { entry ->
+        items(entries, key = { it.spotifyId }) { entry ->
             var pinMenuOpen by remember(entry.spotifyId) { mutableStateOf(false) }
             Row(
                 horizontalArrangement = Arrangement.Start,
@@ -917,11 +924,14 @@ fun LibraryGridScreen(
             .fillMaxSize()
             .padding(padding)
             .background(Color(0xFF101010)),
-        contentPadding = PaddingValues(16.dp, 10.dp, 16.dp, 130.dp),
+        contentPadding = PaddingValues(
+            start = 16.dp + com.music.spotui.ui.components.LocalCollectionInset.current,
+            end = 16.dp + com.music.spotui.ui.components.LocalCollectionInset.current,
+            top = 10.dp, bottom = 130.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        items(entries) { entry ->
+        items(entries, key = { it.spotifyId }) { entry ->
             var pinMenuOpen by remember(entry.spotifyId) { mutableStateOf(false) }
             Column(
                 modifier = Modifier.combinedClickable(
@@ -1056,6 +1066,7 @@ private fun LibrarySkeleton(padding: PaddingValues) {
             .fillMaxSize()
             .padding(padding)
             .background(Color(0xFF101010))
+            .padding(horizontal = com.music.spotui.ui.components.LocalCollectionInset.current)
     ) {
         Spacer(modifier = Modifier.height(10.dp))
         repeat(8) {

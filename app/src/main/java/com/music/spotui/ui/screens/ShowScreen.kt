@@ -1,5 +1,6 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.ui.components.scrollingCollectionBackground
 import com.music.spotui.util.uiLocalized
 
 import androidx.activity.compose.BackHandler
@@ -61,7 +62,6 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
@@ -108,6 +108,10 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
     val isSubscribed by vm.isSubscribed.collectAsState()
     val visibleCount by vm.visibleCount.collectAsState()
     val episodes = (episodesState as? Response.Success)?.data.orEmpty()
+    val displayShowTitle = show?.name?.takeIf { it.isNotBlank() && it != "Podcast" }
+        ?: showName.takeIf { it.isNotBlank() && it != "Podcast" }
+        ?: episodes.firstOrNull()?.album?.takeIf { it.isNotBlank() && it != "Podcast" }
+        ?: "Podcast"
 
     var searchQuery by remember(showId) { mutableStateOf("") }
     var currentSort by remember(showId) { mutableStateOf(getShowSortOption(context, showId)) }
@@ -146,6 +150,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
         filteredEpisodes.take(visibleCount)
     }
     val listState = rememberLazyListState()
+    val collapsedTitle = com.music.spotui.ui.components.rememberCollectionTitleState(listState, "podcast_header")
     val searchReveal = rememberCollectionSearchState(listState, showId)
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -167,21 +172,16 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
         if (keyboardVisible) listState.scrollToItem(0)
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    com.music.spotui.ui.components.CollectionContentViewport(modifier = Modifier.fillMaxSize()
+        .scrollingCollectionBackground(Color(0xFF1E2A38), Color(AppBackground.toArgb()), listState, "podcast_header")) {
         LazyColumn(
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                start = com.music.spotui.ui.components.LocalCollectionInset.current,
+                end = com.music.spotui.ui.components.LocalCollectionInset.current),
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .nestedScroll(searchReveal.nestedScrollConnection)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xFF1E2A38),
-                            Color(AppBackground.toArgb()),
-                            Color(AppBackground.toArgb())
-                        )
-                    )
-                )
                 .statusBarsPadding(),
         ) {
             if (episodes.isNotEmpty()) {
@@ -218,7 +218,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
             }
 
             // Hide the show header while typing so search results remain visible.
-            if (!keyboardVisible && !searchReveal.expanded && searchQuery.isBlank()) item {
+            if (!keyboardVisible && !searchReveal.expanded && searchQuery.isBlank()) item(key = "podcast_header") {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
@@ -228,10 +228,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                     // Show Cover Image
                     val resolvedCover = show?.coverUri?.takeIf { it.isNotBlank() }
                         ?: episodes.firstOrNull { it.coverUri.isNotBlank() }?.coverUri
-                    val resolvedTitle = show?.name?.takeIf { it.isNotBlank() && it != "Podcast" }
-                        ?: showName.takeIf { it.isNotBlank() && it != "Podcast" }
-                        ?: episodes.firstOrNull()?.album?.takeIf { it.isNotBlank() && it != "Podcast" }
-                        ?: "Podcast"
+                    val resolvedTitle = displayShowTitle
                     val resolvedPublisher = show?.publisher?.takeIf { it.isNotBlank() }
                         ?: episodes.firstOrNull()?.singer?.takeIf { it.isNotBlank() }
                         ?: ""
@@ -254,6 +251,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                     // Show Title
                     Text(
                         text = resolvedTitle,
+                        modifier = collapsedTitle.titleModifier,
                         color = Color.White,
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
@@ -503,7 +501,6 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(AppBackground)
                                 .clipToBounds()
                                 .combinedClickable(
                                     interactionSource = remember { MutableInteractionSource() },
@@ -575,7 +572,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                                             if (releaseDate.isNotBlank()) {
                                                 Text(
                                                     text = releaseDate,
@@ -605,6 +602,8 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                             }
                                         }
 
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                        com.music.spotui.ui.components.EpisodeDownloadButton(ep)
                                         // Play Episode Circle Button
                                         Box(
                                             modifier = Modifier
@@ -625,6 +624,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                                 tint = Color.White,
                                                 modifier = Modifier.size(18.dp)
                                             )
+                                        }
                                         }
                                     }
                                 }
@@ -764,6 +764,22 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
 
             // Reserve room for the mini-player, system navigation and large font scales.
             item { Spacer(Modifier.height(230.dp)) }
+        }
+
+        if (collapsedTitle.collapsed && !searchReveal.expanded && searchQuery.isBlank()) {
+            androidx.compose.material3.CenterAlignedTopAppBar(
+                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                title = { Text(displayShowTitle,
+                    color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                navigationIcon = {
+                    androidx.compose.material3.IconButton(onClick = { navController.navigateUp() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = uiLocalized("Volver"), tint = Color.White)
+                    }
+                },
+                colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
+                    containerColor = com.music.spotui.ui.components.collectionToolbarColor(Color(0xFF1E2A38), AppBackground))
+            )
         }
 
         // Sort Options Modal Bottom Sheet

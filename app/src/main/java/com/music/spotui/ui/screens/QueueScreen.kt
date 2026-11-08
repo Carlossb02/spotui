@@ -140,7 +140,8 @@ fun QueueContent(
     val context = LocalContext.current
     val queue by playerViewModel.queue
     val currentId = playerViewModel.currentSongId.value
-    val curIdx = queue.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
+    val curIdx = playerViewModel.currentSongIndex.value.takeIf { queue.getOrNull(it)?.id == currentId }
+        ?: queue.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
     val upcoming = if (queue.isNotEmpty()) queue.drop(curIdx + 1) else emptyList()
     val current = queue.getOrNull(curIdx)
 
@@ -317,7 +318,7 @@ fun QueueContent(
                         val dismissState = rememberSwipeToDismissBoxState(
                             confirmValueChange = { value ->
                                 if (value != SwipeToDismissBoxValue.Settled) {
-                                    playerViewModel.removeFromQueue(song)
+                                    playerViewModel.removeQueueItem(curIdx + 1 + entry.originalIndex)
                                     true
                                 } else false
                             }
@@ -345,7 +346,7 @@ fun QueueContent(
                                 highlight = false,
                                 onLongClick = { menuSong = song },
                                 onClick = {
-                                    val idx = queue.indexOfFirst { it.id == song.id }
+                                    val idx = curIdx + 1 + entry.originalIndex
                                     playerViewModel.updateSongState(
                                         song.coverUri, song.title, song.singer, true,
                                         song.id, idx.coerceAtLeast(0), song.album

@@ -75,6 +75,20 @@ object CustomMetadataPref {
         )
     }
 
+    /** Apply the current edits to a whole memory snapshot with one preferences parse. */
+    fun applyOverrides(context: Context, songs: List<SongsModel>): List<SongsModel> {
+        val overrides = getAllOverrides(context)
+        if (overrides.isEmpty()) return songs
+        return songs.map { song ->
+            val edit = getSongKeys(song).firstNotNullOfOrNull { overrides[it] } ?: return@map song
+            val changed = song.copy(title = edit.title.ifBlank { song.title }, singer = edit.singer.ifBlank { song.singer },
+                album = edit.album.ifBlank { song.album }, coverUri = edit.coverUri.ifBlank { song.coverUri })
+            if ((changed.title != song.title || changed.singer != song.singer) && song.url.startsWith("spotify:track:"))
+                changed.copy(url = com.music.spotui.di.SongPlayer.buildSpotifyPlayQuery(song.spotifyTrackId, changed.title, changed.singer))
+            else changed
+        }
+    }
+
     private fun getSongKeys(song: SongsModel): List<String> {
         val keys = mutableListOf<String>()
         if (song.id != 0 && song.id != -1) keys.add("id:${song.id}")

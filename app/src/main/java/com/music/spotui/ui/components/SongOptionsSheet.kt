@@ -103,6 +103,7 @@ fun SongOptionsSheet(
     onSongRemovedFromPlaylist: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
+    var showPlaylistRemoval by remember { mutableStateOf(false) }
     val playerViewModel: com.music.spotui.ui.viewmodel.PlayerViewModel =
         androidx.hilt.navigation.compose.hiltViewModel()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -233,6 +234,39 @@ fun SongOptionsSheet(
         )
     }
 
+    if (showPlaylistRemoval && !currentPlaylistId.isNullOrBlank()) {
+        androidx.compose.material3.AlertDialog(onDismissRequest = { showPlaylistRemoval = false }, containerColor = Color(0xFF242424),
+            title = { Text(uiLocalized("¿Quitar de esta playlist?"), color = Color.White) },
+            text = { Text(song.title, color = Color(0xFFB3B3B3)) },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = {
+                showPlaylistRemoval = false
+                    if (song.url.startsWith("yt_local:") && !currentPlaylistId.startsWith("local_pl_")) {
+                        com.music.spotui.data.preferences.PlaylistAdditionsPref.remove(context, currentPlaylistId, song.url)
+                        onSongRemovedFromPlaylist?.invoke()
+                    } else if (currentPlaylistId.startsWith("local_pl_")) {
+                        com.music.spotui.data.preferences.LocalPlaylistPref.removeSongFromPlaylist(context, currentPlaylistId, song)
+                        com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(currentPlaylistId)
+                        com.music.spotui.data.api.Api.HomeCache.library = null
+                        onSongRemovedFromPlaylist?.invoke()
+                    } else {
+                        val trackId = song.spotifyTrackId.ifBlank { song.id.toString() }
+                        com.music.spotui.data.api.SpotifySync.removeTrackFromPlaylist(context, currentPlaylistId, trackId) { ok ->
+                            com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(currentPlaylistId)
+                            if (ok) {
+                                com.music.spotui.data.preferences.PlaylistSyncedPendingPref.remove(
+                                    context, currentPlaylistId, trackId
+                                )
+                                // Remote callbacks run off the UI thread.
+                                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                                    onSongRemovedFromPlaylist?.invoke()
+                                }
+                            }
+                        }
+                    }
+                    onDismiss()
+            }) { Text(uiLocalized("Quitar"), color = Color(0xFF1ED760)) } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { showPlaylistRemoval = false }) { Text(uiLocalized("Cancelar"), color = Color.White) } })
+    }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -318,30 +352,7 @@ fun SongOptionsSheet(
                     label = uiLocalized("Remove from this playlist"),
                     iconTint = Color.White
                 ) {
-                    if (song.url.startsWith("yt_local:") && !currentPlaylistId.startsWith("local_pl_")) {
-                        com.music.spotui.data.preferences.PlaylistAdditionsPref.remove(context, currentPlaylistId, song.url)
-                        onSongRemovedFromPlaylist?.invoke()
-                    } else if (currentPlaylistId.startsWith("local_pl_")) {
-                        com.music.spotui.data.preferences.LocalPlaylistPref.removeSongFromPlaylist(context, currentPlaylistId, song)
-                        com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(currentPlaylistId)
-                        com.music.spotui.data.api.Api.HomeCache.library = null
-                        onSongRemovedFromPlaylist?.invoke()
-                    } else {
-                        val trackId = song.spotifyTrackId.ifBlank { song.id.toString() }
-                        com.music.spotui.data.api.SpotifySync.removeTrackFromPlaylist(context, currentPlaylistId, trackId) { ok ->
-                            com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(currentPlaylistId)
-                            if (ok) {
-                                com.music.spotui.data.preferences.PlaylistSyncedPendingPref.remove(
-                                    context, currentPlaylistId, trackId
-                                )
-                                // Remote callbacks run off the UI thread.
-                                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
-                                    onSongRemovedFromPlaylist?.invoke()
-                                }
-                            }
-                        }
-                    }
-                    onDismiss()
+                    showPlaylistRemoval = true
                 }
             }
             SongMenuRow(Icons.Outlined.PlaylistAdd, uiLocalized("Add to queue")) {
@@ -372,8 +383,9 @@ fun SongOptionsSheet(
             SongMenuRow(
                 icon = if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                 label = if (liked) "Remove from Liked Songs" else "Add to Liked Songs",
-                iconTint = if (liked) Color(AppPalette.toArgb()) else Color.White,
+                iconTint = Color(0xFF1ED760),
             ) {
+                com.music.spotui.data.api.LibraryContentMemory.register(context, song)
                 if (liked) removeLikedSongId(context, song.id.toString())
                 else addLikedSongId(context, song.id.toString())
                 liked = !liked

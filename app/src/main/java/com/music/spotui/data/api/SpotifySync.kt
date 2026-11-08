@@ -7,6 +7,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -17,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object SpotifySync {
 
+    private val playlistWrites = ConcurrentHashMap<String, Mutex>()
     private const val TAG = "SpotifySync"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -66,57 +71,74 @@ object SpotifySync {
         }
     }
 
-    /** Adds a track to one of the user's playlists on Spotify itself. */
-    fun addTrackToPlaylist(context: Context, playlistId: String, trackId: String, onDone: (Boolean) -> Unit = {}) {
-        val cleanPl = cleanPlaylistId(playlistId)
-        val cleanTr = cleanTrackId(trackId)
-        if (cleanPl.isBlank() || cleanTr.isBlank()) { onDone(false); return }
+    private fun writePlaylist(
+        context: Context, playlistId: String, trackId: String, saved: Boolean,
+        onDone: (Boolean) -> Unit, write: suspend () -> Boolean,
+    ) {
         val app = context.applicationContext
-        scope.launch {
-            val ok = SpotifyTokenProvider.ensureToken(app) &&
-                Spotify.addTracksToPlaylist(cleanPl, listOf("spotify:track:$cleanTr")).isSuccess
-            if (ok) {
-                membershipCache[cleanPl]?.add(cleanTr)
-                Api.HomeCache.invalidatePlaylist(cleanPl)
-            }
-            if (!ok) Log.w(TAG, "failed adding track $cleanTr to playlist $cleanPl")
-            onDone(ok)
+        val session = SpotifySession.spDc(app)
+        val mutation = SavedTrackLibrary.optimistic(app, playlistId, trackId, saved)
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            playlistWrites.computeIfAbsent(playlistId) { Mutex() }.withLock { withContext(Dispatchers.IO) {
+                val ok = try {
+                    SpotifySession.spDc(app) == session && SpotifyTokenProvider.ensureToken(app) && write()
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    SavedTrackLibrary.settle(mutation, playlistId, trackId, saved, false)
+                    throw cancelled
+                } catch (failure: Exception) {
+                    Log.w(TAG, "Playlist write failed", failure)
+                    false
+                }
+                if (SpotifySession.spDc(app) == session) {
+                    SavedTrackLibrary.settle(mutation, playlistId, trackId, saved, ok)
+                    if (ok) {
+                        if (saved) membershipCache[playlistId]?.add(trackId) else membershipCache[playlistId]?.remove(trackId)
+                        Api.HomeCache.invalidatePlaylist(playlistId)
+                    }
+                    onDone(ok)
+                } else {
+                    SavedTrackLibrary.ensureLoaded(app)
+                    onDone(false)
+                }
+            } }
         }
     }
 
-    /** Removes every occurrence of a track from one of the user's playlists on
-     *  Spotify itself (resolves the playlist-scoped item uids first). */
+    /** Render the local intent immediately; Spotify writes remain ordered in the background. */
+    fun addTrackToPlaylist(context: Context, playlistId: String, trackId: String, onDone: (Boolean) -> Unit = {}) {
+        val id = cleanPlaylistId(playlistId)
+        val track = cleanTrackId(trackId)
+        if (id.isBlank() || track.isBlank()) { onDone(false); return }
+        writePlaylist(context, id, track, true, onDone) {
+            Spotify.addTracksToPlaylist(id, listOf("spotify:track:$track")).isSuccess
+        }
+    }
+
+    /** Resolve every occurrence before removal; partial pagination can never report success. */
     fun removeTrackFromPlaylist(context: Context, playlistId: String, trackId: String, onDone: (Boolean) -> Unit = {}) {
-        val cleanPl = cleanPlaylistId(playlistId)
-        val cleanTr = cleanTrackId(trackId)
-        if (cleanPl.isBlank() || cleanTr.isBlank()) { onDone(false); return }
-        val app = context.applicationContext
-        scope.launch {
-            if (!SpotifyTokenProvider.ensureToken(app)) { onDone(false); return@launch }
-            val uri = "spotify:track:$cleanTr"
-            // Paginate the whole Spotify playlist. Added tracks are typically at the end,
-            // so scanning only the first 100 entries makes "Remove" silently fail.
+        val id = cleanPlaylistId(playlistId)
+        val track = cleanTrackId(trackId)
+        if (id.isBlank() || track.isBlank()) { onDone(false); return }
+        writePlaylist(context, id, track, false, onDone) {
+            val uri = "spotify:track:$track"
             val refs = mutableListOf<Spotify.PlaylistItemRef>()
             var offset = 0
+            var complete = false
+            var found = false
             while (true) {
-                val page = Spotify.playlistTracks(cleanPl, limit = 100, offset = offset).getOrNull() ?: break
+                val page = Spotify.playlistTracks(id, limit = 100, offset = offset).getOrNull() ?: break
                 page.items.forEach { item ->
-                    val tid = item.track?.id?.let { cleanTrackId(it) }.orEmpty()
-                    if (tid == cleanTr || item.track?.uri == uri) {
+                    if (item.track?.id?.let(::cleanTrackId) == track || item.track?.uri == uri) {
+                        found = true
                         item.uid?.let { refs += Spotify.PlaylistItemRef(uri = uri, uid = it) }
                     }
                 }
-                offset += page.items.size
-                if (page.items.isEmpty() || offset >= page.total) break
+                val next = page.offset + page.limit.coerceAtLeast(1)
+                if (next <= offset) break
+                offset = next
+                if (offset >= page.total) { complete = true; break }
             }
-            val ok = refs.isNotEmpty() &&
-                Spotify.removeTracksFromPlaylist(cleanPl, refs).isSuccess
-            if (ok) {
-                membershipCache[cleanPl]?.remove(cleanTr)
-                Api.HomeCache.invalidatePlaylist(cleanPl)
-            }
-            if (!ok) Log.w(TAG, "failed removing track $cleanTr from playlist $cleanPl")
-            onDone(ok)
+            complete && (!found || (refs.isNotEmpty() && Spotify.removeTracksFromPlaylist(id, refs).isSuccess))
         }
     }
 
@@ -134,8 +156,11 @@ object SpotifySync {
             val ok = cleanTr.isBlank() ||
                 Spotify.addTracksToPlaylist(playlist.id, listOf("spotify:track:$cleanTr")).isSuccess
             if (ok && cleanTr.isNotBlank()) {
-                membershipCache[playlist.id] = mutableSetOf(cleanTr)
+                membershipCache[playlist.id] = ConcurrentHashMap.newKeySet<String>().apply { add(cleanTr) }
             }
+            synchronized(this@SpotifySync) { catalogAt = 0L; catalogAccount = null }
+            SavedTrackLibrary.created(app, playlist.id, name, if (ok && cleanTr.isNotBlank()) setOf(cleanTr) else emptySet())
+            Api.HomeCache.library = null
             onDone(ok)
         }
     }
@@ -147,27 +172,45 @@ object SpotifySync {
 
     private val membershipFetchedAt = ConcurrentHashMap<String, Long>()
 
-    /** Read the whole library, including playlists beyond the first 50. */
+    private val catalogWork = com.music.spotui.util.SharedWork<String, List<com.metrolist.spotify.models.SpotifyPlaylist>>(scope)
+    private var catalogAccount: String? = null
+    private var catalogAt = 0L
+    private var catalog = emptyList<com.metrolist.spotify.models.SpotifyPlaylist>()
+
+    /** Shared complete catalog: membership and Library never repeat the same concurrent scan. */
     suspend fun allLibraryPlaylists(context: Context): List<com.metrolist.spotify.models.SpotifyPlaylist> {
-        check(SpotifyTokenProvider.ensureToken(context.applicationContext)) { "Spotify session unavailable" }
-        val result = mutableListOf<com.metrolist.spotify.models.SpotifyPlaylist>()
-        var offset = 0
-        do {
-            val page = Spotify.myPlaylists(limit = 50, offset = offset).getOrThrow()
-            result.addAll(page.items)
-            val next = page.offset + page.limit.coerceAtLeast(1)
-            check(next > offset) { "Playlist pagination did not advance" }
-            offset = next
-        } while (offset < page.total)
-        return result.distinctBy { it.id }
+        val session = SpotifySession.spDc(context)
+        synchronized(this) {
+            if (catalogAccount == session && android.os.SystemClock.elapsedRealtime() - catalogAt in 0..30_000L) return catalog
+        }
+        return catalogWork.await(session) {
+            check(SpotifyTokenProvider.ensureToken(context.applicationContext)) { "Spotify session unavailable" }
+            val result = mutableListOf<com.metrolist.spotify.models.SpotifyPlaylist>()
+            var offset = 0
+            do {
+                val page = Spotify.myPlaylists(limit = 50, offset = offset).getOrThrow()
+                result.addAll(page.items)
+                val next = page.offset + page.limit.coerceAtLeast(1)
+                check(next > offset) { "Playlist pagination did not advance" }
+                offset = next
+            } while (offset < page.total)
+            val complete = result.distinctBy { it.id }
+            synchronized(this) {
+                if (SpotifySession.spDc(context) == session) {
+                    catalogAccount = session; catalog = complete; catalogAt = android.os.SystemClock.elapsedRealtime()
+                    LibraryCatalogCache.playlistsLoaded(context, session, complete)
+                }
+            }
+            complete
+        }
     }
 
     /** Only complete successful scans are cached, briefly, to allow remote edits. */
-    suspend fun playlistTrackIds(context: Context, playlistId: String): Set<String> {
+    suspend fun playlistTrackIds(context: Context, playlistId: String, forceRefresh: Boolean = false): Set<String> {
         val cleanPl = cleanPlaylistId(playlistId)
         if (cleanPl.isBlank()) return emptySet()
         val age = android.os.SystemClock.elapsedRealtime() - (membershipFetchedAt[cleanPl] ?: 0L)
-        if (age in 0L..60_000L && membershipFetchedAt.containsKey(cleanPl)) {
+        if (!forceRefresh && age in 0L..60_000L && membershipFetchedAt.containsKey(cleanPl)) {
             membershipCache[cleanPl]?.let { return it.toSet() }
         }
         check(SpotifyTokenProvider.ensureToken(context.applicationContext)) { "Spotify session unavailable" }

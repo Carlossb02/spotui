@@ -515,8 +515,8 @@ fun PlayerScreen(
     // ── Now-playing swipe pager ──
     // Index of the playing track in the queue (fallback to 0 so the pager is valid
     // even before the queue/current id line up).
-    val currentIndex = queueSongs.indexOfFirst { it.id == songId }
-        .let { if (it >= 0) it else 0 }
+    val currentIndex = playerViewModel.currentSongIndex.value.takeIf { queueSongs.getOrNull(it)?.id == songId }
+        ?: queueSongs.indexOfFirst { it.id == songId }.coerceAtLeast(0)
     val artworkPagerState = rememberPagerState(
         initialPage = currentIndex.coerceIn(0, (queueSongs.size - 1).coerceAtLeast(0)),
         pageCount = { queueSongs.size.coerceAtLeast(1) },
@@ -552,8 +552,7 @@ fun PlayerScreen(
                 if (wasUserDragged) {
                     wasUserDragged = false
                     val currentQueue = playerViewModel.queue.value
-                    val currentIdx = currentQueue.indexOfFirst { it.id == playerViewModel.currentSongId.value }
-                        .let { if (it >= 0) it else 0 }
+                    val currentIdx = playerViewModel.currentSongIndex.value.coerceIn(0, (currentQueue.size - 1).coerceAtLeast(0))
                     if (page != currentIdx && page in currentQueue.indices) {
                         playerViewModel.playSongAt(currentQueue, page, context)
                         currentQueue.getOrNull(page)?.let { target ->
@@ -826,6 +825,7 @@ fun PlayerScreen(
                                 },
                                 spotifyTrackId = queueSongs.firstOrNull { it.id == songId }?.spotifyTrackId.orEmpty(),
                                 onShowSavedIn = { showSavedIn = true },
+                                savedSong = playerViewModel.queue.value.firstOrNull { it.id == songId },
                                 isExplicit = queueSongs.firstOrNull { it.id == songId }?.explicit == true,
                             )
 
@@ -1051,6 +1051,7 @@ fun PlayerScreen(
                                 },
                                 spotifyTrackId = queueSongs.firstOrNull { it.id == songId }?.spotifyTrackId.orEmpty(),
                                 onShowSavedIn = { showSavedIn = true },
+                                savedSong = playerViewModel.queue.value.firstOrNull { it.id == songId },
                                 isExplicit = queueSongs.firstOrNull { it.id == songId }?.explicit == true,
                             )
 
@@ -1318,8 +1319,11 @@ fun PlayerInfo(
     spotifyTrackId: String = "",
     onShowSavedIn: (() -> Unit)? = null,
     isExplicit: Boolean = false,
+    savedSong: SongsModel? = null,
 ) {
 
+    val isSaved = com.music.spotui.ui.components.rememberTrackSaved(
+        savedSong ?: SongsModel(songId, songTitle, "", songSinger, "", "", spotifyTrackId), isLiked.value)
     var snackbarMessage by remember {
         mutableStateOf("")
     }
@@ -1529,14 +1533,14 @@ fun PlayerInfo(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                         onClick = {
-                            if (isLiked.value && onShowSavedIn != null) {
+                            if (isSaved && onShowSavedIn != null) {
                                 // Already saved — second tap opens the Spotify-style
                                 // "Saved in" sheet (Liked Songs + playlists) instead of
                                 // silently unliking.
                                 onShowSavedIn()
                                 return@combinedClickable
                             }
-                            if (isLiked.value) {
+                            if (isSaved) {
                                 removeLikedSongId(context, songId.toString())
                                 snackbarMessage = "Removed from Liked Songs"
                             } else {
@@ -1554,12 +1558,12 @@ fun PlayerInfo(
                         },
                         onLongClick = { onShowSavedIn?.invoke() },
                     ),
-                painter = if (isLiked.value) {
+                painter = if (isSaved) {
                     painterResource(id = R.drawable.added)
                 } else {
                     painterResource(id = R.drawable.ic_add)
                 },
-                tint = if (isLiked.value) {
+                tint = if (isSaved) {
                     Color(0xFF1ED760) // Spotify green for the added-to-library tick.
                 } else {
                     Color.White
@@ -1685,11 +1689,9 @@ fun PlayerEndInfo() {
             .fillMaxWidth()
             .padding(20.dp)
     ) {
-        Icon(
+        com.music.spotui.ui.components.AudioOutputIcon(
             modifier = Modifier
                 .size(22.dp),
-            painter = painterResource(id = R.drawable.ic_devices),
-            tint = Color.White,
             contentDescription = ""
         )
         Icon(
@@ -1940,12 +1942,10 @@ fun PlayerEndInfo(onOpenDevices: () -> Unit = {}) {
             .fillMaxWidth()
             .padding(20.dp)
     ) {
-        Icon(
+        com.music.spotui.ui.components.AudioOutputIcon(
             modifier = Modifier
                 .size(22.dp)
                 .clickable { onOpenDevices() },
-            painter = painterResource(id = R.drawable.ic_devices),
-            tint = Color.White,
             contentDescription = uiLocalized("Devices")
         )
         Icon(
@@ -2009,12 +2009,8 @@ fun PlayerConnectRow(
                     indication = null,
                 ) { onOpenDevices() }
         ) {
-            Icon(
-                painter = painterResource(id = R.drawable.ic_devices),
-                tint = outputColor,
-                modifier = Modifier.size(18.dp),
-                contentDescription = uiLocalized("Device"),
-            )
+            com.music.spotui.ui.components.AudioOutputIcon(
+                modifier = Modifier.size(18.dp), contentDescription = uiLocalized("Device"))
             Text(
                 text = routeName,
                 color = outputColor,
@@ -2564,7 +2560,7 @@ fun PlayerOptionsSheet(
                 }
                 PlayerMenuRow(
                     icon = if (isLiked.value) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                    iconTint = if (isLiked.value) Color(AppPalette.toArgb()) else Color.White,
+                    iconTint = Color(0xFF1ED760),
                     label = if (isLiked.value) "Remove from Liked Songs" else "Add to Liked Songs"
                 ) {
                     if (isLiked.value) {

@@ -1,5 +1,6 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.ui.components.scrollingCollectionBackground
 import com.music.spotui.util.uiLocalized
 
 import androidx.activity.compose.BackHandler
@@ -176,25 +177,22 @@ fun LikedSongsScreen(navController: NavController) {
             return@Surface
         }
 
-        val likedBackground = remember(likedColor) {
-            Brush.verticalGradient(
-                colors = listOf(likedColor, Color(AppBackground.toArgb()), Color(AppBackground.toArgb())),
-                startY = 0f, endY = 2100f
-            )
-        }
+
         val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        val collapsedTitle = com.music.spotui.ui.components.rememberCollectionTitleState(listState, "liked_header")
         val searchReveal = rememberCollectionSearchState(listState, "liked_songs")
         val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
         val keyboardController = LocalSoftwareKeyboardController.current
         val focusManager = LocalFocusManager.current
 
         Scaffold(
-            modifier = Modifier.fillMaxSize().background(likedBackground),
+            modifier = Modifier.fillMaxSize().scrollingCollectionBackground(
+                topColor = likedColor, baseColor = Color(AppBackground.toArgb()),
+                listState = listState, headerKey = "liked_header"),
             containerColor = Color.Transparent,
             topBar = {
                 CenterAlignedTopAppBar(
-                    modifier = Modifier
-                        .padding(horizontal = 12.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     navigationIcon = {
                         Icon(
                             modifier = Modifier
@@ -219,10 +217,12 @@ fun LikedSongsScreen(navController: NavController) {
                         )
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color.Transparent,
+                        containerColor = if (collapsedTitle.collapsed) com.music.spotui.ui.components.collectionToolbarColor(likedColor, AppBackground) else Color.Transparent,
                         titleContentColor = Color.White,
                     ),
-                    title = { Text(text = "") }
+                    title = { if (collapsedTitle.collapsed) Text(uiLocalized("Liked Songs"),
+                        maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp) }
                 )
             }
         ) { innerPadding ->
@@ -244,11 +244,14 @@ fun LikedSongsScreen(navController: NavController) {
                 focusManager.clearFocus()
                 searchQuery = ""
             }
-            Box(modifier = Modifier.fillMaxSize()
+            com.music.spotui.ui.components.CollectionContentViewport(modifier = Modifier.fillMaxSize()
                 .padding(top = innerPadding.calculateTopPadding())) {
                 LazyColumn(
                     state = listState,
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 138.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        start = com.music.spotui.ui.components.LocalCollectionInset.current,
+                        end = com.music.spotui.ui.components.LocalCollectionInset.current,
+                        bottom = 138.dp),
                     modifier = Modifier
                         .fillMaxSize()
                         .nestedScroll(searchReveal.nestedScrollConnection)
@@ -296,7 +299,7 @@ fun LikedSongsScreen(navController: NavController) {
                             }
                             Spacer(modifier = Modifier.padding(5.dp))
                             Text(
-                                modifier = Modifier.padding(20.dp, 5.dp, 0.dp, 0.dp),
+                                modifier = Modifier.padding(20.dp, 5.dp, 0.dp, 0.dp).then(collapsedTitle.titleModifier),
                                 text = "Canciones que te gustan",
                                 color = Color.White,
                                 fontSize = 28.sp,
@@ -491,8 +494,7 @@ fun LikedSongsScreen(navController: NavController) {
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .background(AppBackground)
-                                        .combinedClickable(
+                                            .combinedClickable(
                                             interactionSource = remember { MutableInteractionSource() },
                                             indication = null,
                                             onLongClick = { menuSong = song },

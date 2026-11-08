@@ -1,5 +1,6 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.ui.components.scrollingCollectionBackground
 import com.music.spotui.util.uiLocalized
 
 import androidx.activity.compose.BackHandler
@@ -77,7 +78,6 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -430,25 +430,22 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             }
         }
 
-        val playlistBackground = remember(dominentColor) {
-            Brush.verticalGradient(
-                colors = listOf(dominentColor, Color(AppBackground.toArgb()), Color(AppBackground.toArgb())),
-                startY = 0f, endY = 2100f
-            )
-        }
+
         val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val collapsedTitle = com.music.spotui.ui.components.rememberCollectionTitleState(listState, "playlist_header")
         val searchReveal = rememberCollectionSearchState(listState, playlistId)
         val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
         val keyboardController = LocalSoftwareKeyboardController.current
         val focusManager = LocalFocusManager.current
 
         Scaffold(
-            modifier = Modifier.fillMaxSize().background(playlistBackground),
+            modifier = Modifier.fillMaxSize().scrollingCollectionBackground(
+                topColor = dominentColor, baseColor = Color(AppBackground.toArgb()),
+                listState = listState, headerKey = "playlist_header"),
             containerColor = Color.Transparent,
             topBar = {
                 CenterAlignedTopAppBar(
-                    modifier = Modifier
-                        .padding(horizontal = 12.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     navigationIcon = {
                         Icon(
                             modifier = Modifier
@@ -473,10 +470,12 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                         )
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color.Transparent,
+                        containerColor = if (collapsedTitle.collapsed) com.music.spotui.ui.components.collectionToolbarColor(dominentColor, AppBackground) else Color.Transparent,
                         titleContentColor = Color.White,
                     ),
-                    title = { Text(text = "") },
+                    title = { if (collapsedTitle.collapsed) Text(text = playlist.name.ifBlank { playlistName },
+                        maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp) },
                     actions = {
                         androidx.compose.material3.IconButton(
                             onClick = { showPlaylistActions = true },
@@ -508,11 +507,14 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                 focusManager.clearFocus()
                 searchQuery = ""
             }
-            Box(modifier = Modifier.fillMaxSize()
+            com.music.spotui.ui.components.CollectionContentViewport(modifier = Modifier.fillMaxSize()
                 .padding(top = innerPadding.calculateTopPadding())) {
                 LazyColumn(
                     state = listState,
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 138.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        start = com.music.spotui.ui.components.LocalCollectionInset.current,
+                        end = com.music.spotui.ui.components.LocalCollectionInset.current,
+                        bottom = 138.dp),
                     modifier = Modifier
                         .fillMaxSize()
                         .nestedScroll(searchReveal.nestedScrollConnection)
@@ -557,7 +559,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                             val isLocalPlaylist = playlistId.startsWith("local_pl_")
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 20.dp)
+                                modifier = Modifier.padding(horizontal = 20.dp).then(collapsedTitle.titleModifier)
                             ) {
                                 Text(
                                     text = playlist.name.ifBlank { playlistName },
@@ -848,7 +850,6 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                     if (canEditPlaylist) item(key = "add_music_to_playlist") {
                         Row(
                             modifier = Modifier.fillMaxWidth()
-                                .background(Color(AppBackground.toArgb()))
                                 .clickable { showAddMusic = true }
                                 .padding(horizontal = 17.dp, vertical = 10.dp)
                                 .height(48.dp),
@@ -894,7 +895,6 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(AppBackground)
                                     .combinedClickable(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = null,

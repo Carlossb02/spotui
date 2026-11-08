@@ -152,8 +152,10 @@ fun PlaylistCopySheet(
                                 var success = true
                                 for (chunk in uris.chunked(100)) {
                                     if (Spotify.addTracksToPlaylist(destination.id, chunk).isFailure) { success = false; break }
+                                    chunk.forEach { com.music.spotui.data.api.SavedTrackLibrary.confirmed(destination.id, it, true) }
                                 }
                                 Api.HomeCache.invalidatePlaylist(destination.id)
+                                com.music.spotui.data.api.SavedTrackLibrary.invalidatePlaylist(context, destination.id)
                                 withContext(Dispatchers.Main) {
                                     done(if (success) "${uris.size} canciones añadidas en Spotify" else "No se pudieron añadir todas las canciones")
                                 }

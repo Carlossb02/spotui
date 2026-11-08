@@ -29,7 +29,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
@@ -237,55 +239,108 @@ object SongPlayer {
         }
     }
 
+    private val resolutionCacheLock = Any()
+    private var resolutionCacheGeneration = 0L
+
     @kotlin.OptIn(androidx.media3.common.util.UnstableApi::class)
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun clearCaches(context: Context) {
         val appContext = context.applicationContext
-        streamCache.clear()
-        sourceCache.clear()
-        qualityCache.clear()
-        qualityTierCache.clear()
-        videoCandidatesCache.clear()
-        streamValidatedAt.clear()
-        streamExpiresAt.clear()
-        loudnessCache.clear()
-        youtubeGainCache.clear()
-        streamResolutions.cancelAll()
-        rawYtSearchWork.cancelAll()
-        rawYtSearchCache.clear()
-        // Preserve song -> manual stream key mapping for the current queue.
-        // It is user data, NOT an ephemeral network resolution cache.
-        providerBlocklist.clear()
-        durationVerified.clear()
-        com.metrolist.music.utils.YTPlayerUtils.resetSession(appContext)
-        com.music.spotui.data.preferences.clearAllCachedStreams(appContext)
-        // User-selected alternative streams are preferences, not disposable caches.
-        // Clearing transient bytes must never erase manual stream overrides.
-        com.music.spotui.data.preferences.clearAllResolvedVideos(appContext)
+        val activeQuery = loadedQuery ?: currentRequest
+        val activeStream = streamCache[activeQuery]
+        val activeCacheKey = activeStream?.let { url ->
+            com.music.spotui.audio.LosslessCacheKeyFactory.buildCacheKey(trackIdRegistry[activeQuery], url)
+        }
+        synchronized(resolutionCacheLock) {
+            resolutionCacheGeneration++
+            streamCache.clear()
+            sourceCache.clear()
+            qualityCache.clear()
+            qualityTierCache.clear()
+            videoCandidatesCache.clear()
+            streamValidatedAt.clear()
+            streamExpiresAt.clear()
+            loudnessCache.clear()
+            youtubeGainCache.clear()
+            rawYtSearchCache.clear()
+            // Preserve song -> manual stream key mapping for the current queue.
+            // It is user data, NOT an ephemeral network resolution cache.
+            providerBlocklist.clear()
+            durationVerified.clear()
+            // Let an active lookup finish with the session it started with.
+            if (!playbackResolving) com.metrolist.music.utils.YTPlayerUtils.resetSession(appContext)
+            com.music.spotui.data.preferences.clearAllCachedStreams(appContext)
+            // User-selected alternative streams are preferences, not disposable caches.
+            // Clearing transient bytes must never erase manual stream overrides.
+            com.music.spotui.data.preferences.clearAllResolvedVideos(appContext)
+        }
         runCatching {
             mediaCache?.keys?.forEach { key ->
-                runCatching { mediaCache?.removeResource(key) }
+                if (key != activeCacheKey) runCatching { mediaCache?.removeResource(key) }
             }
         }
 
-        val currentPlayingSong = boundState?.queue?.value?.firstOrNull {
-            it.id == boundState?.songId?.value || (it.url == boundState?.songUrl?.value && it.url.isNotBlank())
-        }
-        val playingUrl = boundState?.songUrl?.value
-        if (!playingUrl.isNullOrBlank()) {
-            exoPlayer?.stop()
-            exoPlayer?.clearMediaItems()
-            if (currentPlayingSong != null) {
-                playSong(currentPlayingSong.url, appContext, "song/${currentPlayingSong.id}")
-            } else {
-                val currentId = boundState?.songId?.value
-                playSong(playingUrl, appContext, if (currentId != null && currentId != 0) "song/$currentId" else null)
+        // No stop/clearMediaItems/playSong here: clearing cache leaves playback intact.
+    }
+
+    @Volatile private var clearingPlaybackCache = false
+    @Volatile private var resumeAfterCacheClear = true
+    private val cacheCleanupMutex = kotlinx.coroutines.sync.Mutex()
+
+    /** Complete user-requested cleanup. Manual overrides and downloaded files are separate stores. */
+    suspend fun clearPlaybackCache(context: Context) = cacheCleanupMutex.withLock {
+        withContext(NonCancellable) {
+            val app = context.applicationContext
+            data class Resume(val query: String, val position: Long, val playing: Boolean, val generation: Long, val remote: Boolean)
+            clearingPlaybackCache = true
+            val resume = withContext(Dispatchers.Main) {
+                val remote = webPlaybackActive()
+                val query = currentRequest.ifBlank { loadedQuery.orEmpty() }
+                val position = if (loadedQuery == query) player?.currentPosition?.coerceAtLeast(0L) ?: 0L else 0L
+                val playing = playWhenResolved && (playbackResolving || player?.playWhenReady == true)
+                if (!remote) {
+                    stop()
+                    player?.clearMediaItems()
+                    boundState?.setPlaying(false)
+                }
+                resumeAfterCacheClear = true
+                Resume(query, position, playing, playbackGeneration.get(), remote)
+            }
+            try {
+                withContext(Dispatchers.IO) {
+                    val preloads = prefetchJobs.values.toList()
+                    preloads.forEach { it.cancel() }
+                    introWriters.forEach { it.cancel() }
+                    preloads.joinAll()
+                    streamResolutions.cancelAllAndJoin()
+                    // Downloads may share a raw search: their old results cannot refill the new cache generation.
+                    clearCaches(app)
+                    // Open an existing disk cache even when no player was initialized this session.
+                    val cache = mediaCache(app)
+                    cache.keys.toList().forEach { cache.removeResource(it) }
+                    check(cache.cacheSpace == 0L) { "Temporary audio could not be fully cleared" }
+                }
+            } finally {
+                withContext(NonCancellable + Dispatchers.Main) {
+                    clearingPlaybackCache = false
+                    // A later play/skip/pause command wins over this maintenance operation.
+                    if (!resume.remote && playbackGeneration.get() == resume.generation && resume.query.isNotBlank()) {
+                        if (resume.playing && resumeAfterCacheClear) {
+                            playSong(resume.query, app, isRecovery = true)
+                            seekTo(resume.position)
+                        } else {
+                            setRestorePoint(resume.query, resume.position)
+                        }
+                    }
+                }
             }
         }
     }
 
     fun onQualitySettingChanged(context: Context) {
         val appContext = context.applicationContext
+        // Quality changes intentionally replace an old-quality pending resolution.
+        streamResolutions.cancelAll()
         clearCaches(appContext)
         val currentSong = loadedQuery ?: currentRequest
         if (currentSong.isNotBlank()) {
@@ -824,6 +879,7 @@ object SongPlayer {
         // Never route the new local track's controls to an unrelated Spotify Web session.
         // A paused Spotify web track still owns its commands until a new track is selected.
         val leavingWebPlayback = spotifyWebPlaybackSelected
+        if (leavingWebPlayback) ListeningRecorder.sample(context.applicationContext, false, SpotifyWebPlayer.durationMs)
         spotifyWebPlaybackSelected = false
         if (leavingWebPlayback) runCatching { SpotifyWebPlayer.pause() }
         if (pendingSeekQuery != song) { pendingSeekQuery = null; pendingSeekMs = 0L }
@@ -847,7 +903,7 @@ object SongPlayer {
         // Neighbours are prefetched only AFTER the requested song has been handed to the
         // player, so they never compete with it for network/CPU while it is being resolved.
         val upcomingSongs: List<String> = if (queue.isNotEmpty()) {
-            val cur = queue.indexOfFirst { it.url == song || (mediaId != null && it.id.toString() == mediaId.removePrefix("song/")) }
+            val cur = boundState?.currentQueueIndex() ?: -1
             if (cur >= 0) queue.drop(cur + 1).take(2).map { it.url } else emptyList()
         } else emptyList()
         val startPrefetch: () -> Unit = {
@@ -867,6 +923,10 @@ object SongPlayer {
             metaCover = track.coverUri
         }
 
+        if (!isRecovery) {
+            ListeningRecorder.sample(appContext, player?.isPlaying == true, player?.duration ?: 0L)
+            matchTrack?.let { ListeningRecorder.begin(it) }
+        }
         playWhenResolved = true
         playbackResolving = true // do this BEFORE pausing the outgoing player
         publishPlaybackIntent()
@@ -941,6 +1001,7 @@ object SongPlayer {
                 publishPlaybackIntent()
                 spotifyWebPlaybackSelected = true
                 SpotifyWebPlayer.playEpisode(episodeId)
+                startPositionWatch()
                 scope.launch {
                     delay(1500)
                     updateResolveStatus(false)
@@ -974,6 +1035,7 @@ object SongPlayer {
                 publishPlaybackIntent()
                 spotifyWebPlaybackSelected = true
                 SpotifyWebPlayer.play(spotifyId)
+                startPositionWatch()
                 scope.launch {
                     delay(1500)
                     updateResolveStatus(false)
@@ -1142,6 +1204,7 @@ object SongPlayer {
         }
     }
 
+    private val prefetchJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
     private val prefetchSemaphore = Semaphore(1)
     private val prefetchInFlight: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     @Volatile private var prefetchTargets: Set<String> = emptySet()
@@ -1157,12 +1220,12 @@ object SongPlayer {
     fun prefetch(song: String, context: Context) = prefetchInternal(song, context, listed = false)
 
     private fun prefetchInternal(song: String, context: Context, listed: Boolean) {
-        if (song.isBlank()) return
+        if (song.isBlank() || clearingPlaybackCache) return
         val appContext = context.applicationContext
         if (webPlaybackActive()) return
         if (!com.music.spotui.data.preferences.isPreloadEnabled(appContext)) return
         if (!prefetchInFlight.add(song)) return
-        scope.launch {
+        val work = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 prefetchSemaphore.withPermit {
                     if (listed && song !in prefetchTargets) return@withPermit
@@ -1193,8 +1256,11 @@ object SongPlayer {
                 }
             } finally {
                 prefetchInFlight.remove(song)
+                prefetchJobs.remove(song, currentCoroutineContext()[Job])
             }
         }
+        prefetchJobs[song] = work
+        work.start()
     }
 
     /** Don't start heavy preloading while the current song is still buffering its first bytes. */
@@ -1297,6 +1363,8 @@ object SongPlayer {
         )
     }
 
+    private val introWriters = java.util.concurrent.ConcurrentHashMap.newKeySet<androidx.media3.datasource.cache.CacheWriter>()
+
     private fun cacheIntro(url: String, appContext: Context, song: String = "") {
         if (!url.startsWith("http")) return
         if (!com.music.spotui.data.preferences.isPreloadEnabled(appContext)) return
@@ -1310,13 +1378,16 @@ object SongPlayer {
                 .setKey(stableKey)
                 .setLength(if (qualityCache[query].orEmpty().contains("FLAC", true)) 512L * 1024L else 256L * 1024L) // Intro only; free the preload slot sooner.
                 .build()
-            androidx.media3.datasource.cache.CacheWriter(ds, spec, null, null).cache()
+            val writer = androidx.media3.datasource.cache.CacheWriter(ds, spec, null, null)
+            introWriters.add(writer)
+            try { if (!clearingPlaybackCache) writer.cache() } finally { introWriters.remove(writer); runCatching { ds.close() } }
         }.onFailure { Log.d(TAG, "intro preload skipped: ${it.message}") }
     }
 
     private val streamResolutions = com.music.spotui.util.SharedWork<String, String?>(scope)
 
     internal suspend fun resolveStreamUrl(song: String, appContext: Context, forPlayback: Boolean = false): String? {
+        while (clearingPlaybackCache) delay(25L)
         if (song.startsWith("content://") || song.startsWith("file://")) {
             if (forPlayback) {
                 currentSource = "Local file"
@@ -2004,6 +2075,7 @@ object SongPlayer {
             playback.audioConfig?.perceptualLoudnessDb,
         )
         downloadCoverImage(song.coverUri, java.io.File(dir, "${song.id}_cover.jpg"))
+        if (com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(song.url)) return true
         LyricsApi.removeFromCache(song.title, song.singer)
         val lyricsOk = runCatching {
             LyricsApi.fetch(song.title, song.singer, song.album, song.durationMs / 1000, song.spotifyTrackId)
@@ -2467,9 +2539,7 @@ object SongPlayer {
     // Music selection remains unchanged. Concurrent FLAC and YouTube lookup
     // paths share an identical Spotify metadata request instead of racing the
     // same API (often hitting 429). Results still go through the original code.
-    private val metadataInFlight = java.util.concurrent.ConcurrentHashMap<String,
-        kotlinx.coroutines.Deferred<TrackMatchMetadata?>>()
-    private val metadataInFlightLock = Any()
+    private val metadataWork = com.music.spotui.util.SharedWork<String, TrackMatchMetadata?>(scope)
     // Spotify metadata is authoritative after a successful exact track-ID read.
     // A remaster/live title still carries strong version flags and previously
     // triggered a new Spotify network request every time it was replayed.
@@ -2507,15 +2577,7 @@ object SongPlayer {
 
 
     private suspend fun ensureSpotifyMatchMetadata(query: String): TrackMatchMetadata? {
-        val pending = synchronized(metadataInFlightLock) {
-            metadataInFlight[query] ?: scope.async(Dispatchers.IO) {
-                ensureSpotifyMatchMetadataUnshared(query)
-            }.also { created ->
-                metadataInFlight[query] = created
-                created.invokeOnCompletion { metadataInFlight.remove(query, created) }
-            }
-        }
-        return pending.await()
+        return metadataWork.await(query) { ensureSpotifyMatchMetadataUnshared(query) }
     }
 
     private suspend fun ensureSpotifyMatchMetadataUnshared(query: String): TrackMatchMetadata? {
@@ -2597,14 +2659,17 @@ object SongPlayer {
 
     private suspend fun sharedYouTubeSearch(q: String, filter: YouTube.SearchFilter): List<SongItem> {
         val key = "${filter.value}|$q"
+        val epoch = synchronized(resolutionCacheLock) { resolutionCacheGeneration }
         rawYtSearchCache.get(key)?.let { return it }
-        return rawYtSearchWork.await(key) {
+        return rawYtSearchWork.await("$epoch|$key") {
             rawYtSearchCache.get(key)?.let { return@await it }
             val result = YouTube.search(q, filter)
                 .onFailure { Log.w(TAG, "YouTube search failed for $q", it) }
                 .getOrNull()?.items?.filterIsInstance<SongItem>().orEmpty()
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            if (result.isNotEmpty()) rawYtSearchCache.put(key, result)
+            synchronized(resolutionCacheLock) {
+                if (resolutionCacheGeneration == epoch && result.isNotEmpty()) rawYtSearchCache.put(key, result)
+            }
             result
         }
     }
@@ -2615,6 +2680,7 @@ object SongPlayer {
         forPlayback: Boolean = false,
     ): List<String> {
         val cacheKey = "$query|${filter.value}|MATCH_V12"
+        val epoch = synchronized(resolutionCacheLock) { resolutionCacheGeneration }
         val matchStartedAt = android.os.SystemClock.elapsedRealtime()
         videoCandidatesCache[cacheKey]?.let {
             Log.i("SpotuiStartup", "ytCandidates memoryCache hits=${it.size}")
@@ -2622,7 +2688,9 @@ object SongPlayer {
         }
         appCtx?.let { ctx ->
             com.music.spotui.data.preferences.getCachedVideoIds(ctx, cacheKey)?.let { cached ->
-                videoCandidatesCache[cacheKey] = cached
+                synchronized(resolutionCacheLock) {
+                    if (resolutionCacheGeneration == epoch) videoCandidatesCache[cacheKey] = cached
+                }
                 return cached
             }
         }
@@ -2997,9 +3065,11 @@ object SongPlayer {
         }
 
         fun cacheAndReturn(ids: List<String>): List<String> {
-            videoCandidatesCache[cacheKey] = ids
-            appCtx?.let { ctx ->
-                com.music.spotui.data.preferences.setCachedVideoIds(ctx, cacheKey, ids)
+            synchronized(resolutionCacheLock) {
+                if (resolutionCacheGeneration == epoch) {
+                    videoCandidatesCache[cacheKey] = ids
+                    appCtx?.let { ctx -> com.music.spotui.data.preferences.setCachedVideoIds(ctx, cacheKey, ids) }
+                }
             }
             return ids
         }
@@ -3519,19 +3589,32 @@ object SongPlayer {
         active.play()
     }
 
+    fun recordAudibleState(playing: Boolean) {
+        val ctx = appCtx ?: return
+        if (!webPlaybackActive()) ListeningRecorder.sample(ctx, playing, player?.duration ?: 0L)
+    }
+
+    fun repeatListeningSession() {
+        recordAudibleState(false)
+        val state = boundState ?: return
+        state.queue.value.getOrNull(state.currentQueueIndex())?.let { ListeningRecorder.begin(it) }
+    }
+
     fun pause() {
+        if (clearingPlaybackCache) resumeAfterCacheClear = false
         appCtx?.let { com.music.spotui.data.preferences.PodcastResumeStore.flush(it) }
         if (Looper.myLooper() != Looper.getMainLooper()) {
             onPlayerThread { pause() }
             return
         }
+        recordAudibleState(false)
         cancelCrossfade()
         playbackResolving = false
         playWhenResolved = false
         releasePlaybackFocus()
         publishPlaybackIntent()
         releaseWakeLock("spotui:pause")
-        if (webPlaybackActive()) { SpotifyWebPlayer.pause(); return }
+        if (webPlaybackActive()) { appCtx?.let { ListeningRecorder.sample(it, false, SpotifyWebPlayer.durationMs) }; SpotifyWebPlayer.pause(); return }
         player?.let {
             it.playWhenReady = false
             appCtx?.let { ctx ->
@@ -3546,6 +3629,7 @@ object SongPlayer {
             onPlayerThread { stop() }
             return
         }
+        recordAudibleState(false)
         autofillJob?.cancel()
         autofillJob = null
         videoMetadataWarmupJob?.cancel()
@@ -3600,8 +3684,7 @@ object SongPlayer {
         val state = boundState ?: return
         if (state.repeat.value != RepeatMode.OFF || playbackResolving) return
         val snapshot = state.queue.value
-        val index = snapshot.indexOfFirst { it.id == state.songId.value }
-            .takeIf { it >= 0 } ?: snapshot.indexOfFirst { it.url == state.songUrl.value }
+        val index = state.currentQueueIndex()
         if (index < 0 || index < snapshot.size - 1) return
         val seed = snapshot[index]
         val now = SystemClock.elapsedRealtime()
@@ -3669,10 +3752,7 @@ object SongPlayer {
             return
         }
         val curId = state.songId.value
-        val cur = q.indexOfFirst { it.id == curId }
-            .takeIf { it >= 0 }
-            ?: q.indexOfFirst { it.url == state.songUrl.value }.takeIf { it >= 0 }
-            ?: state.songIndex.value.coerceIn(0, q.size - 1)
+        val cur = state.currentQueueIndex().coerceIn(0, q.size - 1)
         android.util.Log.d(TAG, "next: cur=$cur q.size=${q.size} repeat=${state.repeat.value} curId=$curId")
         val nextIdx: Int
         if (cur < q.size - 1) {
@@ -3717,10 +3797,7 @@ object SongPlayer {
             return
         }
         val curId = state.songId.value
-        val cur = q.indexOfFirst { it.id == curId }
-            .takeIf { it >= 0 }
-            ?: q.indexOfFirst { it.url == state.songUrl.value }.takeIf { it >= 0 }
-            ?: state.songIndex.value.coerceIn(0, q.size - 1)
+        val cur = state.currentQueueIndex().coerceIn(0, q.size - 1)
         android.util.Log.d(TAG, "previous: cur=$cur q.size=${q.size} repeat=${state.repeat.value}")
         val nextIdx: Int
         if (cur > 0) {
@@ -3895,6 +3972,7 @@ object SongPlayer {
     private val crossfadeTriggered = java.util.concurrent.atomic.AtomicBoolean(false)
 
     private fun cancelCrossfade(cancelPreparation: Boolean = true) {
+        ListeningRecorder.discardIncoming()
         if (cancelPreparation) {
             crossfadePreparationJob?.cancel()
             crossfadePreparationJob = null
@@ -3976,6 +4054,8 @@ object SongPlayer {
                 kotlinx.coroutines.delay(1000)
                 val ctx = appCtx ?: continue
                 val playerSnapshot = withContext(Dispatchers.Main) {
+                    if (webPlaybackActive()) ListeningRecorder.sample(ctx, SpotifyWebPlayer.isPlaying, SpotifyWebPlayer.durationMs)
+                    else ListeningRecorder.sample(ctx, !playbackResolving && player?.isPlaying == true, player?.duration ?: 0L)
                     player?.let { Triple(it.isPlaying, it.duration, it.currentPosition) }
                 }
                 if (playerSnapshot != null) {
@@ -4073,10 +4153,7 @@ object SongPlayer {
 
                 val q = state.queue.value
                 val curSongId = state.songId.value
-                val cur = q.indexOfFirst { it.id == curSongId }
-                    .takeIf { it >= 0 }
-                    ?: q.indexOfFirst { it.url == state.songUrl.value }.takeIf { it >= 0 }
-                    ?: state.songIndex.value.coerceIn(0, q.size - 1)
+                val cur = state.currentQueueIndex().coerceIn(0, q.size - 1)
 
                 // Trigger background-only queue radio when playing the final item.
                 // Long podcasts get a head start; never block the playback loop.
@@ -4131,6 +4208,7 @@ object SongPlayer {
                         when (state.repeat.value) {
                             RepeatMode.ONE -> {
                                 withContext(Dispatchers.Main) {
+                                    repeatListeningSession()
                                     player?.seekTo(0)
                                     player?.play()
                                 }
@@ -4204,10 +4282,7 @@ object SongPlayer {
         val state = boundState ?: run { crossfadeTriggered.set(false); return }
         val q = state.queue.value
         if (q.isEmpty()) { crossfadeTriggered.set(false); return }
-        val cur = q.indexOfFirst { it.id == state.songId.value }
-            .takeIf { it >= 0 }
-            ?: q.indexOfFirst { it.url == state.songUrl.value }.takeIf { it >= 0 }
-            ?: state.songIndex.value.coerceIn(0, q.size - 1)
+        val cur = state.currentQueueIndex().coerceIn(0, q.size - 1)
         if (cur < 0 || cur >= q.size - 1) { crossfadeTriggered.set(false); return }
         val nextSong = q[cur + 1]
         pendingCrossfadeSong = nextSong
@@ -4347,7 +4422,7 @@ object SongPlayer {
     private fun advanceAfterCrossfadeFailure(ctx: Context, expectedNextUrl: String) {
         val state = boundState ?: return
         val queue = state.queue.value
-        val currentIndex = queue.indexOfFirst { it.id == state.songId.value }
+        val currentIndex = state.currentQueueIndex()
         if (currentIndex < 0 || queue.getOrNull(currentIndex + 1)?.url != expectedNextUrl) return
         val active = player ?: return
         val remaining = if (active.duration > 0L) active.duration - active.currentPosition else Long.MAX_VALUE
@@ -4382,6 +4457,7 @@ object SongPlayer {
             }
         }
         crossfadeJob?.cancel()
+        ListeningRecorder.beginIncoming(nextSong)
         val job = scope.launch {
             try {
                 val started = SystemClock.elapsedRealtime()
@@ -4393,6 +4469,9 @@ object SongPlayer {
                         val (outgoingGain, incomingGain) = com.music.spotui.audio.YouTubeVolume.crossfadeGains(progress, naturalNormalization)
                         player?.volume = outgoingGain * focusMultiplier
                         secondaryPlayer?.volume = incomingGain * focusMultiplier
+                        appCtx?.let { ctx -> secondaryPlayer?.let { incoming ->
+                            ListeningRecorder.sampleIncoming(ctx, incoming.isPlaying && incoming.volume > 0f, incoming.duration)
+                        } }
                         if (djMode) {
                             val fp = sigmoid(progress)
                             currentPlayerFilter?.cutoffFrequencyHz = expInterpolate(CF_LPF_START_HZ, CF_LPF_END_HZ, fp)
@@ -4468,6 +4547,8 @@ object SongPlayer {
             metaArtist = nextSong.singer
             metaCover = nextSong.coverUri
             currentMediaId = "song/${nextSong.id}"
+            appCtx?.let { ListeningRecorder.sample(it, old?.isPlaying == true, old?.duration ?: 0L) }
+            ListeningRecorder.promoteIncoming(nextSong)
             boundState?.setSongUrl(nextSong.url)
             boundState?.updateSongState(
                 nextSong.coverUri, nextSong.title, nextSong.singer, true,

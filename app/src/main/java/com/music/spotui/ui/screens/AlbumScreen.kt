@@ -1,5 +1,6 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.ui.components.scrollingCollectionBackground
 import com.music.spotui.util.uiLocalized
 
 import android.annotation.SuppressLint
@@ -65,7 +66,6 @@ import com.music.spotui.data.preferences.setAlbumSortOption
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
@@ -321,6 +321,7 @@ fun SumUpAlbumScreen(
 
     Log.d("color", dominentColor.toString())
     val listState = rememberLazyListState()
+    val collapsedTitle = com.music.spotui.ui.components.rememberCollectionTitleState(listState, "album_header")
     val searchReveal = rememberCollectionSearchState(listState, albumName)
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -337,18 +338,15 @@ fun SumUpAlbumScreen(
         focusManager.clearFocus()
     }
     LaunchedEffect(keyboardVisible) { if (keyboardVisible) listState.scrollToItem(0) }
-    val albumBackground = remember(dominentColor) {
-        Brush.verticalGradient(
-            colors = listOf(dominentColor, Color(AppBackground.toArgb()), Color(AppBackground.toArgb())),
-            startY = 0f, endY = 2100f
-        )
-    }
+
     Scaffold(
-        modifier = Modifier.fillMaxSize().background(albumBackground),
+        modifier = Modifier.fillMaxSize().scrollingCollectionBackground(
+                topColor = dominentColor, baseColor = Color(AppBackground.toArgb()),
+                listState = listState, headerKey = "album_header"),
         containerColor = Color.Transparent,
         topBar = {
             CenterAlignedTopAppBar(
-                modifier = Modifier.padding(horizontal = 12.dp),
+                modifier = Modifier.fillMaxWidth(),
                 navigationIcon = {
                     Icon(
                         modifier = Modifier.size(42.dp).clip(RoundedCornerShape(50))
@@ -369,11 +367,11 @@ fun SumUpAlbumScreen(
                         tint = Color.White)
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
+                    containerColor = if (collapsedTitle.collapsed) com.music.spotui.ui.components.collectionToolbarColor(dominentColor, AppBackground) else Color.Transparent,
                     titleContentColor = Color.White,
                 ),
                 title = {
-                    if (listState.firstVisibleItemIndex > 1) Text(
+                    if (collapsedTitle.collapsed) Text(
                         text = albumName, maxLines = 1,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         fontSize = 17.sp, fontWeight = FontWeight.Bold,
@@ -382,11 +380,14 @@ fun SumUpAlbumScreen(
             )
         }
     ) { innerPadding ->
-        Box(modifier = Modifier.fillMaxSize()
+        com.music.spotui.ui.components.CollectionContentViewport(modifier = Modifier.fillMaxSize()
             .padding(top = innerPadding.calculateTopPadding())) {
             LazyColumn(
                 state = listState,
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 138.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        start = com.music.spotui.ui.components.LocalCollectionInset.current,
+                        end = com.music.spotui.ui.components.LocalCollectionInset.current,
+                        bottom = 138.dp),
                 modifier = Modifier.fillMaxSize()
                     .nestedScroll(searchReveal.nestedScrollConnection)
             ) {
@@ -423,7 +424,7 @@ fun SumUpAlbumScreen(
                         text = albumName, color = Color.White, fontSize = 30.sp,
                         fontWeight = FontWeight.Bold, maxLines = 2,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = 20.dp)
+                        modifier = Modifier.padding(horizontal = 20.dp).then(collapsedTitle.titleModifier)
                     )
                     Spacer(modifier = Modifier.height(13.dp))
                     Text(
@@ -440,7 +441,6 @@ fun SumUpAlbumScreen(
                     Text(
                         text = listOfNotNull(
                             releaseKind,
-                            album[0].time.takeIf { it.isNotBlank() },
                             "${albumSongs.size} ${uiLocalized("canciones")}",
                             totalDurationSec.takeIf { it > 0 }?.let { "${it / 60} min" },
                         ).joinToString(" • "),
@@ -600,7 +600,8 @@ fun SumUpAlbumScreen(
                         var isLiked by remember(targetSong.id) {
                             mutableStateOf(isSongLiked(context, targetSong.id.toString()))
                         }
-                        var showSavedIn by remember { mutableStateOf(false) }
+                        val isSaved = com.music.spotui.ui.components.rememberTrackSaved(targetSong, isLiked)
+    var showSavedIn by remember { mutableStateOf(false) }
                         if (showSavedIn) {
                             SavedInSheet(
                                 song = targetSong,
@@ -632,7 +633,6 @@ fun SumUpAlbumScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(AppBackground)
                                     .combinedClickable(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = null,
@@ -708,23 +708,20 @@ fun SumUpAlbumScreen(
                                             interactionSource = remember { MutableInteractionSource() },
                                             indication = null,
                                             onClick = {
-                                                if (isLiked) {
-                                                    removeLikedSongId(context, songId.toString())
-                                                } else {
-                                                    addLikedSongId(context, songId.toString())
-                                                }
+                                                if (isSaved) { showSavedIn = true; return@combinedClickable }
+                                                addLikedSongId(context, songId.toString())
                                                 isLiked = isSongLiked(context, songId.toString())
                                                 albumViewModel.updateLikeState(!albumViewModel.likeState.value)
                                             },
                                             onLongClick = { showSavedIn = true },
                                         ),
-                                    painter = if (isLiked) {
+                                    painter = if (isSaved) {
                                         painterResource(id = R.drawable.added)
                                     } else {
                                         painterResource(id = R.drawable.ic_add)
                                     },
-                                    tint = if (isLiked) {
-                                        Color.White
+                                    tint = if (isSaved) {
+                                        Color(0xFF1ED760)
                                     } else {
                                         Color.Gray
                                     },

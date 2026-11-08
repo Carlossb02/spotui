@@ -54,11 +54,7 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
         com.music.spotui.ui.notification.PodcastCover.preserve(
             com.music.spotui.MyApplication.instance, song
         )
-        val q = currentSongState.queue.value.toMutableList()
-        val curIdx = q.indexOfFirst { it.id == currentSongId.value }
-        val insertAt = (if (curIdx >= 0) curIdx + 1 else 0).coerceAtMost(q.size)
-        q.add(insertAt, song)
-        currentSongState.updateQueue(q, isManualEdit = true)
+        currentSongState.enqueue(listOf(song), next = true)
         com.music.spotui.MyApplication.instance.let { ctx ->
             android.widget.Toast.makeText(ctx, com.music.spotui.R.string.added_to_queue, android.widget.Toast.LENGTH_SHORT).show()
         }
@@ -69,11 +65,7 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
         com.music.spotui.ui.notification.PodcastCover.preserve(
             com.music.spotui.MyApplication.instance, song
         )
-        val q = currentSongState.queue.value.toMutableList()
-        val curIdx = q.indexOfFirst { it.id == currentSongId.value }
-        val insertAt = if (curIdx >= 0) (curIdx + 1).coerceAtMost(q.size) else q.size
-        q.add(insertAt, song)
-        currentSongState.updateQueue(q, isManualEdit = true)
+        currentSongState.enqueue(listOf(song))
         com.music.spotui.MyApplication.instance.let { ctx ->
             android.widget.Toast.makeText(ctx, com.music.spotui.R.string.added_to_queue, android.widget.Toast.LENGTH_SHORT).show()
         }
@@ -86,11 +78,7 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
         songs.take(8).forEach { com.music.spotui.ui.notification.PodcastCover.preserve(
             com.music.spotui.MyApplication.instance, it
         ) }
-        val q = currentSongState.queue.value.toMutableList()
-        val curIdx = q.indexOfFirst { it.id == currentSongId.value }
-        val insertAt = if (curIdx >= 0) (curIdx + 1).coerceAtMost(q.size) else q.size
-        q.addAll(insertAt, songs)
-        currentSongState.updateQueue(q, isManualEdit = true)
+        currentSongState.enqueue(songs)
         com.music.spotui.MyApplication.instance.let { ctx ->
             android.widget.Toast.makeText(ctx, com.music.spotui.R.string.added_to_queue, android.widget.Toast.LENGTH_SHORT).show()
         }
@@ -98,17 +86,16 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
 
     /** Reorder the queue, moving the track at [from] to [to] (both absolute indices). */
     fun moveQueueItem(from: Int, to: Int) {
-        val q = currentSongState.queue.value.toMutableList()
-        if (from !in q.indices || to !in q.indices || from == to) return
-        q.add(to, q.removeAt(from))
-        currentSongState.updateQueue(q, isManualEdit = true)
+        currentSongState.moveQueueItem(from, to)
     }
 
-    /** Remove a track from the queue entirely. */
+    fun removeQueueItem(at: Int) = currentSongState.removeQueueItem(at)
+
+    /** Remove only the requested upcoming occurrence, leaving matching context tracks intact. */
     fun removeFromQueue(song: SongsModel) {
-        val q = currentSongState.queue.value.toMutableList()
-        q.removeAll { it.id == song.id }
-        currentSongState.updateQueue(q, isManualEdit = true)
+        val cur = currentSongState.currentQueueIndex()
+        val at = currentSongState.queue.value.withIndex().firstOrNull { it.index > cur && it.value.id == song.id && it.value.url == song.url }?.index ?: return
+        currentSongState.removeQueueItem(at)
     }
 
 
@@ -139,11 +126,11 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
     // Resolve where we currently are in the queue. The stored index can be stale
     // (e.g. queue swapped out), so match by song id first and fall back to the index.
     private fun currentPositionIn(queueSongs: List<SongsModel>): Int {
-        val byId = queueSongs.indexOfFirst { it.id == currentSongId.value }
-        if (byId >= 0) return byId
-        val byUrl = queueSongs.indexOfFirst { it.url == currentSongState.songUrl.value }
-        if (byUrl >= 0) return byUrl
-        return currentSongIndex.value.coerceIn(0, queueSongs.size - 1)
+        val stored = currentSongIndex.value
+        if (queueSongs.getOrNull(stored)?.id == currentSongId.value) return stored
+        return queueSongs.indexOfFirst { it.id == currentSongId.value }.takeIf { it >= 0 }
+            ?: queueSongs.indexOfFirst { it.url == currentSongState.songUrl.value }.takeIf { it >= 0 }
+            ?: stored.coerceIn(0, (queueSongs.size - 1).coerceAtLeast(0))
     }
 
     // ── Autoplay radio (Spotify recommendations) ──
@@ -238,6 +225,8 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
     private val _canvasUrl = mutableStateOf<String?>(null)
     val canvasUrl: State<String?> get() = _canvasUrl
     @Volatile private var canvasRequestId: String = ""
+
+    suspend fun historyCanvas(trackId: String): String? = repository.provideCanvasUrl(trackId)
 
     fun loadCanvas(trackId: String) {
         _canvasUrl.value = null

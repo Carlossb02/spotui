@@ -17,10 +17,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Text
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -40,6 +40,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -52,6 +53,11 @@ import com.music.spotui.data.preferences.PodcastResumeStore
 import com.music.spotui.ui.screens.PodcastVideoStreams
 import kotlinx.coroutines.delay
 
+/** At most one muted decoder, including mouse/long-press previews. Main-thread only. */
+private object PodcastPreviewOwner {
+    var active by mutableStateOf<Any?>(null)
+}
+
 @OptIn(UnstableApi::class)
 @kotlin.OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -61,6 +67,7 @@ fun ContinuePodcastPreview(
     radius: Dp = 9.dp,
     onTap: () -> Unit = {},
     autoPreview: Boolean = false,
+    previewAllowed: Boolean = true,
 ) {
     val context = LocalContext.current
     val videoId = remember(entry.episode.url) {
@@ -74,7 +81,28 @@ fun ContinuePodcastPreview(
     var unavailable by remember(entry.episode.url) { mutableStateOf(false) }
     var frameReady by remember(entry.episode.url) { mutableStateOf(false) }
     val visible = com.music.spotui.ui.visibility.UiVisibility.isVisible
-    val shouldPreview = visible && (autoPreview || hovered)
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    var foreground by remember(lifecycle) {
+        mutableStateOf(lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
+    }
+    DisposableEffect(lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, _ ->
+            foreground = lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    val lease = remember(entry.episode.url) { Any() }
+    val wantsPreview = visible && foreground && previewAllowed && !unavailable && (autoPreview || hovered)
+    LaunchedEffect(videoId, wantsPreview) {
+        if (!wantsPreview || videoId == null) return@LaunchedEffect
+        // Let touch scrolling settle before reserving a decoder or making a request.
+        delay(550L)
+        PodcastPreviewOwner.active = lease
+        try { kotlinx.coroutines.awaitCancellation() }
+        finally { if (PodcastPreviewOwner.active === lease) PodcastPreviewOwner.active = null }
+    }
+    val shouldPreview = wantsPreview && PodcastPreviewOwner.active === lease
     val currentEpisode by remember(entry.episode.url) {
         PodcastResumeStore.observeEpisode(entry.episode.url)
     }.collectAsState()
@@ -84,7 +112,7 @@ fun ContinuePodcastPreview(
 
     LaunchedEffect(videoId, shouldPreview, visible) {
         if (!visible || !shouldPreview || videoId == null || unavailable) return@LaunchedEffect
-        delay(150L)
+        while (com.music.spotui.di.SongPlayer.isPreparingTrack()) delay(200L)
         resolving = true
         val stream = try {
             PodcastVideoStreams.warmPreview(videoId)
@@ -183,7 +211,10 @@ fun ContinuePodcastPreview(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
                     (android.view.LayoutInflater.from(ctx).inflate(com.music.spotui.R.layout.spotui_podcast_video_view, null, false) as PlayerView).apply {
-                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        useController = false
+                        isClickable = false
+                        isFocusable = false
                         player = previewPlayer
                     }
                 },
@@ -196,7 +227,7 @@ fun ContinuePodcastPreview(
                 entry.episode,
                 modifier = Modifier.fillMaxSize(),
                 radius = radius,
-                imageOverride = videoId?.let { "https://i.ytimg.com/vi/$it/hqdefault.jpg" }
+                imageOverride = videoId?.let { "https://i.ytimg.com/vi/$it/mqdefault.jpg" }
             )
         }
 
@@ -229,7 +260,7 @@ fun ContinuePodcastPreview(
         }
 
         Box(Modifier.matchParentSize().combinedClickable(
-            onClick = onTap, onLongClick = { hovered = !hovered }
+            onClick = onTap, onLongClick = { unavailable = false; hovered = !hovered }
         ))
 
         if (current.fraction > 0f) {
@@ -249,28 +280,17 @@ fun ContinuePodcastPreview(
             }
         }
 
-        Row(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(10.dp)
-                .clip(RoundedCornerShape(28.dp))
-                .background(Color.Black.copy(alpha = 0.70f))
-                .padding(horizontal = 10.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                Icons.Default.VolumeOff,
-                contentDescription = "Vista previa sin sonido",
-                tint = Color.White,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(Modifier.width(9.dp))
-            Icon(
-                Icons.Default.GraphicEq,
-                contentDescription = null,
-                tint = Color.White,
-                modifier = Modifier.size(17.dp)
-            )
+        if (frameReady || resolving) {
+            Row(
+                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
+                    .clip(RoundedCornerShape(20.dp)).background(Color.Black.copy(alpha = 0.72f))
+                    .padding(horizontal = 9.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Default.VolumeOff, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(5.dp))
+                Text(com.music.spotui.util.uiLocalized("Vista previa"), color = Color.White, fontSize = 10.sp)
+            }
         }
     }
 }

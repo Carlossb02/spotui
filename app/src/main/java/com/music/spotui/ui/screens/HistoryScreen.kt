@@ -1,65 +1,32 @@
 package com.music.spotui.ui.screens
 
-import com.music.spotui.util.uiLocalized
-
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Person
-import com.music.spotui.ui.components.AppSearchBar
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -71,623 +38,294 @@ import com.bumptech.glide.integration.compose.GlideImage
 import com.bumptech.glide.integration.compose.placeholder
 import com.music.spotui.R
 import com.music.spotui.data.entity.SongsModel
-import com.music.spotui.data.preferences.HistoryEntry
-import com.music.spotui.data.preferences.HistorySortOption
-import com.music.spotui.data.preferences.clearListeningHistory
-import com.music.spotui.data.preferences.getHistorySortOption
-import com.music.spotui.data.preferences.getListeningHistory
-import com.music.spotui.data.preferences.isHistorySortDescending
-import com.music.spotui.data.preferences.removeListeningHistory
-import com.music.spotui.data.preferences.setHistorySortOption
+import com.music.spotui.data.preferences.*
 import com.music.spotui.di.SongPlayer
+import com.music.spotui.ui.components.AppSearchBar
 import com.music.spotui.ui.components.SongOptionsSheet
 import com.music.spotui.ui.navigation.artistRoute
-import com.music.spotui.ui.theme.AppBackground
-import com.music.spotui.ui.theme.AppPalette
 import com.music.spotui.ui.viewmodel.PlayerViewModel
+import com.music.spotui.util.uiLocalized
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
 
-private val CardBg = Color(0xFF18181C)
-private val BarTrack = Color(0xFF2A2A2A)
+private enum class RecapPeriod { ALL, MONTH, YEAR }
+private data class RecapData(val history: List<HistoryEntry> = emptyList(), val months: List<java.time.YearMonth> = emptyList()) {
+    val stats = ListeningHistoryStats(history)
+}
+
 private val SpotifyGreen = Color(0xFF1ED760)
 private val MutedText = Color(0xFFB3B3B3)
 
-@OptIn(ExperimentalGlideComposeApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(navController: NavController) {
     val context = LocalContext.current
     val playerViewModel: PlayerViewModel = hiltViewModel()
-    var history by remember { mutableStateOf(getListeningHistory(context)) }
-    var showClearDialog by remember { mutableStateOf(false) }
-
+    val scope = rememberCoroutineScope()
+    val revision by listeningHistoryVersion.collectAsState()
+    val today = remember { java.time.LocalDate.now() }
+    var period by remember { mutableStateOf(RecapPeriod.ALL) }
+    var year by remember { mutableStateOf(today.year) }
+    var month by remember { mutableStateOf(today.monthValue) }
+    var periodMenu by remember { mutableStateOf(false) }
+    var kindMenu by remember { mutableStateOf(false) }
+    val request = Triple(year.takeUnless { period == RecapPeriod.ALL }, if (period == RecapPeriod.MONTH) month else null, revision)
+    val data by produceState(RecapData(), context, request) {
+        value = withContext(Dispatchers.IO) {
+            RecapData(getListeningHistory(context, request.first, request.second, Int.MAX_VALUE), listeningHistoryMonths(context))
+        }
+    }
+    val history = data.history
+    val stats = data.stats
+    val years = remember(data.months, today.year) { (data.months.map { it.year } + today.year).distinct().sortedDescending() }
+    val storageError = uiLocalized("No se pudo actualizar el historial")
+    fun editHistory(work: () -> Unit) {
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching(work) }
+            if (result.isFailure) android.widget.Toast.makeText(context, storageError, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+    var kind by remember { mutableStateOf(HistoryKind.ALL) }
     var searchQuery by remember { mutableStateOf("") }
     var currentSort by remember { mutableStateOf(getHistorySortOption(context)) }
-    var isDescending by remember { mutableStateOf(isHistorySortDescending(context)) }
+    var descending by remember { mutableStateOf(isHistorySortDescending(context)) }
     var showSortSheet by remember { mutableStateOf(false) }
+    var showClearDialog by remember { mutableStateOf(false) }
+    var removeTarget by remember { mutableStateOf<HistoryEntry?>(null) }
     var menuSong by remember { mutableStateOf<SongsModel?>(null) }
-    menuSong?.let { sel ->
-        SongOptionsSheet(
-            song = sel,
-            navController = navController,
-            context = context,
-            onDismiss = { menuSong = null },
-        )
-    }
-
-    val filteredHistory = remember(history, searchQuery, currentSort, isDescending) {
-        val filtered = if (searchQuery.isBlank()) {
-            history
-        } else {
-            history.filter {
-                it.title.contains(searchQuery, ignoreCase = true) ||
-                        it.singer.contains(searchQuery, ignoreCase = true) ||
-                        it.album.contains(searchQuery, ignoreCase = true)
-            }
-        }
-        when (currentSort) {
-            HistorySortOption.DATE -> if (isDescending) filtered else filtered.reversed()
-            HistorySortOption.TITLE -> if (isDescending) filtered.sortedByDescending { it.title.lowercase() } else filtered.sortedBy { it.title.lowercase() }
-            HistorySortOption.ARTIST -> if (isDescending) filtered.sortedByDescending { it.singer.lowercase() } else filtered.sortedBy { it.singer.lowercase() }
-        }
-    }
-
+    menuSong?.let { SongOptionsSheet(song = it, navController = navController, context = context, onDismiss = { menuSong = null }) }
     fun playEntry(entry: HistoryEntry) {
         if (entry.url.isBlank()) return
-        playerViewModel.updateQueue(listOf(
-            SongsModel(
-                id = entry.songId,
-                title = entry.title,
-                album = entry.album,
-                singer = entry.singer,
-                coverUri = entry.image,
-                url = entry.url,
-            ),
-        ))
-        playerViewModel.updateSongState(
-            entry.image, entry.title, entry.singer, true, entry.songId, 0, entry.album,
-        )
-        SongPlayer.playSong(entry.url, context, "song/${entry.songId}")
+        val song = entry.asSong()
+        playerViewModel.updateQueue(listOf(song), sourceName = "Historial de escucha")
+        playerViewModel.updateSongState(song.coverUri, song.title, song.singer, true, song.id, 0, song.album)
+        SongPlayer.playSong(song.url, context, "song/${song.id}")
     }
-
-    val topArtists = remember(history) {
-        history.groupingBy { it.singer.substringBefore(",").trim() }
-            .eachCount().entries
-            .filter { it.key.isNotBlank() }
-            .sortedByDescending { it.value }
-            .take(5)
+    val selected = remember(stats, kind) { stats.filtered(kind) }
+    val filtered = remember(selected, searchQuery, currentSort, descending) {
+        val matches = selected.filter { searchQuery.isBlank() || it.title.contains(searchQuery, true) || it.singer.contains(searchQuery, true) || it.album.contains(searchQuery, true) }
+        when (currentSort) {
+            HistorySortOption.DATE -> if (descending) matches.sortedByDescending { it.ts } else matches.sortedBy { it.ts }
+            HistorySortOption.TITLE -> if (descending) matches.sortedByDescending { it.title.lowercase() } else matches.sortedBy { it.title.lowercase() }
+            HistorySortOption.ARTIST -> if (descending) matches.sortedByDescending { it.singer.lowercase() } else matches.sortedBy { it.singer.lowercase() }
+        }
     }
-    val topTracks = remember(history) {
-        history.groupingBy { "${it.title} — ${it.singer}" }
-            .eachCount().entries
-            .sortedByDescending { it.value }
-            .take(5)
-    }
-
-    val maxArtistPlays = remember(topArtists) { topArtists.firstOrNull()?.value?.toFloat() ?: 1f }
-    val maxTrackPlays = remember(topTracks) { topTracks.firstOrNull()?.value?.toFloat() ?: 1f }
-
-    Surface(modifier = Modifier.fillMaxSize()) {
-        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-        Box(modifier = Modifier.fillMaxSize()) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(AppBackground.toArgb()))
-                    .statusBarsPadding()
-            ) {
-                item {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp, 16.dp, 16.dp, 8.dp),
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "",
-                                tint = Color.White,
-                                modifier = Modifier
-                                    .size(26.dp)
-                                    .clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null,
-                                    ) { navController.navigateUp() },
-                            )
-                            Spacer(Modifier.width(16.dp))
-                            Text(com.music.spotui.util.AppLang.get(context, "listening_history"), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                        }
-                        if (history.isNotEmpty()) {
-                            Text(
-                                com.music.spotui.util.AppLang.get(context, "clear_all"),
-                                color = MutedText,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                ) { showClearDialog = true },
-                            )
-                        }
-                    }
+    val listState = rememberLazyListState()
+    val inset = ((LocalConfiguration.current.screenWidthDp - 840) / 2f).coerceAtLeast(0f).dp
+    Box(Modifier.fillMaxSize().background(Color(0xFF121212)).statusBarsPadding()) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(start = inset, end = inset, bottom = 144.dp)) {
+            item(key = "header") {
+                Row(Modifier.fillMaxWidth().padding(12.dp, 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { navController.navigateUp() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, uiLocalized("Volver"), tint = Color.White) }
+                    Text(uiLocalized("Historial de escucha"), color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    if (history.isNotEmpty()) IconButton(onClick = { showClearDialog = true }) { Icon(Icons.Default.DeleteOutline, uiLocalized("Borrar historial"), tint = MutedText) }
                 }
-
-                if (history.isEmpty()) {
-                    item {
-                        Text(
-                            uiLocalized("Nothing here yet — play something!"),
-                            color = Color.Gray,
-                            fontSize = 14.sp,
-                            modifier = Modifier.padding(16.dp, 32.dp),
-                        )
-                    }
-                } else {
-                    // ── Stats card ──
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(
-                                    Brush.linearGradient(
-                                        colors = listOf(
-                                            Color(0xFF2E1C5A),
-                                            Color(0xFF181824),
-                                        )
-                                    )
-                                )
-                                .padding(16.dp),
-                        ) {
-                            Column {
-                                Text(uiLocalized("YOUR LISTENING HABITS"), color = Color(0xFFB09BE8), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                Spacer(Modifier.height(12.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceAround,
-                                ) {
-                                    StatPill("Total plays", "${history.size}", SpotifyGreen)
-                                    StatPill("Unique songs", "${history.distinctBy { it.songId }.size}", Color(0xFF4CB0E8))
-                                    StatPill("Artists", "${history.distinctBy { it.singer.substringBefore(",") }.size}", Color(0xFFE89BDB))
+            }
+            item(key = "period") {
+                Row(Modifier.fillMaxWidth().padding(20.dp, 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(Modifier.weight(1.35f)) {
+                        TextButton(onClick = { periodMenu = true }, modifier = Modifier.fillMaxWidth().background(Color(0xFF282828), RoundedCornerShape(50))) {
+                            Text(when (period) {
+                                RecapPeriod.ALL -> uiLocalized("Todo el historial")
+                                RecapPeriod.YEAR -> year.toString()
+                                RecapPeriod.MONTH -> java.time.YearMonth.of(year, month).format(java.time.format.DateTimeFormatter.ofPattern("LLLL yyyy", java.util.Locale.getDefault()))
+                            }, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                            Icon(Icons.Default.KeyboardArrowDown, null, tint = MutedText)
+                        }
+                        DropdownMenu(expanded = periodMenu, onDismissRequest = { periodMenu = false }, modifier = Modifier.heightIn(max = 400.dp)) {
+                            DropdownMenuItem(text = { Text(uiLocalized("Todo el historial"), color = if (period == RecapPeriod.ALL) SpotifyGreen else Color.White) }, onClick = { period = RecapPeriod.ALL; periodMenu = false })
+                            years.forEach { availableYear ->
+                                HorizontalDivider(color = Color(0xFF363636))
+                                DropdownMenuItem(text = { Text(availableYear.toString(), fontWeight = FontWeight.Bold, color = if (period == RecapPeriod.YEAR && year == availableYear) SpotifyGreen else Color.White) }, onClick = { year = availableYear; period = RecapPeriod.YEAR; periodMenu = false })
+                                (data.months + java.time.YearMonth.of(today.year, today.monthValue)).distinct().filter { it.year == availableYear }.sortedDescending().forEach { available ->
+                                    DropdownMenuItem(text = { Text(available.format(java.time.format.DateTimeFormatter.ofPattern("LLLL yyyy", java.util.Locale.getDefault())), color = if (period == RecapPeriod.MONTH && year == available.year && month == available.monthValue) SpotifyGreen else Color.White) }, onClick = {
+                                        year = available.year; month = available.monthValue; period = RecapPeriod.MONTH; periodMenu = false
+                                    })
                                 }
                             }
                         }
                     }
-
-                    // ── Top artists ──
-                    if (topArtists.isNotEmpty()) {
-                        item {
-                            Text(
-                                uiLocalized("Top artists"),
-                                color = Color.White,
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(16.dp, 16.dp, 16.dp, 4.dp),
-                            )
+                    Box(Modifier.weight(1f)) {
+                        TextButton(onClick = { kindMenu = true }, modifier = Modifier.fillMaxWidth().background(Color(0xFF282828), RoundedCornerShape(50))) {
+                            Text(uiLocalized(when (kind) { HistoryKind.ALL -> "Todo"; HistoryKind.MUSIC -> "Música"; HistoryKind.PODCASTS -> "Podcasts" }), color = Color.White, modifier = Modifier.weight(1f))
+                            Icon(Icons.Default.KeyboardArrowDown, null, tint = MutedText)
                         }
-                        items(topArtists.size) { i ->
-                            val entry = topArtists[i]
-                            val artistImage = remember(entry.key, history) {
-                                history.lastOrNull {
-                                    it.singer.substringBefore(",").trim() == entry.key
-                                }?.image ?: ""
-                            }
-                            TopArtistRow(
-                                rank = i + 1,
-                                name = entry.key,
-                                plays = entry.value,
-                                progress = entry.value.toFloat() / maxArtistPlays,
-                                imageUrl = artistImage,
-                            ) {
-                                navController.navigate(artistRoute(entry.key))
-                            }
-                        }
-                    }
-
-                    // ── Top tracks ──
-                    if (topTracks.isNotEmpty()) {
-                        item {
-                            Text(
-                                uiLocalized("Top tracks"),
-                                color = Color.White,
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(16.dp, 16.dp, 16.dp, 4.dp),
-                            )
-                        }
-                        items(topTracks.size) { i ->
-                            val entry = topTracks[i]
-                            val parts = entry.key.split(" — ", limit = 2)
-                            val trackTitle = parts.getOrElse(0) { entry.key }
-                            val trackArtist = parts.getOrElse(1) { "" }
-                            val trackImage = remember(entry.key, history) {
-                                history.lastOrNull {
-                                    "${it.title} — ${it.singer}" == entry.key
-                                }?.image ?: ""
-                            }
-                            TopTrackRow(
-                                rank = i + 1,
-                                title = trackTitle,
-                                artist = trackArtist,
-                                plays = entry.value,
-                                progress = entry.value.toFloat() / maxTrackPlays,
-                                imageUrl = trackImage,
-                            ) {
-                                val latest = history.lastOrNull {
-                                    "${it.title} — ${it.singer}" == entry.key
-                                }
-                                if (latest != null) playEntry(latest)
-                            }
-                        }
-                    }
-
-                    // ── History list ──
-                    item {
-                        Text(
-                            uiLocalized("History"),
-                            color = Color.White,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(16.dp, 16.dp, 16.dp, 4.dp),
-                        )
-                    }
-
-                    // Search Bar
-                    item {
-                        AppSearchBar(
-                            query = searchQuery,
-                            onQueryChange = { searchQuery = it },
-                            modifier = Modifier.padding(16.dp, 8.dp),
-                            placeholder = uiLocalized("Search in history"),
-                        )
-                    }
-
-                    // Sort action button
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp, 0.dp, 16.dp, 8.dp),
-                            horizontalArrangement = Arrangement.Start
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .background(Color(0xFF2A2A30))
-                                    .clickable { showSortSheet = true }
-                                    .padding(horizontal = 14.dp, vertical = 8.dp)
-                            ) {
-                                Text(
-                                    text = currentSort.getDescriptiveLabel(isDescending),
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.KeyboardArrowDown,
-                                    contentDescription = uiLocalized("Sort Options"),
-                                    tint = Color.White,
-                                    modifier = Modifier
-                                        .size(16.dp)
-                                        .padding(start = 4.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    if (filteredHistory.isEmpty() && searchQuery.isNotBlank()) {
-                        item {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 40.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Text(
-                                    text = "${uiLocalized("No matches found for")} \"$searchQuery\"",
-                                    color = Color.White,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                        }
-                    } else {
-                        items(filteredHistory.size) { i ->
-                            val entry = filteredHistory[i]
-                            HistoryRow(
-                                entry = entry,
-                                onRemove = {
-                                    removeListeningHistory(context, entry)
-                                    history = getListeningHistory(context)
-                                },
-                                onClick = { playEntry(entry) },
-                                onLongClick = {
-                                    menuSong = SongsModel(
-                                        id = entry.songId,
-                                        title = entry.title,
-                                        album = entry.album,
-                                        singer = entry.singer,
-                                        coverUri = entry.image,
-                                        url = entry.url,
-                                    )
-                                },
-                            )
+                        DropdownMenu(expanded = kindMenu, onDismissRequest = { kindMenu = false }) {
+                            HistoryKind.entries.forEach { option -> DropdownMenuItem(text = {
+                                Text(uiLocalized(when(option) { HistoryKind.ALL -> "Todo"; HistoryKind.MUSIC -> "Música"; HistoryKind.PODCASTS -> "Podcasts" }), color = if (kind == option) SpotifyGreen else Color.White)
+                            }, onClick = { kind = option; kindMenu = false }) }
                         }
                     }
                 }
-                item { Spacer(Modifier.height(140.dp)) }
             }
+            item(key = "recap") {
+                AnimatedContent(targetState = kind, label = "history_recap") { selectedKind -> HistoryRecap(stats, selectedKind) }
+            }
+            if (history.isNotEmpty()) {
+                item(key = "totals") {
+                    Row(Modifier.fillMaxWidth().padding(20.dp, 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        HistoryCountCard(uiLocalized("Música"), stats.musicPlays, Color(0xFF242424), Modifier.weight(1f)) { kind = HistoryKind.MUSIC }
+                        HistoryCountCard(uiLocalized("Podcasts"), stats.podcastPlays, Color(0xFF242424), Modifier.weight(1f)) { kind = HistoryKind.PODCASTS }
+                    }
+                }
+                if (kind != HistoryKind.PODCASTS) item(key = "minutes") {
+                    Column(Modifier.fillMaxWidth().padding(20.dp, 8.dp).clip(RoundedCornerShape(20.dp)).background(Color(0xFF242424)).padding(22.dp)) {
+                        Icon(Icons.Default.Headphones, null, tint = Color(0xFFD7F769), modifier = Modifier.size(28.dp))
+                        Text(java.text.NumberFormat.getIntegerInstance().format(stats.musicMinutes), color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Black)
+                        Text(uiLocalized("Minutos de música"), color = Color.White, fontWeight = FontWeight.Bold)
 
-            com.music.spotui.ui.components.FastScrollbarForLazyList(
-                state = listState,
-                modifier = Modifier.align(Alignment.CenterEnd)
-            )
-
-            if (showSortSheet) {
-                ModalBottomSheet(
-                    onDismissRequest = { showSortSheet = false },
-                    containerColor = Color(0xFF1A1A1A)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .navigationBarsPadding()
-                    ) {
-                        Text(
-                            text = uiLocalized("Sort by"),
-                            color = Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(16.dp, 12.dp, 16.dp, 12.dp)
-                        )
-                        HorizontalDivider(color = Color(0xFF2A2A2A))
-                        Spacer(modifier = Modifier.height(4.dp))
-                        HistorySortOption.entries.forEach { option ->
-                            val isSelected = option == currentSort
-                            val icon = when (option) {
-                                HistorySortOption.DATE -> Icons.Default.DateRange
-                                HistorySortOption.TITLE -> Icons.AutoMirrored.Filled.List
-                                HistorySortOption.ARTIST -> Icons.Default.Person
-                            }
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        if (currentSort == option) {
-                                            isDescending = !isDescending
-                                        } else {
-                                            currentSort = option
-                                            isDescending = (option == HistorySortOption.DATE)
-                                        }
-                                        setHistorySortOption(context, currentSort, isDescending)
-                                        showSortSheet = false
-                                    }
-                                    .padding(16.dp, 14.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = icon,
-                                    contentDescription = null,
-                                    tint = if (isSelected) Color(AppPalette.toArgb()) else Color.White,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                                Spacer(modifier = Modifier.width(18.dp))
-                                Text(
-                                    text = if (isSelected) option.getDescriptiveLabel(isDescending) else option.getDescriptiveLabel(option == HistorySortOption.DATE),
-                                    color = if (isSelected) Color(AppPalette.toArgb()) else Color.White,
-                                    fontSize = 15.sp,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = if (isDescending) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
-                                        contentDescription = null,
-                                        tint = Color(AppPalette.toArgb()),
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
+                    }
+                }
+                if (kind != HistoryKind.PODCASTS && stats.tracks.isNotEmpty()) item(key = "video_recap") {
+                    HistoryHeading(uiLocalized("Tus canciones más escuchadas"))
+                    val previews = rememberLazyListState()
+                    val activePreview by remember { derivedStateOf {
+                        val layout = previews.layoutInfo
+                        layout.visibleItemsInfo.maxByOrNull { item ->
+                            minOf(item.offset + item.size, layout.viewportEndOffset) - maxOf(item.offset, layout.viewportStartOffset)
+                        }?.index ?: 0
+                    } }
+                    LazyRow(state = previews, contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        itemsIndexed(stats.tracks, key = { _, rank -> rank.latest.recordingKey() }) { index, rank ->
+                            HistoryCanvasCard(rank, index == activePreview && !previews.isScrollInProgress && !listState.isScrollInProgress,
+                                lookup = { id -> playerViewModel.historyCanvas(id) }, onClick = { playEntry(rank.latest) })
                         }
-                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+                }
+                if (kind != HistoryKind.PODCASTS && stats.artists.isNotEmpty()) {
+                    item(key = "artist_title") { HistoryHeading(uiLocalized("Tus artistas más escuchados")) }
+                    items(stats.artists, key = { "artist_${it.name}" }) { rank ->
+                        HistoryRankCard(stats.artists.indexOf(rank) + 1, rank, SpotifyGreen, playable = false) { navController.navigate(artistRoute(rank.name)) }
+                    }
+                }
+                if (kind != HistoryKind.MUSIC && stats.shows.isNotEmpty()) {
+                    item(key = "podcast_title") { HistoryHeading(uiLocalized("Tus podcasts más escuchados")) }
+                    items(stats.shows, key = { "show_${it.name}" }) { rank ->
+                        HistoryRankCard(stats.shows.indexOf(rank) + 1, rank, Color(0xFFCFB0FF)) { playEntry(rank.latest) }
                     }
                 }
             }
-
-            if (showClearDialog) {
-                AlertDialog(
-                    onDismissRequest = { showClearDialog = false },
-                    title = { Text(uiLocalized("Clear listening history?"), color = Color.White, fontWeight = FontWeight.Bold) },
-                    text = { Text("This will remove all ${history.size} plays. This action cannot be undone.", color = MutedText) },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            clearListeningHistory(context)
-                            history = emptyList()
-                            showClearDialog = false
-                        }) {
-                            Text(uiLocalized("Clear"), color = Color(0xFFE57373))
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showClearDialog = false }) {
-                            Text(uiLocalized("Cancel"), color = Color.White)
-                        }
-                    },
-                    containerColor = Color(0xFF1A1A1A),
-                    titleContentColor = Color.White,
-                    textContentColor = MutedText,
-                )
+            item(key = "recent_title") {
+                Row(Modifier.fillMaxWidth().padding(20.dp, 20.dp, 12.dp, 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(uiLocalized("Escuchado recientemente"), color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { showSortSheet = true }) { Icon(Icons.Default.Sort, uiLocalized("Ordenar"), tint = SpotifyGreen) }
+                }
+                AppSearchBar(query = searchQuery, onQueryChange = { searchQuery = it }, placeholder = uiLocalized("Buscar en el historial"), modifier = Modifier.padding(horizontal = 16.dp))
+                Spacer(Modifier.height(10.dp))
             }
+            if (filtered.isEmpty()) item(key = "empty") {
+                Text(uiLocalized(if (history.isEmpty()) "Aún no hay reproducciones." else "No hay reproducciones para este filtro."), color = MutedText, modifier = Modifier.padding(20.dp, 28.dp))
+            }
+            items(filtered, key = { it.storageKey() }) { entry ->
+                HistoryRow(entry, onRemove = { removeTarget = entry }, onClick = { playEntry(entry) }, onLongClick = { menuSong = entry.asSong() })
+            }
+        }
+    }
+    if (showSortSheet) ModalBottomSheet(onDismissRequest = { showSortSheet = false }, containerColor = Color(0xFF202020)) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(20.dp)) {
+            Text(uiLocalized("Ordenar historial"), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            HistorySortOption.entries.forEach { option ->
+                TextButton(onClick = {
+                    descending = if (currentSort == option) !descending else option == HistorySortOption.DATE
+                    currentSort = option
+                    setHistorySortOption(context, option, descending)
+                    showSortSheet = false
+                }, modifier = Modifier.fillMaxWidth()) {
+                    Text(uiLocalized(when(option) { HistorySortOption.DATE -> "Fecha"; HistorySortOption.TITLE -> "Título"; HistorySortOption.ARTIST -> "Artista o podcast" }), color = if (currentSort == option) SpotifyGreen else Color.White, modifier = Modifier.weight(1f))
+                    if (currentSort == option) Icon(if (descending) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp, null, tint = SpotifyGreen)
+                }
+            }
+        }
+    }
+    if (showClearDialog) AlertDialog(onDismissRequest = { showClearDialog = false }, containerColor = Color(0xFF242424),
+        title = { Text(uiLocalized("¿Borrar el historial?"), color = Color.White) },
+        text = { Text(uiLocalized("Se eliminará tu historial de música y podcasts."), color = MutedText) },
+        confirmButton = { TextButton(onClick = { editHistory { clearListeningHistory(context) }; showClearDialog = false }) { Text(uiLocalized("Borrar"), color = Color(0xFFFF8E9D)) } },
+        dismissButton = { TextButton(onClick = { showClearDialog = false }) { Text(uiLocalized("Cancelar"), color = Color.White) } })
+    removeTarget?.let { entry -> AlertDialog(onDismissRequest = { removeTarget = null }, containerColor = Color(0xFF242424),
+        title = { Text(uiLocalized("¿Quitar estas reproducciones?"), color = Color.White) },
+        text = { Text("${entry.playCount} ${uiLocalized("reproducciones de esta canción en este mes")}", color = MutedText) },
+        confirmButton = { TextButton(onClick = { editHistory { removeListeningHistory(context, entry) }; removeTarget = null }) { Text(uiLocalized("Quitar"), color = SpotifyGreen) } },
+        dismissButton = { TextButton(onClick = { removeTarget = null }) { Text(uiLocalized("Cancelar"), color = Color.White) } }) }
+
+}
+
+private fun HistoryEntry.asSong() = SongsModel(id = songId, title = title, album = album, singer = singer, coverUri = image, url = url, spotifyTrackId = spotifyTrackId, durationMs = durationMs.coerceIn(0, Int.MAX_VALUE.toLong()).toInt())
+
+@Composable
+private fun HistoryRecap(stats: ListeningHistoryStats, kind: HistoryKind) {
+    val transition = rememberInfiniteTransition(label = "recap_shapes")
+    val rotation by transition.animateFloat(initialValue = -15f, targetValue = 18f, animationSpec = infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Reverse), label = "recap_rotation")
+    val selected = stats.filtered(kind)
+    val count by animateIntAsState(selected.sumOf { it.playCount }, tween(650), label = "recap_count")
+    val accent = SpotifyGreen
+    Box(Modifier.fillMaxWidth().padding(20.dp, 12.dp).clip(RoundedCornerShape(24.dp)).background(Brush.verticalGradient(listOf(Color(0xFF15392A), Color(0xFF1A1A1A))))) {
+        Canvas(Modifier.matchParentSize().graphicsLayer { rotationZ = rotation; scaleX = 1.25f; scaleY = 1.25f }) {
+            drawCircle(accent.copy(alpha = 0.22f), size.width * 0.55f, Offset(size.width * 0.95f, size.height * 0.1f))
+            drawCircle(SpotifyGreen.copy(alpha = 0.10f), size.width * 0.34f, Offset(size.width * 0.8f, size.height * 1.2f))
+        }
+        Column(Modifier.fillMaxWidth().padding(24.dp)) {
+            Text(uiLocalized("TU ACTIVIDAD"), color = accent, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 2.sp)
+            Spacer(Modifier.height(18.dp))
+            Text(uiLocalized(when(kind) { HistoryKind.ALL -> "Tu historial"; HistoryKind.MUSIC -> "Tu música"; HistoryKind.PODCASTS -> "Tus podcasts" }), color = Color.White, fontSize = 32.sp, lineHeight = 36.sp, fontWeight = FontWeight.Black)
+            Spacer(Modifier.height(22.dp))
+            Text("$count", color = accent, fontSize = 48.sp, fontWeight = FontWeight.Black)
+            Text(uiLocalized("Reproducciones"), color = Color.White, fontSize = 13.sp)
         }
     }
 }
 
 @Composable
-private fun StatPill(label: String, value: String, accent: Color) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, color = accent, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        Text(label, color = MutedText, fontSize = 11.sp)
+private fun HistoryCountCard(label: String, count: Int, color: Color, modifier: Modifier, onClick: () -> Unit) {
+    Column(modifier.clip(RoundedCornerShape(18.dp)).background(color).clickable(onClick = onClick).padding(16.dp)) {
+        Text(label, color = MutedText, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Text("$count", color = SpotifyGreen, fontSize = 36.sp, fontWeight = FontWeight.Black)
+        Text(uiLocalized("reproducciones"), color = MutedText, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun HistoryHeading(title: String) { Text(title, color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(20.dp, 20.dp, 20.dp, 8.dp)) }
+
+@OptIn(ExperimentalGlideComposeApi::class)
+@Composable
+private fun HistoryRankCard(position: Int, rank: HistoryRanking, accent: Color, playable: Boolean = true, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(20.dp, 4.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF202020)).clickable(onClick = onClick).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(position.toString().padStart(2, '0'), color = accent, fontSize = 23.sp, fontWeight = FontWeight.Black, modifier = Modifier.width(42.dp))
+        GlideImage(model = rank.latest.image, contentDescription = null, contentScale = ContentScale.Crop, failure = placeholder(R.drawable.placeholder), loading = placeholder(R.drawable.placeholder), modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)))
+        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+            Text(rank.name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("${rank.plays} ${uiLocalized("reproducciones")}", color = MutedText, fontSize = 12.sp)
+        }
+        Icon(if (playable) Icons.Default.PlayArrow else Icons.Default.ChevronRight, null, tint = accent, modifier = Modifier.size(24.dp))
     }
 }
 
 @OptIn(ExperimentalGlideComposeApi::class)
 @Composable
-private fun TopArtistRow(
-    rank: Int,
-    name: String,
-    plays: Int,
-    progress: Float,
-    imageUrl: String,
-    onClick: () -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(CardBg)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-            ) { onClick() }
-            .padding(12.dp),
-    ) {
-        Text(
-            text = "$rank",
-            color = MutedText,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.width(22.dp),
-        )
-        GlideImage(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape),
-            model = imageUrl.ifBlank { null },
-            contentScale = ContentScale.Crop,
-            failure = placeholder(R.drawable.placeholder),
-            loading = placeholder(R.drawable.placeholder),
-            contentDescription = "",
-        )
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(start = 12.dp),
-        ) {
-            Text(
-                name,
-                color = Color.White,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(6.dp))
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp)),
-                color = AppPalette,
-                trackColor = BarTrack,
-                strokeCap = StrokeCap.Round,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "$plays plays",
-                color = MutedText,
-                fontSize = 12.sp,
-            )
+private fun HistoryCanvasCard(rank: HistoryRanking, active: Boolean, lookup: suspend (String) -> String?, onClick: () -> Unit) {
+    val track = rank.latest
+    val canvas by produceState<String?>(null, track.spotifyTrackId, active) {
+        value = null
+        if (active && track.spotifyTrackId.isNotBlank()) {
+            while (SongPlayer.isPreparingTrack()) delay(200L)
+            value = withContext(Dispatchers.IO) { runCatching { lookup(track.spotifyTrackId) }.getOrNull() }
         }
     }
-}
-
-@OptIn(ExperimentalGlideComposeApi::class)
-@Composable
-private fun TopTrackRow(
-    rank: Int,
-    title: String,
-    artist: String,
-    plays: Int,
-    progress: Float,
-    imageUrl: String,
-    onClick: () -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(CardBg)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-            ) { onClick() }
-            .padding(12.dp),
-    ) {
-        Text(
-            text = "$rank",
-            color = MutedText,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.width(22.dp),
-        )
-        GlideImage(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(6.dp)),
-            model = imageUrl.ifBlank { null },
-            contentScale = ContentScale.Crop,
-            failure = placeholder(R.drawable.placeholder),
-            loading = placeholder(R.drawable.placeholder),
-            contentDescription = "",
-        )
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(start = 12.dp),
-        ) {
-            Text(
-                title,
-                color = Color.White,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (artist.isNotBlank()) {
-                Text(
-                    artist,
-                    color = MutedText,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp)),
-                color = AppPalette,
-                trackColor = BarTrack,
-                strokeCap = StrokeCap.Round,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "$plays plays",
-                color = MutedText,
-                fontSize = 12.sp,
-            )
+    Box(Modifier.width(190.dp).height(280.dp).clip(RoundedCornerShape(20.dp)).background(Color(0xFF252525)).clickable(onClick = onClick)) {
+        GlideImage(model = track.image, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+            failure = placeholder(R.drawable.placeholder), loading = placeholder(R.drawable.placeholder))
+        if (active && canvas != null) com.music.spotui.ui.components.VideoCanvasBackground(
+            media = com.music.spotui.ui.components.CanvasMedia(canvas!!), shouldPlay = true, modifier = Modifier.fillMaxSize())
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xEE121212)))))
+        Column(Modifier.align(Alignment.BottomStart).padding(16.dp)) {
+            Text(track.title, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(track.singer, color = Color.White, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("${rank.plays} ${uiLocalized("reproducciones")}", color = SpotifyGreen, fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
         }
     }
 }
@@ -737,7 +375,7 @@ private fun HistoryRow(
         ) {
             Text(entry.title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                "${entry.singer} • ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(entry.ts))}",
+                "${entry.playCount} ${uiLocalized("reproducciones")} • ${if (entry.isPodcast()) "Podcast • " else ""}${entry.singer} • ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(entry.ts))}",
                 color = Color.Gray, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }

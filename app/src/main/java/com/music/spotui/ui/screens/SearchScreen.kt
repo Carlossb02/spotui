@@ -1,5 +1,6 @@
 package com.music.spotui.ui.screens
 
+import com.music.spotui.ui.navigation.Routes
 import com.music.spotui.util.uiLocalized
 
 import android.os.Build
@@ -347,7 +348,8 @@ fun SumUpSearchScreen(
                         // Real Spotify opens a genre *catalogue* (a page of curated
                         // playlists) rather than running a keyword song search.
                         BrowseAllSection { genre, title ->
-                            navController.navigate(categoryRoute(genre, title))
+                            if (genre.equals("Podcast", ignoreCase = true)) navController.navigate(Routes.Podcasts.route)
+                            else navController.navigate(categoryRoute(genre, title))
                         }
                     }
                 }
@@ -652,7 +654,8 @@ fun SearchSongRow(
     onLongClick: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    var isLiked by remember { mutableStateOf(isSongLiked(context, song.id.toString())) }
+    var isLiked by remember(song.id, song.url) { mutableStateOf(isSongLiked(context, song.id.toString())) }
+    val isSaved = com.music.spotui.ui.components.rememberTrackSaved(song, isLiked)
     var showSavedIn by remember { mutableStateOf(false) }
     if (showSavedIn) {
         SavedInSheet(
@@ -762,17 +765,17 @@ fun SearchSongRow(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                         onClick = {
-                            if (isLiked) removeLikedSongId(context, song.id.toString())
-                            else addLikedSongId(context, song.id.toString())
+                            if (isSaved) { showSavedIn = true; return@combinedClickable }
+                            addLikedSongId(context, song.id.toString())
                             isLiked = isSongLiked(context, song.id.toString())
                             searchViewModel.updateLikeState(!searchViewModel.likeState.value)
                         },
                         onLongClick = { showSavedIn = true },
                     ),
-                painter = if (isLiked) painterResource(id = R.drawable.added) else painterResource(
+                painter = if (isSaved) painterResource(id = R.drawable.added) else painterResource(
                     id = R.drawable.ic_add
                 ),
-                tint = if (isLiked) Color.White else Color.Gray,
+                tint = if (isSaved) Color(0xFF1ED760) else Color.Gray,
                 contentDescription = "",
             )
         }

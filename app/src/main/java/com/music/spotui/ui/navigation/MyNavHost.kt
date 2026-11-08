@@ -1,5 +1,7 @@
 package com.music.spotui.ui.navigation
 
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
@@ -76,7 +78,7 @@ fun MyNavHost(
             com.music.spotui.data.preferences.loadLastPlayback(context)?.let { (song, positionMs) ->
                 val savedQueue = com.music.spotui.data.preferences.loadLastQueue(context)
                 val queue = if (savedQueue.isNotEmpty()) savedQueue else listOf(song)
-                val idx = queue.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
+                val idx = com.music.spotui.data.preferences.loadLastQueueIndex(context, queue, song.id)
                 playerViewModel.updateQueue(queue, isManualEdit = true)
                 playerViewModel.updateSongState(
                     song.coverUri, song.title, song.singer, false, song.id, idx, song.album)
@@ -92,6 +94,7 @@ fun MyNavHost(
     }
 
     NavHost(
+        modifier = Modifier.fillMaxSize(),
         navController = navHostController,
         startDestination = startDestination,
         // Subtle coordinated opacity/scale, without moving the whole navigation rail.
@@ -109,6 +112,9 @@ fun MyNavHost(
         }
         composable(Routes.Home.route){
             HomeScreen(navHostController)
+        }
+        composable(Routes.Podcasts.route) {
+            HomeScreen(navHostController, initialFilter = "Podcasts")
         }
         composable(Routes.Search.route){
             SearchScreen(navHostController, searchFocusTrigger = searchFocusTrigger)
@@ -178,7 +184,9 @@ fun MyNavHost(
         ) { navBackStackEntry ->
             val genre = navBackStackEntry.arguments?.getString("genre").orEmpty()
             val title = navBackStackEntry.arguments?.getString("title").orEmpty()
-            CategoryScreen(navHostController, genre = genre, title = title.ifBlank { genre })
+            if (genre.equals("Podcast", ignoreCase = true) || genre.equals("Podcasts", ignoreCase = true)) {
+                HomeScreen(navHostController, initialFilter = "Podcasts")
+            } else CategoryScreen(navHostController, genre = genre, title = title.ifBlank { genre })
         }
 
         composable(

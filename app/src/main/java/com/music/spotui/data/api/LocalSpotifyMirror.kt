@@ -77,12 +77,15 @@ object LocalSpotifyMirror {
                     .mapNotNull(::spotifyUri)
                 var uploadError: String? = null
                 ids.chunked(100).forEach { group ->
-                    Spotify.addTracksToPlaylist(remote.id, group).onFailure {
+                    Spotify.addTracksToPlaylist(remote.id, group).onSuccess {
+                        group.forEach { SavedTrackLibrary.confirmed(remote.id, it, true) }
+                    }.onFailure {
                         Log.e(TAG, "Tracks were not uploaded to ${remote.id}", it)
                         uploadError = it.message ?: "Error al subir canciones"
                     }
                 }
                 Api.HomeCache.library = null
+                SavedTrackLibrary.invalidatePlaylist(app, remote.id)
                 if (uploadError != null) {
                     status(localId, Phase.FAILED, "Lista creada; canciones pendientes: $uploadError")
                     notifyFailure(app, "Lista creada en Spotify, pero algunas canciones no se copiaron")
@@ -118,9 +121,12 @@ object LocalSpotifyMirror {
                         .mapNotNull(::spotifyUri).distinct().filterNot { it in present }
                     var error: Throwable? = null
                     for (group in missing.chunked(100)) {
-                        Spotify.addTracksToPlaylist(remote, group).onFailure { error = it }
+                        Spotify.addTracksToPlaylist(remote, group).onSuccess {
+                            group.forEach { SavedTrackLibrary.confirmed(remote, it, true) }
+                        }.onFailure { error = it }
                         if (error != null) break
                     }
+                    SavedTrackLibrary.invalidatePlaylist(app, remote)
                     if (error == null) status(localId, Phase.SYNCED)
                     else status(localId, Phase.FAILED, error?.message ?: "Error de Spotify")
                 }
@@ -150,7 +156,9 @@ object LocalSpotifyMirror {
                     }
                 }
                 if (added && !present) {
-                    Spotify.addTracksToPlaylist(remoteId, listOf(uri)).onFailure { Log.w(TAG, "Add failed", it) }
+                    Spotify.addTracksToPlaylist(remoteId, listOf(uri)).onSuccess {
+                        SavedTrackLibrary.confirmed(remoteId, uri, true)
+                    }.onFailure { Log.w(TAG, "Add failed", it) }
                 } else if (!added) {
                     SpotifySync.removeTrackFromPlaylist(app, remoteId, uri.substringAfterLast(':'))
                 }

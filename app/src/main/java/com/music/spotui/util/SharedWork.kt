@@ -46,6 +46,12 @@ internal class SharedWork<K, V>(private val scope: CoroutineScope) {
         job?.cancel()
     }
 
+    suspend fun cancelAllAndJoin() {
+        val jobs = synchronized(lock) { entries.values.map { it.job }.also { entries.clear() } }
+        jobs.forEach { it.cancel() }
+        jobs.forEach { it.join() }
+    }
+
     fun cancelAll() {
         val jobs = synchronized(lock) { entries.values.map { it.job }.also { entries.clear() } }
         jobs.forEach { it.cancel() }

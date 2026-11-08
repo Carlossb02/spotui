@@ -60,4 +60,19 @@ class SharedWorkTest {
    newGate.complete(Unit);assertEquals(11,b.await());assertTrue(c.await().reused)
   } finally {scope.cancel()}
  }
+ @Test fun clearingWaitsForCancelledWritersBeforeReturning() = runBlocking {
+  val scope=CoroutineScope(SupervisorJob()+Dispatchers.Unconfined)
+  try {
+   val work=SharedWork<String,Int>(scope)
+   val cleanup=CompletableDeferred<Unit>()
+   val waiter=async(start=CoroutineStart.UNDISPATCHED) { work.await("a") {
+    try { awaitCancellation() } finally { withContext(NonCancellable) { cleanup.await() } }
+   } }
+   val clearing=async(start=CoroutineStart.UNDISPATCHED) { work.cancelAllAndJoin() }
+   assertFalse(clearing.isCompleted)
+   cleanup.complete(Unit)
+   clearing.await();waiter.join()
+   assertEquals(9,work.await("a"){9})
+  } finally {scope.cancel()}
+ }
 }

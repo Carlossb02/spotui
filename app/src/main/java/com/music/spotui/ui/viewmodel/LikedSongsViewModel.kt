@@ -20,7 +20,7 @@ class LikedSongsViewModel @Inject constructor(
     private val currentSongState: CurrentSongState,
 ) : ViewModel() {
 
-    private val _songs = MutableStateFlow<Response<List<SongsModel>>>(Response.Loading())
+    private val _songs = MutableStateFlow<Response<List<SongsModel>>>(repository.cachedLikedSongs()?.let { Response.Success(it) } ?: Response.Loading())
     val songs: StateFlow<Response<List<SongsModel>>> = _songs
 
     val currentSongPlayingState: State<Boolean> get() = currentSongState.playingState
@@ -44,7 +44,14 @@ class LikedSongsViewModel @Inject constructor(
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.provideLikedSongs().collect { _songs.value = it }
+            repository.libraryContentRevision.collect {
+                repository.cachedLikedSongs()?.let { _songs.value = Response.Success(it) }
+            }
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.provideLikedSongs().collect {
+                if (it is Response.Success || _songs.value !is Response.Success) _songs.value = it
+            }
         }
     }
 

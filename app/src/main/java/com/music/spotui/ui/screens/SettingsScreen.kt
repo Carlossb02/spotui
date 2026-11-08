@@ -1,118 +1,79 @@
 package com.music.spotui.ui.screens
 
-import com.music.spotui.util.uiLocalized
-
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Surface
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.res.stringResource
-import com.music.spotui.R
-import kotlin.math.log10
-import kotlin.math.pow
-import com.music.spotui.data.preferences.BackupPref
-import com.music.spotui.util.BackupHelper
-import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.launch
-import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
-import androidx.navigation.NavController
-import com.music.spotui.data.BatteryOptimizationHelper
-import com.music.spotui.data.preferences.CROSSFADE_MAX_MS
-import com.music.spotui.data.preferences.StreamQuality
-import com.music.spotui.data.preferences.getCellularQuality
-import com.music.spotui.data.preferences.getCrossfadeMs
-import com.music.spotui.data.preferences.setCrossfadeMs
-import com.music.spotui.data.preferences.getDownloadQuality
-import com.music.spotui.data.preferences.isVideoFallbackEnabled
-import com.music.spotui.data.preferences.isAutoPlayEnabled
-import com.music.spotui.data.preferences.getWifiQuality
-import com.music.spotui.data.preferences.setCellularQuality
-import com.music.spotui.data.preferences.setDownloadQuality
-import com.music.spotui.data.preferences.setAutoPlayEnabled
-import com.music.spotui.data.preferences.setVideoFallbackEnabled
-import com.music.spotui.data.preferences.setWifiQuality
-import com.music.spotui.data.preferences.getUpdateRepoUrl
-import com.music.spotui.data.preferences.setUpdateRepoUrl
-import com.music.spotui.data.preferences.resetUpdateRepoUrl
-import com.music.spotui.data.preferences.DEFAULT_UPDATE_REPO_URL
-import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.filled.OpenInNew
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.navigation.NavController
+import com.music.spotui.R
+import com.music.spotui.data.BatteryOptimizationHelper
+import com.music.spotui.data.preferences.*
 import com.music.spotui.ui.components.DefaultAppPrompt
-import com.music.spotui.util.DefaultLinkHelper
+import com.music.spotui.ui.navigation.Routes
 import com.music.spotui.ui.theme.AppBackground
-import com.music.spotui.ui.theme.AppPalette
+import com.music.spotui.util.BackupHelper
+import com.music.spotui.util.DefaultLinkHelper
+import com.music.spotui.util.uiLocalized
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlin.math.log10
+import kotlin.math.pow
+
+private val SettingsGreen = Color(0xFF1ED760)
+private val SettingsSecondary = Color(0xFFB3B3B3)
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(navController: NavController) {
     val context = LocalContext.current
+    // Resolve UI text during composition; event handlers only consume strings.
+    val folderSavedText = uiLocalized("Backup folder saved.")
+    val folderSavedWithBackupText = uiLocalized("Backup folder saved. A backup has been created.")
+    val cacheClearedText = uiLocalized("Playback cache cleared.")
+    val cacheClearFailedText = uiLocalized("Could not clear playback cache. Try again.")
+    var clearingCache by remember { mutableStateOf(false) }
+    var showRepoEditor by remember { mutableStateOf(false) }
+    var lastCrossfadeMs by remember {
+        mutableStateOf(getCrossfadeMs(context).takeIf { it > 0 } ?: 6000)
+    }
 
     var appLang by remember { mutableStateOf(com.music.spotui.data.preferences.getAppLanguage(context)) }
     var wifiQ by remember { mutableStateOf(getWifiQuality(context)) }
@@ -133,6 +94,8 @@ fun SettingsScreen(navController: NavController) {
     var backupDirUri by remember { mutableStateOf(BackupPref.getDirectoryUri(context)) }
     var folderName by remember(backupDirUri) { mutableStateOf(BackupHelper.getFolderDisplayName(context, backupDirUri)) }
     var isAutoBackup by remember { mutableStateOf(BackupPref.isAutoBackupEnabled(context)) }
+    var backupAfterFolder by remember { mutableStateOf(false) }
+    var enableAutoAfterFolder by remember { mutableStateOf(false) }
     var isRestoring by remember { mutableStateOf(false) }
     var isBackingUp by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -140,16 +103,32 @@ fun SettingsScreen(navController: NavController) {
     val dirPickerLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
+        val manualRequested = backupAfterFolder
+        val autoRequested = enableAutoAfterFolder
+        backupAfterFolder = false
+        enableAutoAfterFolder = false
         if (uri != null) {
             val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
             runCatching { context.contentResolver.takePersistableUriPermission(uri, flags) }
             BackupPref.setDirectoryUri(context, uri.toString())
             backupDirUri = uri.toString()
             folderName = BackupHelper.getFolderDisplayName(context, uri.toString())
+            if (autoRequested) {
+                BackupPref.setAutoBackupEnabled(context, true)
+                isAutoBackup = true
+            }
             scope.launch {
-                val autoOk = BackupHelper.performAutoBackup(context)
-                val msg = if (autoOk) "Backup folder set to $folderName (Auto-backup created)" else "Backup folder set to $folderName"
-                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                if (manualRequested) {
+                    isBackingUp = true
+                    try {
+                        val (_, message) = BackupHelper.performManualBackup(context)
+                        android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+                    } finally { isBackingUp = false }
+                } else {
+                    val copied = BackupHelper.performAutoBackup(context)
+                    val message = if (copied) folderSavedWithBackupText else folderSavedText
+                    android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -164,6 +143,7 @@ fun SettingsScreen(navController: NavController) {
                 isRestoring = false
                 android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
                 if (success) {
+                    appLang = com.music.spotui.data.preferences.getAppLanguage(context)
                     wifiQ = getWifiQuality(context)
                     cellQ = getCellularQuality(context)
                     dlQ = getDownloadQuality(context)
@@ -176,6 +156,7 @@ fun SettingsScreen(navController: NavController) {
                     equalizerGains = com.music.spotui.data.preferences.getEqualizerBandGains(context)
                     updateRepoUrl = getUpdateRepoUrl(context)
                     backupDirUri = BackupPref.getDirectoryUri(context)
+                    folderName = BackupHelper.getFolderDisplayName(context, backupDirUri)
                     isAutoBackup = BackupPref.isAutoBackupEnabled(context)
                 }
             }
@@ -187,6 +168,7 @@ fun SettingsScreen(navController: NavController) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 isDefaultLinkHandler = DefaultLinkHelper.isAppDefaultLinkHandler(context)
+                batteryOptExempt = BatteryOptimizationHelper.isIgnoringBatteryOptimization(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -199,315 +181,97 @@ fun SettingsScreen(navController: NavController) {
         batteryOptExempt = BatteryOptimizationHelper.isIgnoringBatteryOptimization(context)
     }
 
+    var showDevicesSheet by remember { mutableStateOf(false) }
     Scaffold(
         containerColor = AppBackground,
         topBar = {
             CenterAlignedTopAppBar(
                 title = { Text(stringResource(R.string.settings), color = Color.White, fontWeight = FontWeight.Bold) },
                 navigationIcon = {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = uiLocalized("Back"),
-                        tint = Color.White,
-                        modifier = Modifier
-                            .padding(start = 8.dp)
-                            .size(26.dp)
-                            .clickable { navController.popBackStack() }
-                    )
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = uiLocalized("Back"), tint = Color.White)
+                    }
                 },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = AppBackground)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = AppBackground),
             )
-        }
+        },
     ) { padding ->
-        var showDevicesSheet by remember { mutableStateOf(false) }
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = padding.calculateTopPadding())
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 200.dp)
+        BoxWithConstraints(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
+        val horizontalInset = ((maxWidth - 840.dp) / 2f).coerceAtLeast(0.dp)
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp + horizontalInset, end = 16.dp + horizontalInset, top = 8.dp, bottom = 160.dp),
+            verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
-            SettingsGroupHeader("Idioma y apariencia", "Preferencias generales")
-            Column(
-                modifier = Modifier.fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Color(0xFF19191C))
-                    .padding(horizontal = 14.dp, vertical = 12.dp)
-            ) {
-            SectionTitle(stringResource(R.string.language))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF1A1A20))
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(uiLocalized("App Language / Idioma"), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                    Text(if (appLang == "es") "Español" else "English", color = Color(0xFF1ED760), fontSize = 12.sp)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Surface(
-                        onClick = {
-                            appLang = "en"
-                            com.music.spotui.data.preferences.setAppLanguage(context, "en")
-                        },
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (appLang == "en") AppPalette else Color(0xFF28282E),
-                        contentColor = if (appLang == "en") Color.Black else Color.White
+            item(key = "general") {
+                SettingsSection(uiLocalized("General")) {
+                    SettingsChoiceRow(
+                        icon = Icons.Default.Language,
+                        title = stringResource(R.string.language),
+                        value = if (appLang == "es") "Español" else "English",
+                        selected = appLang,
+                        options = listOf("es", "en"),
+                        label = { if (it == "es") "Español" else "English" },
+                        description = { "" },
                     ) {
-                        Text("EN", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+                        appLang = it
+                        setAppLanguage(context, it)
                     }
-                    Surface(
-                        onClick = {
-                            appLang = "es"
-                            com.music.spotui.data.preferences.setAppLanguage(context, "es")
-                        },
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (appLang == "es") AppPalette else Color(0xFF28282E),
-                        contentColor = if (appLang == "es") Color.Black else Color.White
-                    ) {
-                        Text("ES", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+                    SettingsDivider()
+                    SettingsActionRow(Icons.Default.Link, uiLocalized("Open Spotify links"),
+                        if (isDefaultLinkHandler) uiLocalized("Spotify links open in Spotui.")
+                        else uiLocalized("Choose Spotui as the default app for Spotify links.")) {
+                        if (isDefaultLinkHandler) DefaultLinkHelper.openSpotuiDefaultSettings(context)
+                        else showDefaultGuide = true
                     }
                 }
             }
-
-            Spacer(Modifier.height(16.dp))
-
-            SectionTitle(stringResource(R.string.devices_bluetooth))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable { showDevicesSheet = true }
-                    .background(Color(0xFF1A1A20))
-                    .padding(horizontal = 12.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(stringResource(R.string.audio_output_devices), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        com.music.spotui.ui.utils.AudioDeviceHelper.getCurrentAudioRouteName(context),
-                        color = Color(0xFF1ED760),
-                        fontSize = 12.sp,
-                    )
-                }
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_devices),
-                    contentDescription = uiLocalized("Devices"),
-                    tint = Color(0xFF1ED760),
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            }
-
-            SettingsGroupHeader("Reproducción", "Audio y comportamiento en segundo plano")
-            Column(
-                modifier = Modifier.fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Color(0xFF19191C))
-                    .padding(horizontal = 14.dp, vertical = 12.dp)
-            ) {
-            SectionTitle(stringResource(R.string.background_playback))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable {
-                        batteryOptLauncher.launch(BatteryOptimizationHelper.buildAppSettingsIntent(context))
+            item(key = "playback") {
+                SettingsSection(uiLocalized("Playback")) {
+                    SettingsSwitchRow(Icons.Default.PlayCircleOutline,
+                        uiLocalized("Resume on startup"), uiLocalized("Play the last track when you open the app."), autoPlay) {
+                        autoPlay = it; setAutoPlayEnabled(context, it)
                     }
-                    .background(Color(0xFF1A1A20))
-                    .padding(horizontal = 12.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(stringResource(R.string.battery_optimization), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        if (batteryOptExempt) "Exempt — app won't be killed" else "Not exempt — tap to change",
-                        color = if (batteryOptExempt) Color(0xFF81C784) else Color(0xFFB3B3B3),
-                        fontSize = 12.sp,
-                    )
-                }
-                if (batteryOptExempt) {
-                    Icon(
-                        imageVector = Icons.Filled.Check,
-                        contentDescription = uiLocalized("Enabled"),
-                        tint = AppPalette,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-            SectionTitle(stringResource(R.string.link_handling))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable {
-                        if (isDefaultLinkHandler) {
-                            DefaultLinkHelper.openSpotuiDefaultSettings(context)
-                        } else {
-                            showDefaultGuide = true
+                    SettingsDivider()
+                    SettingsSwitchRow(Icons.Default.SwapHoriz,
+                        uiLocalized("Crossfade"), uiLocalized("Blend the end of a song into the beginning of the next."), crossfadeMs > 0f) { enabled ->
+                        if (enabled) crossfadeMs = lastCrossfadeMs.toFloat()
+                        else { lastCrossfadeMs = crossfadeMs.toInt().coerceAtLeast(1000); crossfadeMs = 0f }
+                        setCrossfadeMs(context, crossfadeMs.toInt())
+                    }
+                    if (crossfadeMs > 0f) {
+                        Column(Modifier.padding(start = 56.dp, end = 16.dp, bottom = 12.dp)) {
+                            Text("${(crossfadeMs / 1000f).toInt()} s", color = SettingsGreen, fontWeight = FontWeight.SemiBold)
+                            Slider(value = crossfadeMs.coerceIn(1000f, CROSSFADE_MAX_MS.toFloat()),
+                                onValueChange = { crossfadeMs = it },
+                                onValueChangeFinished = {
+                                    lastCrossfadeMs = crossfadeMs.toInt()
+                                    setCrossfadeMs(context, lastCrossfadeMs)
+                                }, valueRange = 1000f..CROSSFADE_MAX_MS.toFloat(), steps = (CROSSFADE_MAX_MS / 1000) - 2,
+                                colors = settingsSliderColors())
                         }
                     }
-                    .background(Color(0xFF1A1A20))
-                    .padding(horizontal = 12.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(uiLocalized("Open Spotify links by default"), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        if (isDefaultLinkHandler) "Spotui handles Spotify URLs by default" else "Not default — tap to open setup guide",
-                        color = if (isDefaultLinkHandler) Color(0xFF81C784) else Color(0xFFB3B3B3),
-                        fontSize = 12.sp,
-                    )
-                }
-                if (isDefaultLinkHandler) {
-                    Icon(
-                        imageVector = Icons.Filled.Check,
-                        contentDescription = uiLocalized("Enabled"),
-                        tint = AppPalette,
-                        modifier = Modifier.size(20.dp)
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Default.OpenInNew,
-                        contentDescription = uiLocalized("Open Settings"),
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-
-            }
-
-            SettingsGroupHeader("Calidad y descargas", "Uso de datos, almacenamiento y sonido")
-            Column(
-                modifier = Modifier.fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Color(0xFF19191C))
-                    .padding(horizontal = 14.dp, vertical = 12.dp)
-            ) {
-            SectionTitle(stringResource(R.string.audio_quality))
-            QualityPicker(
-                title = stringResource(R.string.streaming_wifi),
-                selected = wifiQ,
-            ) { wifiQ = it; setWifiQuality(context, it) }
-
-            QualityPicker(
-                title = stringResource(R.string.streaming_cellular),
-                selected = cellQ,
-            ) { cellQ = it; setCellularQuality(context, it) }
-
-            QualityPicker(
-                title = stringResource(R.string.download_quality),
-                selected = dlQ,
-            ) { dlQ = it; setDownloadQuality(context, it) }
-
-            Spacer(Modifier.height(6.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable {
-                        com.music.spotui.di.SongPlayer.clearCaches(context)
-                        android.widget.Toast.makeText(context, "Stream cache cleared", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                    .background(Color(0xFF1E1E24))
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(stringResource(R.string.clear_cache), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Text(uiLocalized("Unlocks all cached streams and forces re-resolution"), color = Color.Gray, fontSize = 11.sp)
-                }
-                Icon(
-                    imageVector = Icons.Default.Refresh,
-                    contentDescription = uiLocalized("Clear cache"),
-                    tint = Color.Gray,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            Spacer(Modifier.height(12.dp))
-            SectionTitle(stringResource(R.string.audio_normalization))
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                for (mode in listOf(
-                    com.music.spotui.data.preferences.NormalizationMode.OFF,
-                    com.music.spotui.data.preferences.NormalizationMode.SUAVE,
-                    com.music.spotui.data.preferences.NormalizationMode.YOUTUBE_METADATA
-                )) {
-                    val isSel = mode == normalizationMode
-                    val (modeTitle, modeDesc) = when (mode) {
-                        com.music.spotui.data.preferences.NormalizationMode.OFF ->
-                            stringResource(R.string.normalization_off) to stringResource(R.string.normalization_off_desc)
-                        com.music.spotui.data.preferences.NormalizationMode.SUAVE ->
-                            stringResource(R.string.normalization_suave) to stringResource(R.string.normalization_suave_desc)
-                        com.music.spotui.data.preferences.NormalizationMode.YOUTUBE_METADATA ->
-                            stringResource(R.string.normalization_youtube) to stringResource(R.string.normalization_youtube_desc)
-                        com.music.spotui.data.preferences.NormalizationMode.BALANCED_BETA ->
-                            stringResource(R.string.normalization_balanced_beta) to stringResource(R.string.normalization_balanced_beta_desc)
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable {
-                                normalizationMode = mode
-                                com.music.spotui.data.preferences.setAudioNormalizationMode(context, mode)
-                            }
-                            .background(if (isSel) Color(0xFF1A1A20) else Color.Transparent)
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                text = modeTitle,
-                                color = Color.White,
-                                fontSize = 15.sp,
-                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.SemiBold
-                            )
-                            Text(
-                                text = modeDesc,
-                                color = Color(0xFFB3B3B3),
-                                fontSize = 12.sp
-                            )
-                        }
-                        if (isSel) {
-                            Icon(
-                                imageVector = Icons.Filled.Check,
-                                contentDescription = uiLocalized("Selected"),
-                                tint = AppPalette,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
+                    SettingsDivider()
+                    SettingsSwitchRow(Icons.Default.VideoLibrary,
+                        uiLocalized("Search videos as a fallback"),
+                        uiLocalized("Try YouTube videos when no matching song is found in YouTube Music."), videoFallback) {
+                        videoFallback = it; setVideoFallbackEnabled(context, it)
                     }
                 }
             }
-
-            Spacer(Modifier.height(12.dp))
-            SectionTitle(stringResource(R.string.equalizer))
-            SettingsSwitchRow(
-                title = stringResource(R.string.equalizer),
-                subtitle = stringResource(R.string.equalizer_desc),
-                checked = equalizerEnabled,
-            ) {
-                equalizerEnabled = it
-                com.music.spotui.data.preferences.setEqualizerEnabled(context, it)
-            }
-
+            item(key = "sound") {
+                SettingsSection(uiLocalized("Sound")) {
+                    val modes = listOf(NormalizationMode.OFF, NormalizationMode.SUAVE, NormalizationMode.YOUTUBE_METADATA)
+                    SettingsChoiceRow(Icons.AutoMirrored.Filled.VolumeUp,
+                        uiLocalized("Volume normalization"), normalizationLabel(normalizationMode), normalizationMode, modes,
+                        label = { normalizationLabel(it) }, description = { normalizationDescription(it) }) {
+                        normalizationMode = it; setAudioNormalizationMode(context, it)
+                    }
+                    SettingsDivider()
+                    SettingsSwitchRow(Icons.Default.Equalizer,
+                        stringResource(R.string.equalizer), uiLocalized("Adjust bass, midrange and treble, or choose a preset."), equalizerEnabled) {
+                        equalizerEnabled = it; setEqualizerEnabled(context, it)
+                    }
             if (equalizerEnabled) {
                 Spacer(Modifier.height(8.dp))
 
@@ -556,7 +320,7 @@ fun SettingsScreen(navController: NavController) {
                                 Text(bandLabels[i], color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                                 Text(
                                     text = if (gainValue > 0) "+${String.format("%.1f", gainValue)} dB" else "${String.format("%.1f", gainValue)} dB",
-                                    color = if (gainValue != 0f) AppPalette else Color.Gray,
+                                    color = if (gainValue != 0f) SettingsGreen else Color.Gray,
                                     fontSize = 12.sp
                                 )
                             }
@@ -572,8 +336,8 @@ fun SettingsScreen(navController: NavController) {
                                 },
                                 valueRange = -12f..12f,
                                 colors = SliderDefaults.colors(
-                                    thumbColor = AppPalette,
-                                    activeTrackColor = AppPalette,
+                                    thumbColor = SettingsGreen,
+                                    activeTrackColor = SettingsGreen,
                                     inactiveTrackColor = Color(0xFF383840)
                                 )
                             )
@@ -581,443 +345,239 @@ fun SettingsScreen(navController: NavController) {
                     }
                 }
             }
-
-            Spacer(Modifier.height(12.dp))
-            SectionTitle(stringResource(R.string.matching))
-            SettingsSwitchRow(
-                title = stringResource(R.string.allow_video_fallback),
-                subtitle = "Use regular YouTube videos only after Music song results fail",
-                checked = videoFallback,
-            ) {
-                videoFallback = it
-                setVideoFallbackEnabled(context, it)
-            }
-
-            Spacer(Modifier.height(12.dp))
-            SectionTitle(stringResource(R.string.playback))
-            SettingsSwitchRow(
-                title = stringResource(R.string.autoplay_startup),
-                subtitle = "Resume playing the last track when the app opens",
-                checked = autoPlay,
-            ) {
-                autoPlay = it
-                setAutoPlayEnabled(context, it)
-            }
-
-            Spacer(Modifier.height(12.dp))
-            SectionTitle(stringResource(R.string.crossfade))
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(stringResource(R.string.crossfade), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                Text(
-                    if (crossfadeMs <= 0f) "Off" else "${(crossfadeMs / 1000f).let { String.format("%.0f", it) }}s",
-                    color = if (crossfadeMs <= 0f) Color(0xFFB3B3B3) else AppPalette,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            Slider(
-                value = crossfadeMs,
-                onValueChange = { crossfadeMs = it },
-                onValueChangeFinished = { setCrossfadeMs(context, crossfadeMs.toInt()) },
-                valueRange = 0f..CROSSFADE_MAX_MS.toFloat(),
-                steps = (CROSSFADE_MAX_MS / 1000) - 1,
-                colors = SliderDefaults.colors(
-                    thumbColor = AppPalette,
-                    activeTrackColor = AppPalette,
-                    inactiveTrackColor = Color(0xFF333333),
-                ),
-            )
-            Spacer(Modifier.height(12.dp))
-            }
-
-            SettingsGroupHeader("Datos y aplicación", "Historial, archivos y mantenimiento")
-            Column(
-                modifier = Modifier.fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Color(0xFF19191C))
-                    .padding(horizontal = 14.dp, vertical = 6.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable { navController.navigate(com.music.spotui.ui.navigation.Routes.History.route) }
-                        .padding(vertical = 14.dp, horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(stringResource(R.string.listening_history), color = Color.White,
-                            fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                        Text(uiLocalized("Your plays and stats"), color = Color(0xFFB3B3B3), fontSize = 12.sp)
-                    }
-                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null,
-                        tint = Color(0xFFB3B3B3), modifier = Modifier.size(20.dp))
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable { navController.navigate(com.music.spotui.ui.navigation.Routes.LocalFiles.route) }
-                        .padding(vertical = 14.dp, horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(stringResource(R.string.local_files), color = Color.White,
-                            fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                        Text(uiLocalized("Music imported from this device"), color = Color(0xFFB3B3B3), fontSize = 12.sp)
-                    }
-                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null,
-                        tint = Color(0xFFB3B3B3), modifier = Modifier.size(20.dp))
                 }
             }
-            Column(
-                modifier = Modifier.fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Color(0xFF19191C))
-                    .padding(horizontal = 14.dp, vertical = 12.dp)
-            ) {
-            SectionTitle(stringResource(R.string.updates))
-            Text(
-                stringResource(R.string.update_repo),
-                color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = updateRepoUrl,
-                onValueChange = {
-                    updateRepoUrl = it
-                    setUpdateRepoUrl(context, it)
-                },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
-                    focusedBorderColor = AppPalette,
-                    unfocusedBorderColor = Color(0xFF333333),
-                    cursorColor = AppPalette,
-                    focusedPlaceholderColor = Color(0xFF666666),
-                    unfocusedPlaceholderColor = Color(0xFF666666),
-                ),
-                placeholder = { Text(uiLocalized("https://github.com/Owner/Repo")) },
-                trailingIcon = {
-                    Icon(
-                        imageVector = Icons.Filled.Refresh,
-                        contentDescription = uiLocalized("Reset"),
-                        tint = if (updateRepoUrl != DEFAULT_UPDATE_REPO_URL) AppPalette else Color(0xFF444444),
-                        modifier = Modifier
-                            .padding(end = 4.dp)
-                            .clickable {
-                                updateRepoUrl = DEFAULT_UPDATE_REPO_URL
-                                resetUpdateRepoUrl(context)
-                            }
-                    )
-                },
-            )
-            Spacer(Modifier.height(12.dp))
-            SectionTitle(stringResource(R.string.backup_restore))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable(enabled = !isBackingUp) {
-                            if (backupDirUri.isNullOrBlank()) {
-                                dirPickerLauncher.launch(null)
-                            } else {
-                                isBackingUp = true
-                                scope.launch {
-                                    val (success, message) = BackupHelper.performManualBackup(context)
-                                    isBackingUp = false
+            item(key = "quality") {
+                SettingsSection(uiLocalized("Audio quality")) {
+                    QualityPicker(Icons.Default.Wifi, uiLocalized("Wi-Fi streaming"), wifiQ) { wifiQ = it; setWifiQuality(context, it) }
+                    SettingsDivider()
+                    QualityPicker(Icons.Default.SignalCellularAlt, uiLocalized("Mobile streaming"), cellQ) { cellQ = it; setCellularQuality(context, it) }
+                    SettingsDivider()
+                    QualityPicker(Icons.Default.Download, uiLocalized("Downloads"), dlQ) { dlQ = it; setDownloadQuality(context, it) }
+                }
+            }
+            item(key = "devices") {
+                SettingsSection(uiLocalized("Devices and system")) {
+                    SettingsActionRow(Icons.Default.Headphones, uiLocalized("Audio output"),
+                        com.music.spotui.ui.utils.AudioDeviceHelper.getCurrentAudioRouteName(context)) { showDevicesSheet = true }
+                    SettingsDivider()
+                    SettingsActionRow(Icons.Default.BatteryChargingFull, uiLocalized("Background playback"),
+                        if (batteryOptExempt) uiLocalized("Unrestricted battery use is enabled.")
+                        else uiLocalized("Manage Android battery restrictions for Spotui.")) {
+                        batteryOptLauncher.launch(BatteryOptimizationHelper.buildAppSettingsIntent(context))
+                    }
+                }
+            }
+            item(key = "library") {
+                SettingsSection(uiLocalized("Library and storage")) {
+                    SettingsActionRow(Icons.Default.History, uiLocalized("Listening history"), uiLocalized("Revisa tu música, tus podcasts y tus estadísticas de escucha.")) {
+                        navController.navigate(Routes.History.route)
+                    }
+                    SettingsDivider()
+                    SettingsActionRow(Icons.Default.Folder, uiLocalized("Local files"), uiLocalized("Browse music imported from this device.")) {
+                        navController.navigate(Routes.LocalFiles.route)
+                    }
+                    SettingsDivider()
+                    SettingsActionRow(Icons.Default.DeleteOutline, uiLocalized("Clear playback cache"),
+                        uiLocalized("Borra el audio temporal y vuelve a buscar las fuentes de reproducción. Conserva descargas, enlaces alternativos y cambios de metadatos."),
+                        enabled = !clearingCache, busy = clearingCache) {
+                        clearingCache = true
+                        scope.launch {
+                            try {
+                                val result = runCatching { com.music.spotui.di.SongPlayer.clearPlaybackCache(context) }
+                                result.exceptionOrNull()?.let { android.util.Log.w("Settings", "Cache cleanup failed", it) }
+                                android.widget.Toast.makeText(context, if (result.isSuccess) cacheClearedText else cacheClearFailedText,
+                                    android.widget.Toast.LENGTH_SHORT).show()
+                            } finally { clearingCache = false }
+                        }
+                    }
+                }
+            }
+            item(key = "backup") {
+                SettingsSection(uiLocalized("Backups")) {
+                    SettingsActionRow(Icons.Default.FolderOpen, uiLocalized("Backup folder"),
+                        folderName.takeIf { !backupDirUri.isNullOrBlank() } ?: uiLocalized("Choose where to save your backups."),
+                        enabled = !isBackingUp && !isRestoring) { dirPickerLauncher.launch(null) }
+                    SettingsDivider()
+                    SettingsActionRow(Icons.Default.CloudUpload, uiLocalized("Back up now"),
+                        uiLocalized("Save your settings and library to the selected folder."), busy = isBackingUp,
+                        enabled = !isBackingUp && !isRestoring) {
+                        if (backupDirUri.isNullOrBlank()) { backupAfterFolder = true; dirPickerLauncher.launch(null) }
+                        else {
+                            isBackingUp = true
+                            scope.launch {
+                                try {
+                                    val (_, message) = BackupHelper.performManualBackup(context)
                                     android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+                                } finally { isBackingUp = false }
+                            }
+                        }
+                    }
+                    SettingsDivider()
+                    SettingsActionRow(Icons.Default.Restore, uiLocalized("Restore backup"),
+                        uiLocalized("Import settings and library from a backup file."), busy = isRestoring,
+                        enabled = !isBackingUp && !isRestoring) { restoreFileLauncher.launch(arrayOf("application/json", "*/*")) }
+                    SettingsDivider()
+                    SettingsSwitchRow(Icons.Default.CloudSync, uiLocalized("Automatic backups"),
+                        if (backupDirUri.isNullOrBlank()) uiLocalized("Choose a folder to enable automatic backups.")
+                        else uiLocalized("Keep a backup in your selected folder."),
+                        isAutoBackup && !backupDirUri.isNullOrBlank(), enabled = !isRestoring && !isBackingUp) { enabled ->
+                        if (enabled && backupDirUri.isNullOrBlank()) { enableAutoAfterFolder = true; dirPickerLauncher.launch(null) }
+                        else {
+                            isAutoBackup = enabled; BackupPref.setAutoBackupEnabled(context, enabled)
+                            if (enabled) scope.launch { BackupHelper.performAutoBackup(context) }
+                        }
+                    }
+                }
+            }
+            item(key = "updates") {
+                SettingsSection(uiLocalized("Updates")) {
+                    SettingsActionRow(Icons.Default.SystemUpdate, uiLocalized("Update source"),
+                        uiLocalized("GitHub repository used to check for new versions."), expanded = showRepoEditor) { showRepoEditor = !showRepoEditor }
+                    if (showRepoEditor) {
+                        OutlinedTextField(value = updateRepoUrl, onValueChange = {
+                            updateRepoUrl = it; setUpdateRepoUrl(context, it)
+                        }, label = { Text(uiLocalized("Repository URL")) }, singleLine = true,
+                            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+                                focusedBorderColor = SettingsGreen, unfocusedBorderColor = Color(0xFF555555), cursorColor = SettingsGreen),
+                            trailingIcon = {
+                                IconButton(onClick = { updateRepoUrl = DEFAULT_UPDATE_REPO_URL; resetUpdateRepoUrl(context) }) {
+                                    Icon(Icons.Default.Refresh, contentDescription = uiLocalized("Restore default repository"), tint = SettingsGreen)
                                 }
-                            }
-                        }
-                        .background(Color(0xFF1A1A20))
-                        .padding(horizontal = 12.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(stringResource(R.string.back_up_now), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            when {
-                                isBackingUp -> "Creating backup…"
-                                backupDirUri.isNullOrBlank() -> "Tap to choose folder"
-                                else -> "Folder: $folderName"
-                            },
-                            color = if (backupDirUri.isNullOrBlank()) Color(0xFFFFB74D) else Color(0xFFB3B3B3),
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                        )
-                    }
-                    if (isBackingUp) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            color = AppPalette,
-                            strokeWidth = 2.dp,
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Filled.Save,
-                            contentDescription = uiLocalized("Backup"),
-                            tint = AppPalette,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                }
-
-                if (!backupDirUri.isNullOrBlank()) {
-                    Spacer(Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(52.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color(0xFF1A1A20))
-                            .clickable(enabled = !isBackingUp) { dirPickerLauncher.launch(null) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Folder,
-                            contentDescription = uiLocalized("Folder"),
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp)
-                        )
+                            })
                     }
                 }
             }
-
-            Spacer(Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable(enabled = !isRestoring) {
-                        restoreFileLauncher.launch(arrayOf("application/json", "*/*"))
-                    }
-                    .background(Color(0xFF1A1A20))
-                    .padding(horizontal = 12.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(stringResource(R.string.restore_from_file), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        if (isRestoring) "Restoring…" else "Import settings from backup file",
-                        color = Color(0xFFB3B3B3),
-                        fontSize = 12.sp,
-                    )
-                }
-                if (isRestoring) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        color = AppPalette,
-                        strokeWidth = 2.dp,
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Filled.FolderOpen,
-                        contentDescription = uiLocalized("Restore"),
-                        tint = Color.White,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(8.dp))
-
-            SettingsSwitchRow(
-                title = stringResource(R.string.automatic_backup),
-                subtitle = if (backupDirUri.isNullOrBlank()) "Automatically backup on app open" else "Auto-backup to $folderName",
-                checked = isAutoBackup,
-            ) { enabled ->
-                if (enabled && backupDirUri.isNullOrBlank()) {
-                    dirPickerLauncher.launch(null)
-                } else {
-                    isAutoBackup = enabled
-                    BackupPref.setAutoBackupEnabled(context, enabled)
-                    if (enabled) {
-                        scope.launch { BackupHelper.performAutoBackup(context) }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-            SectionTitle(stringResource(R.string.troubleshooting))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable {
-                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            com.music.spotui.di.SongPlayer.clearCaches(context)
-                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                android.widget.Toast.makeText(
-                                    context,
-                                    "Session & stream caches reset",
-                                    android.widget.Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        }
-                    }
-                    .background(Color(0xFF1A1A20))
-                    .padding(horizontal = 12.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(stringResource(R.string.reset_session), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        uiLocalized("Clears session tokens and resolved stream caches"),
-                        color = Color(0xFFB3B3B3),
-                        fontSize = 12.sp,
-                    )
-                }
-                Icon(
-                    imageVector = Icons.Filled.Refresh,
-                    contentDescription = uiLocalized("Reset"),
-                    tint = AppPalette,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            Spacer(Modifier.height(12.dp))
-            SectionTitle(stringResource(R.string.account))
-            Text(
-                text = stringResource(R.string.log_out),
-                color = Color(0xFFE57373),
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable {
+            item(key = "account") {
+                SettingsSection(uiLocalized("Account")) {
+                    SettingsActionRow(Icons.AutoMirrored.Filled.Logout, uiLocalized("Log out"), uiLocalized("Sign out of your Spotify account on this device.")) {
                         com.music.spotui.data.api.SpotifySession.setSpDc(context, "")
                         com.music.spotui.data.api.Api.HomeCache.clear()
-                        navController.navigate(com.music.spotui.ui.navigation.Routes.Login.route) {
-                            popUpTo(0) { inclusive = true }
-                        }
-                    }
-                    .padding(vertical = 14.dp)
-            )
-            Spacer(Modifier.height(16.dp))
-            } // Datos y aplicación
-            Spacer(Modifier.height(40.dp))
-        }
-
-        if (showDefaultGuide) {
-            DefaultAppPrompt(
-                forceShow = true,
-                onDismiss = {
-                    showDefaultGuide = false
-                    isDefaultLinkHandler = DefaultLinkHelper.isAppDefaultLinkHandler(context)
-                }
-            )
-        }
-
-        if (showDevicesSheet) {
-            com.music.spotui.ui.components.DevicesSheet(
-                context = context,
-                onDismiss = { showDevicesSheet = false }
-            )
-        }
-    }
-}
-
-@Composable
-private fun SettingsGroupHeader(title: String, subtitle: String) {
-    Column(Modifier.fillMaxWidth().padding(top = 28.dp, bottom = 4.dp)) {
-        Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 21.sp)
-        Text(subtitle, color = Color(0xFF999999), fontSize = 12.sp)
-        Spacer(Modifier.height(6.dp))
-    }
-}
-
-@Composable
-private fun SectionTitle(text: String) {
-    Text(
-        text = text,
-        color = Color(0xFFBDBDBD),
-        fontSize = 12.sp,
-        fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(top = 12.dp, bottom = 8.dp)
-    )
-}
-
-@Composable
-private fun SettingsSwitchRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            Text(subtitle, color = Color(0xFFB3B3B3), fontSize = 12.sp)
-        }
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = AppPalette,
-                uncheckedThumbColor = Color(0xFFB3B3B3),
-                uncheckedTrackColor = Color(0xFF333333),
-            ),
-        )
-    }
-}
-
-@Composable
-private fun QualityPicker(
-    title: String,
-    selected: StreamQuality,
-    onSelect: (StreamQuality) -> Unit
-) {
-    Column(modifier = Modifier.padding(vertical = 8.dp)) {
-        Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(8.dp))
-        StreamQuality.values().forEach { q ->
-            val isSel = q == selected
-            Column {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable { onSelect(q) }
-                        .background(if (isSel) Color(0xFF1A1A20) else Color.Transparent)
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(q.label, color = Color.White, fontSize = 15.sp)
-                        Text(q.detail, color = Color(0xFFB3B3B3), fontSize = 12.sp)
-                    }
-                    if (isSel) {
-                        Icon(
-                            imageVector = Icons.Filled.Check,
-                            contentDescription = uiLocalized("Selected"),
-                            tint = AppPalette,
-                            modifier = Modifier.size(20.dp)
-                        )
+                        navController.navigate(Routes.Login.route) { popUpTo(0) { inclusive = true } }
                     }
                 }
             }
-            Spacer(Modifier.height(2.dp))
+        }
         }
     }
+    if (showDefaultGuide) DefaultAppPrompt(forceShow = true, onDismiss = {
+        showDefaultGuide = false
+        isDefaultLinkHandler = DefaultLinkHelper.isAppDefaultLinkHandler(context)
+    })
+    if (showDevicesSheet) com.music.spotui.ui.components.DevicesSheet(context = context, onDismiss = { showDevicesSheet = false })
 }
+
+@Composable
+private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp,
+            modifier = Modifier.padding(start = 4.dp, bottom = 12.dp))
+        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0xFF181818)), content = content)
+    }
+}
+
+@Composable
+private fun SettingsLeadingIcon(icon: ImageVector) {
+    Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(SettingsGreen.copy(alpha = 0.10f)), contentAlignment = Alignment.Center) {
+        Icon(icon, contentDescription = null, tint = SettingsGreen, modifier = Modifier.size(23.dp))
+    }
+}
+
+@Composable
+private fun SettingsDivider() { HorizontalDivider(Modifier.padding(start = 68.dp, end = 16.dp), color = Color(0xFF2A2A2A)) }
+
+@Composable
+private fun SettingsRowText(title: String, subtitle: String, modifier: Modifier = Modifier) {
+    Column(modifier.padding(end = 12.dp)) {
+        Text(title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, lineHeight = 20.sp)
+        if (subtitle.isNotBlank()) Text(subtitle, color = SettingsSecondary, fontSize = 12.sp, lineHeight = 17.sp,
+            modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+@Composable
+private fun SettingsActionRow(icon: ImageVector, title: String, subtitle: String,
+    enabled: Boolean = true, busy: Boolean = false, expanded: Boolean? = null, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+        .padding(horizontal = 16.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        SettingsLeadingIcon(icon); Spacer(Modifier.width(12.dp))
+        SettingsRowText(title, subtitle, Modifier.weight(1f))
+        if (busy) CircularProgressIndicator(Modifier.size(20.dp), color = SettingsGreen, strokeWidth = 2.dp)
+        else Icon(if (expanded == true) Icons.Default.KeyboardArrowUp else if (expanded == false) Icons.Default.KeyboardArrowDown
+            else Icons.Default.ChevronRight, contentDescription = null, tint = SettingsSecondary, modifier = Modifier.size(22.dp))
+    }
+}
+
+@Composable
+private fun SettingsSwitchRow(icon: ImageVector, title: String, subtitle: String, checked: Boolean,
+    enabled: Boolean = true, onCheckedChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange)
+        .padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        SettingsLeadingIcon(icon); Spacer(Modifier.width(12.dp))
+        SettingsRowText(title, subtitle, Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = null, enabled = enabled,
+            colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = SettingsGreen,
+                checkedBorderColor = Color.Transparent, uncheckedThumbColor = Color.White,
+                uncheckedTrackColor = Color(0xFF535353), uncheckedBorderColor = Color.Transparent))
+    }
+}
+
+@Composable
+private fun <T> SettingsChoiceRow(icon: ImageVector, title: String, value: String, selected: T,
+    options: List<T>, label: @Composable (T) -> String, description: @Composable (T) -> String, onSelect: (T) -> Unit) {
+    var choosing by remember { mutableStateOf(false) }
+    SettingsActionRow(icon, title, value, onClick = { choosing = true })
+    if (choosing) AlertDialog(onDismissRequest = { choosing = false }, containerColor = Color(0xFF202020),
+        title = { Text(title, color = Color.White, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                options.forEach { option ->
+                    Row(Modifier.fillMaxWidth().selectable(selected = option == selected, role = Role.RadioButton,
+                        onClick = { onSelect(option); choosing = false }).padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        SettingsRowText(label(option), description(option), Modifier.weight(1f))
+                        RadioButton(selected = option == selected, onClick = null,
+                            colors = RadioButtonDefaults.colors(selectedColor = SettingsGreen, unselectedColor = SettingsSecondary))
+                    }
+                }
+            }
+        }, confirmButton = { TextButton(onClick = { choosing = false }) { Text(uiLocalized("Close"), color = SettingsGreen) } })
+}
+
+@Composable
+private fun QualityPicker(icon: ImageVector, title: String, selected: StreamQuality, onSelect: (StreamQuality) -> Unit) {
+    SettingsChoiceRow(icon, title, qualityLabel(selected), selected, StreamQuality.entries.toList(),
+        label = { qualityLabel(it) }, description = { when (it) {
+            StreamQuality.LOW -> uiLocalized("Uses less data and storage.")
+            StreamQuality.NORMAL -> uiLocalized("Balances audio quality and data use.")
+            StreamQuality.HIGH -> uiLocalized("Uses the best available compressed audio quality.")
+        } }, onSelect = onSelect)
+}
+
+@Composable
+private fun qualityLabel(quality: StreamQuality): String = uiLocalized(when (quality) {
+    StreamQuality.LOW -> "Low"
+    StreamQuality.NORMAL -> "Normal"
+    StreamQuality.HIGH -> "High"
+})
+
+@Composable
+private fun normalizationLabel(mode: NormalizationMode): String = uiLocalized(when (mode) {
+    NormalizationMode.OFF -> "Off"
+    NormalizationMode.SUAVE, NormalizationMode.BALANCED_BETA -> "Gentle"
+    NormalizationMode.YOUTUBE_METADATA -> "YouTube volume level"
+})
+
+@Composable
+private fun normalizationDescription(mode: NormalizationMode): String = uiLocalized(when (mode) {
+    NormalizationMode.OFF -> "Keep the original track volume."
+    NormalizationMode.SUAVE, NormalizationMode.BALANCED_BETA -> "Reduce loud tracks without compressing the audio."
+    NormalizationMode.YOUTUBE_METADATA -> "Use YouTube volume information to reduce differences between tracks."
+})
+
+@Composable
+private fun settingsSliderColors() = SliderDefaults.colors(thumbColor = SettingsGreen, activeTrackColor = SettingsGreen,
+    inactiveTrackColor = Color(0xFF404040))
 
 private val PRESET_CATEGORIES: Map<String, List<String>> = mapOf(
     "Básico" to listOf("Flat", "Custom"),
@@ -1056,7 +616,7 @@ private fun GroupedPresetGrid(
                         fontWeight = FontWeight.Medium
                     )
                     Text(
-                        text = selectedPreset,
+                        text = uiLocalized(selectedPreset),
                         color = Color.White,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold
@@ -1065,11 +625,11 @@ private fun GroupedPresetGrid(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = AppPalette.copy(alpha = 0.15f)
+                        color = SettingsGreen.copy(alpha = 0.15f)
                     ) {
                         Text(
-                            text = uiLocalized("22 presets"),
-                            color = AppPalette,
+                            text = uiLocalized("Choose a preset"),
+                            color = SettingsGreen,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -1099,8 +659,8 @@ private fun GroupedPresetGrid(
                 for ((category, presetList) in PRESET_CATEGORIES) {
                     Column {
                         Text(
-                            text = category,
-                            color = AppPalette,
+                            text = uiLocalized(category),
+                            color = SettingsGreen,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(bottom = 6.dp)
@@ -1121,7 +681,7 @@ private fun GroupedPresetGrid(
                                             isExpanded = false
                                         },
                                         shape = RoundedCornerShape(10.dp),
-                                        color = if (isSelected) AppPalette else Color(0xFF28282E),
+                                        color = if (isSelected) SettingsGreen else Color(0xFF28282E),
                                         contentColor = if (isSelected) Color.Black else Color.White,
                                         modifier = Modifier.weight(1f)
                                     ) {
@@ -1131,7 +691,7 @@ private fun GroupedPresetGrid(
                                             horizontalArrangement = Arrangement.SpaceBetween
                                         ) {
                                             Text(
-                                                text = preset,
+                                                text = uiLocalized(preset),
                                                 fontSize = 12.sp,
                                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                                             )
@@ -1233,15 +793,15 @@ private fun EqualizerFrequencyCurve(
                 path = fillPath,
                 brush = Brush.verticalGradient(
                     colors = listOf(
-                        AppPalette.copy(alpha = 0.35f),
-                        AppPalette.copy(alpha = 0.02f)
+                        SettingsGreen.copy(alpha = 0.35f),
+                        SettingsGreen.copy(alpha = 0.02f)
                     )
                 )
             )
 
             drawPath(
                 path = path,
-                color = AppPalette,
+                color = SettingsGreen,
                 style = Stroke(
                     width = 3.5f,
                     cap = StrokeCap.Round
@@ -1256,7 +816,7 @@ private fun EqualizerFrequencyCurve(
                 val responseDb = processor.getFrequencyResponse(f).coerceIn(-12f, 12f)
                 val y = centerY - (responseDb / 12f) * (height / 2.3f)
 
-                drawCircle(color = AppPalette, radius = 5.5f, center = Offset(x, y))
+                drawCircle(color = SettingsGreen, radius = 5.5f, center = Offset(x, y))
                 drawCircle(color = Color.White, radius = 2.5f, center = Offset(x, y))
             }
         }

@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -74,6 +75,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -109,7 +111,7 @@ import java.time.LocalTime
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
-fun HomeScreen(navController: NavController){
+fun HomeScreen(navController: NavController, initialFilter: String? = null){
 
     val homeViewModel : HomeViewModel = hiltViewModel()
     val home by homeViewModel.home.collectAsState()
@@ -120,6 +122,7 @@ fun HomeScreen(navController: NavController){
     val podcastsLoading by homeViewModel.isPodcastsLoading.collectAsState()
     val audiobooks by homeViewModel.audiobooks.collectAsState()
     val followedArtists by homeViewModel.followedArtists.collectAsState()
+    LaunchedEffect(initialFilter) { initialFilter?.let { homeViewModel.setSelectedFilter(it) } }
     val selectedFilter by homeViewModel.selectedFilter.collectAsState()
     val isFollowingOnly by homeViewModel.isFollowingOnly.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -1126,7 +1129,17 @@ private fun HomePodcastsFeedContent(
     val resumePlayer: PlayerViewModel = hiltViewModel()
 
     val feed = (podcastFeedResult as? Response.Success)?.data
-    val sections = feed?.sections.orEmpty()
+    val sections = remember(feed) { feed?.sections.orEmpty().map { section ->
+        section.copy(shows = section.shows.distinctBy { it.id })
+    }.filter { it.shows.isNotEmpty() } }
+    val podcastListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val previewAllowed by remember {
+        androidx.compose.runtime.derivedStateOf {
+            !podcastListState.isScrollInProgress && podcastListState.layoutInfo.visibleItemsInfo.any {
+                it.key == "podcasts_continue_listening"
+            }
+        }
+    }
 
     val followRevision by com.music.spotui.data.preferences.SubscribedPodcastPref.revision.collectAsState()
     val subscribedPodcasts = remember(isFollowingOnly, followRevision) {
@@ -1159,6 +1172,9 @@ private fun HomePodcastsFeedContent(
                 onResetFilters = { homeViewModel.resetFilters() }
             )
         LazyColumn(
+        state = podcastListState,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 140.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier
             .fillMaxWidth()
             .weight(1f)
@@ -1197,6 +1213,7 @@ private fun HomePodcastsFeedContent(
                     navController = navController,
                     resumePlayer = resumePlayer,
                     onTrackOptions = onTrackOptions,
+                    previewAllowed = previewAllowed,
                 )
             }
         }
@@ -1257,47 +1274,15 @@ private fun HomePodcastsFeedContent(
                                     context, show.id, show.coverUri
                                 )
                             }
-                            Column(
-                                modifier = Modifier
-                                    .width(140.dp)
-                                    .clickable {
-                                        navController.navigate(showRoute(show.id, show.name))
-                                    }
-                            ) {
-                                GlideImage(
-                                    model = imageUri,
-                                    contentDescription = show.name,
-                                    contentScale = ContentScale.Crop,
-                                    loading = placeholder(R.drawable.placeholder),
-                                    failure = placeholder(R.drawable.placeholder),
-                                    modifier = Modifier
-                                        .size(140.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = show.name,
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1
-                                )
-                                if (show.publisher.isNotBlank()) {
-                                    Text(
-                                        text = show.publisher,
-                                        color = Color(0xFFB3B3B3),
-                                        fontSize = 11.sp,
-                                        maxLines = 1
-                                    )
-                                }
-                            }
+                            PodcastCatalogueCard(show = show.copy(coverUri = imageUri),
+                                onClick = { navController.navigate(showRoute(show.id, show.name)) })
                         }
                     }
                 }
             }
         } else {
             // Never show permanent skeletons for unresolved or invalid search results.
-            val displaySections = sections.filter { it.shows.isNotEmpty() }
+            val displaySections = sections
             if (displaySections.isEmpty()) {
                 item {
                     Column(
@@ -1323,7 +1308,7 @@ private fun HomePodcastsFeedContent(
                 }
             }
 
-            items(displaySections.size, key = { idx -> displaySections[idx].title }) { idx ->
+            items(displaySections.size, key = { idx -> "${idx}:${displaySections[idx].title}" }) { idx ->
                 val sec = displaySections[idx]
                 Column(modifier = Modifier.padding(bottom = 24.dp)) {
                     Text(
@@ -1339,43 +1324,10 @@ private fun HomePodcastsFeedContent(
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
                             horizontalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
-                            items(sec.shows.size, key = { i -> "${sec.shows[i].id}:${sec.shows.take(i).count { it.id == sec.shows[i].id }}" }) { i ->
+                            items(sec.shows.size, key = { i -> sec.shows[i].id }) { i ->
                                 val show = sec.shows[i]
-                                Column(
-                                    modifier = Modifier
-                                        .width(152.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(Color(0xFF202026))
-                                        .clickable { navController.navigate(showRoute(show.id, show.name)) }
-                                        .padding(7.dp)
-                                ) {
-                                    GlideImage(
-                                        model = com.music.spotui.ui.notification.PodcastCover.preferredShowUri(context, show.id, show.coverUri),
-                                        contentDescription = show.name,
-                                        contentScale = ContentScale.Crop,
-                                        loading = placeholder(R.drawable.placeholder),
-                                        failure = placeholder(R.drawable.placeholder),
-                                        modifier = Modifier
-                                            .size(138.dp)
-                                            .clip(RoundedCornerShape(10.dp))
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = show.name,
-                                        color = Color.White,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1
-                                    )
-                                    if (show.publisher.isNotBlank()) {
-                                        Text(
-                                            text = show.publisher,
-                                            color = Color(0xFFB3B3B3),
-                                            fontSize = 11.sp,
-                                            maxLines = 1
-                                        )
-                                    }
-                                }
+                                PodcastCatalogueCard(show = show,
+                                    onClick = { navController.navigate(showRoute(show.id, show.name)) })
                             }
                         }
                     } else {
@@ -1407,7 +1359,7 @@ private fun HomePodcastsFeedContent(
             }
         }
 
-        item { Spacer(modifier = Modifier.height(210.dp)) }
+
     }
     } // fixed Home header
 
@@ -1419,9 +1371,21 @@ private fun ContinueListeningCarousel(
     navController: NavController,
     resumePlayer: PlayerViewModel,
     onTrackOptions: (SongsModel) -> Unit,
+    previewAllowed: Boolean = true,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
+    val foregroundBusy = resumePlayer.isResolving.value || resumePlayer.isBuffering.value
+    val rowState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val activePreviewIndex by remember {
+        androidx.compose.runtime.derivedStateOf {
+            if (rowState.isScrollInProgress) -1 else {
+                val layout = rowState.layoutInfo
+                val middle = (layout.viewportStartOffset + layout.viewportEndOffset) / 2
+                layout.visibleItemsInfo.minByOrNull { kotlin.math.abs(it.offset + it.size / 2 - middle) }?.index ?: -1
+            }
+        }
+    }
     LaunchedEffect(Unit) {
         com.music.spotui.data.preferences.PodcastResumeStore.ensureLoaded(context)
     }
@@ -1440,6 +1404,7 @@ private fun ContinueListeningCarousel(
             )
         } else {
             LazyRow(
+                state = rowState,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
@@ -1452,29 +1417,31 @@ private fun ContinueListeningCarousel(
                     val currentEntry = entry ?: return@items
                     ContinuePodcastCard(
                         entry = currentEntry,
-                        autoPreview = index == 0,
+                        autoPreview = previewAllowed && index == activePreviewIndex,
+                        previewAllowed = previewAllowed && !rowState.isScrollInProgress && !foregroundBusy,
                         onPlay = {
                             val episode = currentEntry.episode
                             val knownShow = com.music.spotui.providers.PodcastProvider.knownShowForEpisode(episode.url)
                             val showId = knownShow?.first.orEmpty()
                             val showName = knownShow?.second?.ifBlank { episode.album.ifBlank { episode.singer } } ?: episode.album.ifBlank { episode.singer }
 
-                            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                val showEpisodes = if (showId.isNotBlank()) {
+                            resumePlayer.updateQueue(listOf(episode), isManualEdit = true)
+                            resumePlayer.updateSongState(episode.coverUri, episode.title, episode.singer,
+                                true, episode.id, 0, episode.album)
+                            com.music.spotui.ui.notification.PodcastCover.preserve(context, episode)
+                            SongPlayer.setRestorePoint(episode.url, currentEntry.positionMs)
+                            SongPlayer.playSong(episode.url, context, "song/${episode.id}")
+                            if (showId.isNotBlank()) scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                kotlinx.coroutines.delay(500L)
+                                while (SongPlayer.isPreparingTrack()) kotlinx.coroutines.delay(200L)
+                                val episodes = runCatching {
                                     com.music.spotui.providers.PodcastProvider.getShowEpisodes(showId, showName)
-                                } else emptyList()
-
-                                val fullQueue = if (showEpisodes.isNotEmpty()) {
-                                    (listOf(episode) + showEpisodes.filter { it.id != episode.id }).distinctBy { it.id }
-                                } else listOf(episode)
-
+                                }.getOrDefault(emptyList())
                                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                    resumePlayer.updateQueue(fullQueue, isManualEdit = true)
-                                    resumePlayer.updateSongState(episode.coverUri, episode.title, episode.singer,
-                                        true, episode.id, 0, episode.album)
-                                    com.music.spotui.ui.notification.PodcastCover.preserve(context, episode)
-                                    SongPlayer.setRestorePoint(episode.url, currentEntry.positionMs)
-                                    SongPlayer.playSong(episode.url, context, "song/${episode.id}")
+                                    if (episodes.isNotEmpty() && resumePlayer.currentSongId.value == episode.id &&
+                                        resumePlayer.queue.value.singleOrNull()?.url == episode.url) {
+                                        resumePlayer.updateQueue((listOf(episode) + episodes).distinctBy { it.url }, isManualEdit = true)
+                                    }
                                 }
                             }
                         },
@@ -1505,6 +1472,7 @@ private fun ContinueListeningCarousel(
 private fun ContinuePodcastCard(
     entry: com.music.spotui.data.preferences.PodcastResumeEntry,
     autoPreview: Boolean,
+    previewAllowed: Boolean = true,
     onPlay: () -> Unit,
     onShowClick: () -> Unit,
     onAdd: () -> Unit,
@@ -1514,18 +1482,19 @@ private fun ContinuePodcastCard(
     val episode = entry.episode
     var menuExpanded by remember(episode.url) { mutableStateOf(false) }
     Column(
-        modifier = Modifier.width(318.dp)
-            .clip(RoundedCornerShape(20.dp))
+        modifier = Modifier.width((androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp - 48).dp.coerceIn(240.dp, 328.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(
-                Brush.verticalGradient(listOf(Color(0xFF32343B), Color(0xFF202126)))
+                Brush.verticalGradient(listOf(Color(0xFF292929), Color(0xFF1B1B1B)))
             )
             .padding(12.dp)
     ) {
         com.music.spotui.ui.components.ContinuePodcastPreview(
             entry = entry,
-            modifier = Modifier.fillMaxWidth().height(177.dp),
+            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
             radius = 14.dp,
             autoPreview = autoPreview,
+            previewAllowed = previewAllowed,
             onTap = onPlay,
         )
         Spacer(Modifier.height(12.dp))
@@ -1533,7 +1502,7 @@ private fun ContinuePodcastCard(
             modifier = Modifier.clickable(onClick = onPlay),
             color = Color.White, fontSize = 18.sp,
             fontWeight = FontWeight.Bold, maxLines = 2,
-            lineHeight = 23.sp, minLines = 2)
+            lineHeight = 23.sp, minLines = 2, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(7.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(6.dp).background(Color(0xFF1ED760), CircleShape))
@@ -1553,11 +1522,14 @@ private fun ContinuePodcastCard(
             }
         }
         Spacer(Modifier.height(8.dp))
-        val description = episode.description.takeIf {
-            it.isNotBlank() && it != episode.title
-        } ?: "Continúa escuchando este episodio donde lo dejaste."
+        val description = remember(episode.description, episode.title) {
+            episode.description.takeIf { it.isNotBlank() && it != episode.title }?.let {
+                androidx.core.text.HtmlCompat.fromHtml(it, androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY)
+                    .toString().replace(Regex("\\s+"), " ").trim()
+            } ?: "Continúa escuchando este episodio donde lo dejaste."
+        }
         Text(description, color = Color(0xFFADB0B9), fontSize = 12.sp,
-            lineHeight = 17.sp, minLines = 2, maxLines = 2)
+            lineHeight = 17.sp, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(12.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1593,7 +1565,7 @@ private fun ContinuePodcastCard(
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val minsLeft = ((entry.durationMs - entry.positionMs).coerceAtLeast(0L) + 59_999L) / 60_000L
-                Text("${minsLeft} min restantes", color = Color(0xFFCDD0DA), fontSize = 12.sp)
+                Text(if (entry.durationMs > 0L) "$minsLeft min restantes" else "Continuar", color = Color(0xFFCDD0DA), fontSize = 12.sp)
                 Spacer(Modifier.width(12.dp))
                 Box(
                     modifier = Modifier.size(48.dp).clip(CircleShape)
@@ -2268,3 +2240,21 @@ private fun formatReleaseDate(raw: String): String {
 
 
 
+
+@OptIn(ExperimentalGlideComposeApi::class)
+@Composable
+private fun PodcastCatalogueCard(show: com.music.spotui.data.entity.PodcastModel, onClick: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Column(Modifier.width(164.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF181818))
+        .clickable(onClick = onClick).padding(10.dp)) {
+        GlideImage(model = com.music.spotui.ui.notification.PodcastCover.preferredShowUri(context, show.id, show.coverUri),
+            contentDescription = show.name, contentScale = ContentScale.Crop,
+            loading = placeholder(R.drawable.placeholder), failure = placeholder(R.drawable.placeholder),
+            modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(8.dp)))
+        Spacer(Modifier.height(10.dp))
+        Text(show.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+            maxLines = 2, minLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(show.publisher.ifBlank { "Podcast" }, color = Color(0xFFB3B3B3), fontSize = 12.sp,
+            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+    }
+}

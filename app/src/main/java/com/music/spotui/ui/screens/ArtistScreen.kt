@@ -158,8 +158,11 @@ private fun ArtistOverviewContent(
     }
 
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-    Box(modifier = Modifier.fillMaxSize()) {
+    com.music.spotui.ui.components.CollectionContentViewport(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                start = com.music.spotui.ui.components.LocalCollectionInset.current,
+                end = com.music.spotui.ui.components.LocalCollectionInset.current),
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
@@ -504,7 +507,8 @@ private fun PopularTrackRow(
 ) {
     val context = LocalContext.current
     val song = item.song
-    var isLiked by remember { mutableStateOf(isSongLiked(context, song.id.toString())) }
+    var isLiked by remember(song.id, song.url) { mutableStateOf(isSongLiked(context, song.id.toString())) }
+    val isSaved = com.music.spotui.ui.components.rememberTrackSaved(song, isLiked)
     var showSavedIn by remember { mutableStateOf(false) }
     if (showSavedIn) {
         SavedInSheet(
@@ -573,17 +577,17 @@ private fun PopularTrackRow(
                 } ?: Text(text = song.singer, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
             }
             Icon(
-                painter = if (isLiked) painterResource(id = R.drawable.added) else painterResource(id = R.drawable.ic_add),
+                painter = if (isSaved) painterResource(id = R.drawable.added) else painterResource(id = R.drawable.ic_add),
                 contentDescription = "",
-                tint = if (isLiked) Color.White else Color.Gray,
+                tint = if (isSaved) Color(0xFF1ED760) else Color.Gray,
                 modifier = Modifier
                     .size(20.dp)
                     .combinedClickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                         onClick = {
-                            if (isLiked) removeLikedSongId(context, song.id.toString())
-                            else addLikedSongId(context, song.id.toString())
+                            if (isSaved) { showSavedIn = true; return@combinedClickable }
+                            addLikedSongId(context, song.id.toString())
                             isLiked = isSongLiked(context, song.id.toString())
                             artistViewModel.updateLikeState(!artistViewModel.likeState.value)
                         },

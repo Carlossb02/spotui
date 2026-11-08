@@ -85,7 +85,7 @@ fun loadLastPlayback(context: Context): Pair<SongsModel, Long>? {
 }
 
 /** Saves the current playback queue. */
-fun saveLastQueue(context: Context, queue: List<SongsModel>, originalOrder: List<SongsModel> = queue) {
+fun saveLastQueue(context: Context, queue: List<SongsModel>, originalOrder: List<SongsModel> = queue, manualIndices: Set<Int> = emptySet(), cursor: Int = 0, originalIndices: List<Int> = emptyList()) {
     val p = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
     val array = JSONArray()
     for (song in queue) {
@@ -97,7 +97,10 @@ fun saveLastQueue(context: Context, queue: List<SongsModel>, originalOrder: List
     originalOrder.filter { it.title.isNotBlank() && it.url.isNotBlank() }
         .forEach { original.put(songToJson(it)) }
     p.edit().putString(KEY_QUEUE, array.toString())
-        .putString("original_queue", original.toString()).apply()
+        .putString("original_queue", original.toString())
+        .putString("manual_queue_indices", manualIndices.sorted().joinToString(","))
+        .putLong("queue_cursor", cursor.toLong())
+        .putString("original_queue_indices", originalIndices.joinToString(",")).apply()
 }
 
 /** Loads the last saved playback queue. */
@@ -155,3 +158,22 @@ fun savePlaybackSource(context: Context, name: String) {
 
 fun loadPlaybackSource(context: Context): String =
     context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString("source_name", "").orEmpty()
+
+/** Occurrence positions in the persisted flattened queue, never Spotify track IDs. */
+fun loadManualQueueIndices(context: Context): Set<Int> =
+    context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString("manual_queue_indices", "").orEmpty()
+        .split(',').mapNotNull { it.toIntOrNull()?.takeIf { index -> index >= 0 } }.toSet()
+
+fun loadLastQueueIndex(context: Context, queue: List<SongsModel>, songId: Int): Int {
+    val cursor = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getLong("queue_cursor", 0L).toInt()
+    return cursor.takeIf { queue.getOrNull(it)?.id == songId }
+        ?: queue.indexOfFirst { it.id == songId }.coerceAtLeast(0)
+}
+
+fun loadOriginalQueueIndices(context: Context): List<Int> =
+    context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString("original_queue_indices", "").orEmpty()
+        .split(',').mapNotNull { it.toIntOrNull()?.takeIf { index -> index >= 0 } }
+
+fun saveLastQueueCursor(context: Context, cursor: Int) {
+    context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putLong("queue_cursor", cursor.toLong()).apply()
+}

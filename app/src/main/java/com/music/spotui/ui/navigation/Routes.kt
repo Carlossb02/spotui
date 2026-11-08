@@ -16,6 +16,7 @@ sealed class Routes(
     object Artist : Routes(0, "Artist", "artist")
     object ArtistReleases : Routes(0, "ArtistReleases", "artistreleases")
     object Playlist : Routes(0, "Playlist", "playlist")
+    object Podcasts : Routes(0, "Podcasts", "podcasts")
     object Show : Routes(0, "Show", "show")
     object Queue : Routes(0, "Queue", "queue")
     object Liked : Routes(0, "Liked", "liked")

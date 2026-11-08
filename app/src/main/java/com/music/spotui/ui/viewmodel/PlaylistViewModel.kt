@@ -86,7 +86,7 @@ class PlaylistViewModel @Inject constructor(
         // clear its content or discard its LazyListState/visible scroll anchor.
         if (differentPlaylist) {
             _playlist.value = Response.Loading()
-            _songs.value = Response.Loading()
+            _songs.value = repository.cachedCollectionSongs("playlist:${com.music.spotui.data.api.Api.HomeCache.cleanId(playlistId)}")?.let { Response.Success(it) } ?: Response.Loading()
         }
         viewModelScope.launch(Dispatchers.IO) {
             repository.providePlaylist(playlistId).collect { result ->

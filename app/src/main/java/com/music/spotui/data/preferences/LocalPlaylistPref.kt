@@ -102,6 +102,7 @@ object LocalPlaylistPref {
             savePlaylistIds(context, existingIds)
         }
         prefs.edit().putString(playlist.id, playlist.toJson()).apply()
+        com.music.spotui.data.api.SavedTrackLibrary.localChanged(context)
         com.music.spotui.util.BackupHelper.scheduleAutoBackup(context)
     }
 
@@ -209,6 +210,7 @@ object LocalPlaylistPref {
         val existingIds = getPlaylistIds(context).toMutableList()
         existingIds.remove(playlistId)
         savePlaylistIds(context, existingIds)
+        com.music.spotui.data.api.SavedTrackLibrary.localChanged(context)
         com.music.spotui.util.BackupHelper.scheduleAutoBackup(context)
     }
 
