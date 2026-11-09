@@ -17,6 +17,9 @@ import android.util.Rational
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
@@ -234,6 +237,10 @@ class MainActivity : ComponentActivity() {
                     // changes between the mobile/tablet and mini/expanded layouts.
                     if (!PodcastVideoPipState.isInPictureInPicture) {
                         com.music.spotui.ui.screens.PodcastFullscreenOverlay()
+                        com.music.spotui.ui.components.OfflineStatusBanner(
+                            Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
+                                .padding(bottom = 100.dp).navigationBarsPadding()
+                        )
                     }
                     // The only PiP video surface now lives in a native View
                     // layered above Compose. Never reparent on each composition.

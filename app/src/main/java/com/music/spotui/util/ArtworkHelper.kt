@@ -37,7 +37,8 @@ object ArtworkHelper {
         context: Context,
         coverUri: String,
         songId: String? = null,
-        streamUrl: String? = null
+        streamUrl: String? = null,
+        allowBlockingLookup: Boolean = true,
     ): MediaMetadata.Builder {
         val cleanCover = coverUri.trim()
         val cleanStream = streamUrl?.trim().orEmpty()
@@ -107,7 +108,7 @@ object ArtworkHelper {
 
         // 5. Check Glide disk cache safely
         if (cleanCover.isNotBlank()) {
-            if (Looper.myLooper() != Looper.getMainLooper()) {
+            if (allowBlockingLookup && Looper.myLooper() != Looper.getMainLooper()) {
                 val cachedFile = runCatching {
                     com.bumptech.glide.Glide.with(context.applicationContext)
                         .downloadOnly()

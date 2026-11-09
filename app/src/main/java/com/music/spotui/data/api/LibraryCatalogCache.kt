@@ -35,7 +35,10 @@ internal object LibraryCatalogCache {
     @Synchronized fun replace(context: Context, expectedAccount: String, entries: List<LibraryEntry>) {
         if (SpotifySession.spDc(context) != expectedAccount) return
         account = expectedAccount
-        memory = entries.filterNot { it.isLocal || it.isPodcast }.distinctBy { it.isPlaylist to it.spotifyId }
+        val pendingAlbums = SpotifyPendingWrites.entries(context).filter { it.kind == "album" }.associateBy { it.target }
+        val retained = memory.orEmpty().filter { !it.isPlaylist && pendingAlbums[it.spotifyId]?.saved == true }
+        memory = (entries + retained).filterNot { it.isLocal || it.isPodcast || (!it.isPlaylist && pendingAlbums[it.spotifyId]?.saved == false) }
+            .distinctBy { it.isPlaylist to it.spotifyId }
         val a = JSONArray()
         memory.orEmpty().forEach { e -> a.put(JSONObject().put("id", e.spotifyId).put("name", e.name)
             .put("subtitle", e.subtitle).put("cover", e.coverUri).put("playlist", e.isPlaylist).put("artists", e.artists)) }

@@ -74,6 +74,24 @@ class PlaylistViewModel @Inject constructor(
 
     private var playlistKey: String? = null
 
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            com.music.spotui.sync.OwnLibraryChanges.revision.collect {
+                playlistKey?.takeIf { it.startsWith("local_pl_") }?.let { id ->
+                    val localSongs = repository.cachedCollectionSongs("playlist:$id")
+                    if (localSongs == null) {
+                        _songs.value = Response.Success(emptyList())
+                        _playlist.value = Response.Error("Esta lista se ha eliminado.")
+                        return@collect
+                    }
+                    _songs.value = Response.Success(localSongs)
+                    repository.providePlaylist(id).collect { if (it !is Response.Loading) _playlist.value = it }
+                }
+            }
+        }
+    }
+
     fun loadPlaylist(playlistId: String) {
         if (playlistKey == playlistId) return
         reloadPlaylist(playlistId)

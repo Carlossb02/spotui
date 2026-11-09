@@ -158,17 +158,55 @@ fun getDownloadedSongs(context: Context): List<SongsModel> {
     }
 }
 
-/** Local file path for a track query (SongsModel.url), if downloaded and present on disk. */
-fun downloadedPathForQuery(context: Context, query: String): String? {
-    val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-    for (v in prefs.all.values) {
-        val (song, path) = (v as? String)?.let(::parse) ?: continue
-        if (song.url == query && validDownloadFile(context, path) != null) {
-            com.music.spotui.util.ArtworkHelper.ensureDownloadedCover(context, song)
-            return path
+/** Exact recording identities, independent of edited display titles or podcast query decorations. */
+internal fun downloadRecordingKey(query: String, spotifyId: String = ""): String {
+    if (query.startsWith("yt_ep:")) return "yt_ep:" + query.removePrefix("yt_ep:").substringBefore('|')
+    if (query.startsWith("episode:")) return "episode:" + query.removePrefix("episode:").substringBefore('|')
+    val youtubeId = if(query.startsWith("yt_local:")) query.removePrefix("yt_local:") else runCatching {
+        val uri = java.net.URI(query)
+        when(uri.host?.lowercase()) {
+            "youtu.be", "www.youtu.be" -> uri.path.trim('/').substringBefore('/')
+            "youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com" ->
+                if(uri.path == "/watch") uri.rawQuery.orEmpty().split('&').firstOrNull { it.startsWith("v=") }?.substringAfter('=')
+                else if(uri.path.startsWith("/shorts/") || uri.path.startsWith("/embed/")) uri.path.split('/').getOrNull(2) else null
+            else -> null
         }
+    }.getOrNull()
+    if(youtubeId != null && youtubeId.matches(Regex("[A-Za-z0-9_-]{11}"))) return "youtube:$youtubeId"
+    val id = spotifyId.removePrefix("spotify:track:").removePrefix("track:").substringBefore('|').substringBefore('?')
+        .ifBlank { if (query.startsWith("spotify:track:")) query.removePrefix("spotify:track:").substringBefore('|').substringBefore('?') else "" }
+    return if (id.isNotBlank()) "spotify:$id" else query
+}
+private data class DownloadPointer(val path: String, val recording: String)
+private class DownloadMemory(val prefs: android.content.SharedPreferences) {
+    @Volatile var dirty = true
+    var byQuery: Map<String, DownloadPointer> = emptyMap()
+    var byRecording: Map<String, DownloadPointer> = emptyMap()
+    var byId: Map<Int, DownloadPointer> = emptyMap()
+    val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> dirty = true }
+    init { prefs.registerOnSharedPreferenceChangeListener(listener) }
+    @Synchronized fun refresh() {
+        if (!dirty) return
+        dirty = false
+        val rows = prefs.all.values.mapNotNull { (it as? String)?.let(::parse) }
+        val pointers = rows.map { (song,path) -> song to DownloadPointer(path, downloadRecordingKey(song.url, song.spotifyTrackId)) }
+        byQuery = pointers.associate { it.first.url to it.second }
+        byRecording = pointers.associate { it.second.recording to it.second }
+        byId = pointers.associate { it.first.id to it.second }
     }
-    return null
+}
+private val downloadMemories = java.util.WeakHashMap<android.content.SharedPreferences, DownloadMemory>()
+/** RAM index lookup plus a file-presence check. No artwork work or fuzzy title matching on playback. */
+fun downloadedPathForQuery(context: Context, query: String, songId: Int? = null, spotifyTrackId: String = ""): String? {
+    val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+    val memory = synchronized(downloadMemories) { downloadMemories.getOrPut(prefs) { DownloadMemory(prefs) } }
+    memory.refresh()
+    val row = synchronized(memory) {
+        memory.byQuery[query] ?: memory.byRecording[downloadRecordingKey(query, spotifyTrackId)] ?: songId?.let { id ->
+            memory.byId[id]?.takeIf { it.recording == downloadRecordingKey(query, spotifyTrackId) }
+        }
+    } ?: return null
+    return validDownloadFile(context, row.path)?.absolutePath
 }
 
 /** Every verified downloaded track paired with its private on-disk audio file. */

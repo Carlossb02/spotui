@@ -52,7 +52,8 @@ object CustomMetadataPref {
         val keys = getSongKeys(song)
         if (keys.isEmpty()) return
         val current = getAllOverrides(context).toMutableMap()
-        val override = TrackMetadataOverride(title, singer, album, coverUri)
+        val retainedCover=coverUri.trim().ifBlank { keys.firstNotNullOfOrNull { current[it]?.coverUri?.takeIf(String::isNotBlank) } ?: song.coverUri }
+        val override = TrackMetadataOverride(title, singer, album, retainedCover)
         keys.forEach { current[it] = override }
         saveAll(context, current)
     }
@@ -100,9 +101,13 @@ object CustomMetadataPref {
         return keys
     }
 
-    fun getAllOverrides(context: Context): Map<String, TrackMetadataOverride> {
-        val raw = prefs(context).getString(KEY, null) ?: return emptyMap()
-        return runCatching {
+    private data class Memory(val prefs: android.content.SharedPreferences, val raw: String?, val values: Map<String, TrackMetadataOverride>)
+    @Volatile private var memory: Memory? = null
+    @Synchronized fun getAllOverrides(context: Context): Map<String, TrackMetadataOverride> {
+        val store = prefs(context)
+        val raw = store.getString(KEY, null)
+        memory?.takeIf { it.prefs === store && it.raw == raw }?.let { return it.values }
+        val loaded = if (raw == null) emptyMap() else runCatching {
             val obj = JSONObject(raw)
             val result = mutableMapOf<String, TrackMetadataOverride>()
             val keys = obj.keys()
@@ -118,8 +123,10 @@ object CustomMetadataPref {
                     )
                 }
             }
-            result
+            result.toMap()
         }.getOrDefault(emptyMap())
+        memory = Memory(store, raw, loaded)
+        return loaded
     }
 
     fun restoreOverrides(context: Context, map: Map<String, TrackMetadataOverride>) {

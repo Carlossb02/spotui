@@ -39,6 +39,10 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.material3.CircularProgressIndicator
+import com.music.spotui.sync.CloudPlayback
+import com.music.spotui.sync.GoogleDeviceSync
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -65,6 +69,8 @@ fun DevicesSheet(
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val cloud by CloudPlayback.status.collectAsState()
+    val account by GoogleDeviceSync.status.collectAsState()
 
     var devices by remember { mutableStateOf<List<AudioDeviceItem>>(emptyList()) }
     var hasBtPermission by remember { mutableStateOf(AudioDeviceHelper.hasBluetoothPermission(context)) }
@@ -177,7 +183,7 @@ fun DevicesSheet(
 
             // Current Active Device Title
             val activeDevice = devices.firstOrNull { it.isActive }
-            if (activeDevice != null) {
+            if (activeDevice != null && !cloud.remote) {
                 Text(
                     text = uiLocalized("CURRENT DEVICE"),
                     color = Color.Gray,
@@ -238,15 +244,25 @@ fun DevicesSheet(
                 modifier = Modifier.padding(bottom = 8.dp)
             )
 
+            cloud.error?.let { Text(it,color=Color(0xFFFFB4AB),fontSize=13.sp,modifier=Modifier.padding(vertical=8.dp)) }
             // Devices list
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.weight(weight = 1f, fill = false)
             ) {
+                if(account.email.isNotBlank()) {
+                    item {Text("Tus dispositivos",color=Color.Gray,fontSize=12.sp,modifier=Modifier.padding(vertical=8.dp))}
+                    items(account.devices,key={"cloud:"+it.id}) { device ->
+                        CloudDeviceRow(device,active=cloud.ownerId==device.id,pending=cloud.transferring==device.id,
+                            onClick={CloudPlayback.transferTo(device.id)})
+                    }
+                    item {HorizontalDivider(color=Color(0xFF282828),modifier=Modifier.padding(vertical=10.dp))}
+                }
                 items(devices) { item ->
                     DeviceItemRow(
                         item = item,
                         onClick = {
+                            if(cloud.remote)CloudPlayback.transferTo(cloud.localId)
                             val success = AudioDeviceHelper.switchAudioOutput(context, item)
                             if (!success) {
                                 AudioDeviceHelper.openSystemAudioSwitcher(context)
@@ -383,5 +399,24 @@ private fun DeviceItemRow(
                 modifier = Modifier.size(18.dp)
             )
         }
+    }
+}
+
+
+@Composable
+private fun CloudDeviceRow(device:GoogleDeviceSync.Device,active:Boolean,pending:Boolean,onClick:()->Unit) {
+    val green=Color(0xFF1ED760)
+    val tint=if(active)green else if(device.online)Color.White else Color.Gray
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(enabled=device.online && !pending,onClick=onClick)
+        .padding(horizontal=12.dp,vertical=12.dp),verticalAlignment=Alignment.CenterVertically) {
+        Icon(Icons.Default.PhoneAndroid,contentDescription=null,tint=tint,modifier=Modifier.size(22.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(device.name,color=tint,fontSize=14.sp,fontWeight=if(active)FontWeight.Bold else FontWeight.Normal)
+            Text(if(pending)"Conectando…" else if(active)"Reproduciendo aquí" else if(device.online)"Disponible" else "Sin conexión",
+                color=if(active)green else Color.Gray,fontSize=12.sp)
+        }
+        if(pending)CircularProgressIndicator(Modifier.size(20.dp),color=green,strokeWidth=2.dp)
+        else if(active)Icon(Icons.Default.Check,contentDescription="Dispositivo activo",tint=green,modifier=Modifier.size(20.dp))
     }
 }

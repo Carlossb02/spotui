@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.ConcurrentHashMap
 
 object SubscribedPodcastPref {
+    internal fun notifySyncedChange() { _revision.value = _revision.value + 1L }
     private const val PREF_NAME = "SubscribedPodcasts"
     private const val KEY_PODCASTS = "subscribed_podcasts_json"
 

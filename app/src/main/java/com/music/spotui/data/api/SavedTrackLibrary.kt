@@ -34,8 +34,14 @@ object SavedTrackLibrary {
     private val previews = mutableMapOf<Pair<String, String>, Preview>()
 
     private fun withPreviews(snapshot: SavedLibrarySnapshot): SavedLibrarySnapshot {
-        if (previews.isEmpty()) return snapshot
-        return snapshot.copy(playlists = snapshot.playlists.map { list ->
+        val app = appContext
+        val durable = if (app != null) SpotifyPendingWrites.entries(app).filter { it.kind == "playlist" } else emptyList()
+        if (previews.isEmpty() && durable.isEmpty()) return snapshot
+        return snapshot.copy(playlists = snapshot.playlists.map { original ->
+        val writes = durable.filter { it.target == original.id }
+        val list = if (writes.isEmpty()) original else original.copy(trackIds = original.trackIds.toMutableSet().apply {
+            writes.forEach { if (it.saved) add(it.track) else remove(it.track) }
+        })
         val pending = previews.filterKeys { it.first == list.id }
         if (pending.isEmpty()) list else list.copy(trackIds = list.trackIds.toMutableSet().apply {
             pending.forEach { (key, value) -> if (value.saved) add(key.second) else remove(key.second) }
@@ -203,7 +209,7 @@ object SavedTrackLibrary {
                     }
                 }
                 val current = snapshot.value.playlists.associateBy { it.id }
-                _snapshot.update { it.copy(playlists = locals + (current.values.filterNot { it.local } + disk.playlists).distinctBy { it.id }) }
+                _snapshot.update { withPreviews(it.copy(playlists = locals + (current.values.filterNot { it.local } + disk.playlists).distinctBy { it.id })) }
                 hydrated = true
             }
         }

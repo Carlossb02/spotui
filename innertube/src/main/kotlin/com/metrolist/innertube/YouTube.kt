@@ -144,6 +144,7 @@ data class PodcastPage(
     suspend fun newPipePlayer(
         videoId: String,
         tempRes: PlayerResponse,
+        preloadedStreams: List<Pair<Int, String>>? = null,
     ): PlayerResponse? {
         if (tempRes.playabilityStatus.status != "OK") {
             return null
@@ -160,7 +161,7 @@ data class PodcastPage(
             return null
         }
 
-        val streamsList = getNewPipeStreamUrls(videoId)
+        val streamsList = preloadedStreams ?: getNewPipeStreamUrls(videoId)
         if (streamsList.isEmpty()) return null
 
         val decodedSigResponse = tempRes.copy(

@@ -180,15 +180,6 @@ fun SumUpAlbumScreen(
     val albumSongs: List<SongsModel> = songs
     val resolvedAlbum by albumViewModel.albumDetail.collectAsState()
 
-    // Warm the stream cache for the first few tracks so the first tap plays
-    // (near-)instantly instead of resolving YouTube on the tap.
-    LaunchedEffect(albumSongs) {
-        if (albumSongs.isNotEmpty()) {
-            SongPlayer.registerTracksForResolution(albumSongs.take(4))
-            SongPlayer.prefetchList(albumSongs.map { it.url }, context)
-        }
-    }
-
     val albumByName : Map<String, List<AlbumsModel>> = albums.groupBy { it.name }
     // The album may not be in the cached new-releases list (e.g. opened from
     // search) — fall back to a model built from the album's first track.
@@ -321,6 +312,7 @@ fun SumUpAlbumScreen(
 
     Log.d("color", dominentColor.toString())
     val listState = rememberLazyListState()
+        com.music.spotui.ui.components.VisibleSongPreload(listState, remember(filteredSongs) { filteredSongs.mapIndexed { i, song -> "${song.id}|${song.url}|$i" to song } })
     val collapsedTitle = com.music.spotui.ui.components.rememberCollectionTitleState(listState, "album_header")
     val searchReveal = rememberCollectionSearchState(listState, albumName)
     val keyboard = LocalSoftwareKeyboardController.current
@@ -474,14 +466,12 @@ fun SumUpAlbumScreen(
                                             albumSaveGeneration++
                                             albumSaveScope.launch {
                                                 try {
-                                                    val before = if (albumSaveKnown) albumSaved else
-                                                        com.music.spotui.data.api.AlbumLibrary.read(context, albumSpotifyId, album[0].id)
-                                                    if (before != null && (before == desiredSaved || com.music.spotui.data.api.AlbumLibrary.setSaved(
-                                                            context, albumSpotifyId, album[0].id, desiredSaved))) {
+                                                    if (com.music.spotui.data.api.AlbumLibrary.setSaved(
+                                                            context, albumSpotifyId, album[0].id, desiredSaved)) {
                                                         albumSaved = desiredSaved
                                                         albumSaveKnown = true
                                                         snackbarMessage = if (albumSaved) "Álbum añadido a tu biblioteca" else "Álbum quitado de tu biblioteca"
-                                                    } else snackbarMessage = "No se pudo actualizar el álbum. Comprueba tu conexión."
+                                                    } else snackbarMessage = "No se pudo guardar el cambio."
                                                     snackbarVisible = true
                                                 } finally { albumSaveBusy = false }
                                             }

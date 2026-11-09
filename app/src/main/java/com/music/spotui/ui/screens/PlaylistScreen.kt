@@ -212,11 +212,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         }
     }
 
-    LaunchedEffect(songs) {
-        if (songs.isNotEmpty()) {
-            SongPlayer.prefetchList(songs.map { it.url }, context)
-        }
-    }
+
 
     var searchQuery by remember(playlistId) { mutableStateOf("") }
     var currentSort by remember(playlistId) { mutableStateOf(getPlaylistSortOption(context, playlistId)) }
@@ -432,6 +428,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
 
 
         val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        com.music.spotui.ui.components.VisibleSongPreload(listState, remember(filteredSongs) { filteredSongs.mapIndexed { i, song -> stableSongKeys[i] to song } })
     val collapsedTitle = com.music.spotui.ui.components.rememberCollectionTitleState(listState, "playlist_header")
         val searchReveal = rememberCollectionSearchState(listState, playlistId)
         val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0

@@ -21,6 +21,13 @@ internal object LibraryContentMemory {
     private var account: String? = null
     private var tracks = mutableMapOf<String, SongsModel>()
     private var collections = mutableMapOf<String, List<String>>()
+    private val projections = mutableMapOf<String, Pair<Long, List<SongsModel>>>()
+    private fun projected(key: String): List<SongsModel>? {
+        val ids = collections[key] ?: return null
+        val revision = _revision.value
+        projections[key]?.takeIf { it.first == revision }?.let { return it.second }
+        return ids.mapNotNull { tracks[it] }.also { projections[key] = revision to it }
+    }
     private var followed: List<ArtistsModel>? = null
     private data class LikeEdit(val saved: Boolean, val at: Long)
     private val pendingLikes = java.util.concurrent.ConcurrentHashMap<Pair<String, Int>, LikeEdit>()
@@ -44,7 +51,7 @@ internal object LibraryContentMemory {
         val session = SpotifySession.spDc(context)
         if (account == session) return
         persistJob?.cancel(); generation++; account = session
-        tracks = mutableMapOf(); collections = mutableMapOf(); followed = null; likeEdits = mutableMapOf()
+        tracks = mutableMapOf(); collections = mutableMapOf(); projections.clear(); followed = null; likeEdits = mutableMapOf()
         runCatching {
             val target = file(context, session)
             if (!target.exists() && !File(target.path + ".bak").exists()) return@runCatching
@@ -65,9 +72,23 @@ internal object LibraryContentMemory {
         while (recent.size > 512) recent.remove(recent.keys.first())
     }
     fun peek(context: Context, key: String): List<SongsModel>? = synchronized(lock) {
-        if (account != SpotifySession.spDc(context)) null else collections[key]?.mapNotNull { tracks[it] }
+        if (account != SpotifySession.spDc(context)) null else projected(key)
     }
-    fun read(context: Context, key: String): List<SongsModel>? = synchronized(lock) { load(context); collections[key]?.mapNotNull { tracks[it] } }
+    fun read(context: Context, key: String): List<SongsModel>? = synchronized(lock) { load(context); projected(key) }
+    fun playlistSongs(context: Context, id: String, remote: List<SongsModel>): List<SongsModel> {
+        val writes = SpotifyPendingWrites.entries(context).filter { it.kind == "playlist" && it.target == id }
+        if (writes.isEmpty()) return remote
+        val models = synchronized(lock) {
+            load(context)
+            (tracks.values + recent.values.takeIf { recentAccount == SpotifySession.spDc(context) }.orEmpty()).associateBy { it.spotifyTrackId }
+        }
+        return remote.toMutableList().apply {
+            writes.forEach { edit ->
+                if (!edit.saved) removeAll { it.spotifyTrackId == edit.track }
+                else if (none { it.spotifyTrackId == edit.track }) models[edit.track]?.let(::add)
+            }
+        }
+    }
     fun put(context: Context, key: String, songs: List<SongsModel>, expectedAccount: String) = synchronized(lock) {
         if (SpotifySession.spDc(context) != expectedAccount) return@synchronized
         load(context)
@@ -92,6 +113,8 @@ internal object LibraryContentMemory {
                 likeEdits[songId] = latest
                 val known = tracks.values.firstOrNull { it.id == songId }
                     ?: recent[songId]?.takeIf { recentAccount == session }
+                if (latest.saved && known != null) com.music.spotui.data.preferences.LocalLikedSongsPref.save(app, known)
+                if (!latest.saved) com.music.spotui.data.preferences.LocalLikedSongsPref.remove(app, songId)
                 val liked = collections["liked"].orEmpty().toMutableList()
                 if (latest.saved && known != null) { tracks[songKey(known)] = known; liked.remove(songKey(known)); liked.add(0,songKey(known)) }
                 if (!latest.saved) liked.removeAll { tracks[it]?.id == songId }
@@ -104,10 +127,39 @@ internal object LibraryContentMemory {
             }
         }
     }
+    fun seedLocalLikes(context: Context) {
+        val songs = synchronized(lock) {
+            load(context)
+            collections["liked"].orEmpty().mapNotNull { tracks[it] }.filter {
+                (it.spotifyTrackId.isBlank() || it.isLocalSpotifyTrack || it.url.startsWith("yt_local:")) &&
+                    com.music.spotui.data.preferences.isSongLiked(context, it.id.toString())
+            }
+        }
+        songs.forEach { com.music.spotui.data.preferences.LocalLikedSongsPref.save(context, it) }
+    }
+    fun confirmLike(context: Context, spotifyId: String, saved: Boolean) = synchronized(lock) {
+        load(context)
+        val song = (tracks.values + recent.values.takeIf { recentAccount == account }.orEmpty())
+            .firstOrNull { it.spotifyTrackId == spotifyId } ?: return@synchronized
+        val key = account.orEmpty() to song.id
+        // A confirmation from an older tap cannot replace a newer local intent.
+        val effective = pendingLikes.compute(key) { _, old ->
+            if (old != null && old.saved != saved) old else LikeEdit(saved, System.currentTimeMillis())
+        } ?: return@synchronized
+        likeEdits[song.id] = effective
+        changed(context)
+    }
     fun mergeLiked(context: Context, remote: List<SongsModel>, expectedAccount: String): List<SongsModel> = synchronized(lock) {
         if (SpotifySession.spDc(context) != expectedAccount) return@synchronized emptyList()
         load(context)
         pendingLikes.filterKeys { it.first == expectedAccount }.forEach { (key, value) -> likeEdits[key.second] = value }
+        val durableLikes = SpotifyPendingWrites.entries(context).filter { it.kind == "track" }
+        // Pending offline intent has no expiry until Spotify confirms the write.
+        durableLikes.forEach { edit ->
+            (remote + tracks.values).firstOrNull { it.spotifyTrackId == edit.target }?.let {
+                likeEdits[it.id] = LikeEdit(edit.saved, System.currentTimeMillis())
+            }
+        }
         val remoteIds = remote.map { it.id }.toSet()
         val now = System.currentTimeMillis()
         likeEdits.entries.removeAll { (id, edit) ->
@@ -117,7 +169,7 @@ internal object LibraryContentMemory {
         }
         val merged = remote.filterNot { likeEdits[it.id]?.saved == false }.toMutableList()
         val local = collections["liked"].orEmpty().mapNotNull { tracks[it] }
-        local.filter { it.spotifyTrackId.isBlank() || it.isLocalSpotifyTrack || likeEdits[it.id]?.saved == true }.forEach { if (merged.none { song -> song.id == it.id }) merged.add(it) }
+        local.filter { ((it.spotifyTrackId.isBlank() || it.isLocalSpotifyTrack) && com.music.spotui.data.preferences.isSongLiked(context, it.id.toString())) || likeEdits[it.id]?.saved == true }.forEach { if (merged.none { song -> song.id == it.id }) merged.add(it) }
         remote.forEach { tracks[songKey(it)] = it }
         merged.forEach { tracks[songKey(it)] = it }
         collections["liked"] = merged.map(::songKey)

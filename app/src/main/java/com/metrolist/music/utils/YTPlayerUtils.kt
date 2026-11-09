@@ -142,11 +142,12 @@ object YTPlayerUtils {
     }
 
     private fun dumpAudioFormats(stage: String, response: PlayerResponse?) {
+        if (!VERBOSE_AUDIO_DIAGNOSTICS) return
         val formats = response?.streamingData?.adaptiveFormats.orEmpty().filter { it.isAudio }
-        audioDebug("===== $stage | videoId=${response?.videoDetails?.videoId} | title=${response?.videoDetails?.title} | status=${response?.playabilityStatus?.status} | audioFormats=${formats.size} =====")
+        if (VERBOSE_AUDIO_DIAGNOSTICS) audioDebug("===== $stage | videoId=${response?.videoDetails?.videoId} | title=${response?.videoDetails?.title} | status=${response?.playabilityStatus?.status} | audioFormats=${formats.size} =====")
         formats.forEachIndexed { index, f ->
             val track = f.audioTrack
-            audioDebug(
+            if (VERBOSE_AUDIO_DIAGNOSTICS) audioDebug(
                 "[$stage][$index] itag=${f.itag} mime=${f.mimeType} bitrate=${f.bitrate} " +
                         "isOriginal=${f.isOriginal} trackId=${track?.id} trackName=${track?.displayName} " +
                         "trackLang=${trackLang(f)} dubbed=${isDubbedTrack(f)} contentHint=${audioUrlContentHint(f.url)} urlPresent=${!f.url.isNullOrEmpty()} " +
@@ -255,6 +256,35 @@ object YTPlayerUtils {
         recentVideoResponses[videoId] = now to response
     }
 
+    private val extractionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val extractionWork = com.music.spotui.util.SharedWork<String, List<Pair<Int, String>>>(extractionScope)
+    private val extractionCache = com.music.spotui.util.ExpiringLruCache<String, List<Pair<Int, String>>>(16, 60_000L)
+    private val extractionGeneration = java.util.concurrent.atomic.AtomicLong()
+    private fun extractionKey(videoId: String) = "${YouTube.locale}|${YouTube.proxy}|${YouTube.visitorData}|$videoId"
+    private suspend fun extractedStreams(videoId: String): List<Pair<Int, String>> {
+        val epoch = extractionGeneration.get()
+        val key = extractionKey(videoId)
+        extractionCache.get(key)?.let { return it }
+        return extractionWork.await("$epoch|$key") {
+            extractionCache.get(key) ?: kotlinx.coroutines.runInterruptible(Dispatchers.IO) {
+                YouTube.getNewPipeStreamUrls(videoId)
+            }.also { streams ->
+                synchronized(extractionGeneration) {
+                    if (streams.isNotEmpty() && epoch == extractionGeneration.get()) extractionCache.put(key, streams)
+                }
+            }
+        }
+    }
+    fun clearExtractionCache() {
+        synchronized(extractionGeneration) {
+            extractionGeneration.incrementAndGet()
+            extractionCache.clear()
+            playbackCache.clear()
+        }
+        extractionWork.cancelAll()
+        playbackWork.cancelAll()
+    }
+
     data class PlaybackData(
         val audioConfig: PlayerResponse.PlayerConfig.AudioConfig?,
         val videoDetails: PlayerResponse.VideoDetails?,
@@ -263,12 +293,42 @@ object YTPlayerUtils {
         val streamUrl: String,
         val streamExpiresInSeconds: Int,
     )
+    private data class PlaybackKey(val video: String, val playlist: String?, val quality: AudioQuality,
+        val metered: Boolean, val locale: String, val cookie: String?, val visitor: String?, val skipValidation: Boolean)
+    private data class ReadyPlayback(val data: PlaybackData, val expiresAt: Long)
+    private val playbackCache = com.music.spotui.util.ExpiringLruCache<PlaybackKey, ReadyPlayback>(16, 60_000L)
+    private val playbackWork = com.music.spotui.util.SharedWork<Pair<Long, PlaybackKey>, Result<PlaybackData>>(extractionScope)
+
+    suspend fun playerResponseForPlayback(
+        videoId: String, playlistId: String? = null, audioQuality: AudioQuality,
+        connectivityManager: ConnectivityManager, skipValidation: Boolean = false,
+    ): Result<PlaybackData> {
+        val epoch = extractionGeneration.get()
+        val key = PlaybackKey(videoId, playlistId, audioQuality, connectivityManager.isActiveNetworkMetered,
+            YouTube.locale.toString(), YouTube.cookie, YouTube.visitorData, skipValidation)
+        fun cached(): PlaybackData? = playbackCache.get(key)?.takeIf {
+            android.os.SystemClock.elapsedRealtime() < it.expiresAt
+        }?.data
+        cached()?.let { return Result.success(it) }
+        return playbackWork.await(epoch to key) {
+            cached()?.let { return@await Result.success(it) }
+            playerResponseForPlaybackUnshared(videoId, playlistId, audioQuality, connectivityManager, skipValidation)
+                .onSuccess { data ->
+                    val ttl = minOf(60_000L, (data.streamExpiresInSeconds.toLong() - 90L).coerceAtLeast(0L) * 1000L)
+                    if (ttl > 0 && data.videoDetails?.videoId == videoId) synchronized(extractionGeneration) {
+                        if (epoch == extractionGeneration.get()) playbackCache.put(key,
+                            ReadyPlayback(data, android.os.SystemClock.elapsedRealtime() + ttl))
+                    }
+                }
+        }
+    }
+
     /**
      * Custom player response intended to use for playback.
      * Metadata like audioConfig and videoDetails are from [MAIN_CLIENT].
      * Format & stream can be from [MAIN_CLIENT] or [STREAM_FALLBACK_CLIENTS].
      */
-    suspend fun playerResponseForPlayback(
+    private suspend fun playerResponseForPlaybackUnshared(
         videoId: String,
         playlistId: String? = null,
         audioQuality: AudioQuality,
@@ -276,11 +336,26 @@ object YTPlayerUtils {
         skipValidation: Boolean = false,
     ): Result<PlaybackData> = runCatching {
         val streamStartedAt = android.os.SystemClock.elapsedRealtime()
+        // Same NewPipe extraction as before, now overlapping authentication and client metadata.
+        // Results are used only where the old path used NewPipe; language/format guards stay intact.
+        val warmStreams = extractionScope.async { extractedStreams(videoId) }
+        // The first anonymous client sends neither signatureTimestamp nor PoToken in InnerTube.
+        // Fetch its identical request during authentication; consume it only at its original turn.
+        val earlyScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        fun requestSession() = listOf(YouTube.cookie, YouTube.visitorData, YouTube.dataSyncId,
+            YouTube.locale.toString(), YouTube.proxy.toString(), YouTube.proxyAuth)
+        val earlySession = requestSession()
+        val firstClient = STREAM_FALLBACK_CLIENTS.first()
+        val earlyResponse = if (!firstClient.useSignatureTimestamp && !firstClient.useWebPoTokens &&
+            !firstClient.loginRequired && !firstClient.loginSupported) earlyScope.async {
+            YouTube.player(videoId, playlistId, firstClient, null, null).getOrNull()
+        } else null
+        try {
         Timber.tag(TAG).d("=== PLAYER RESPONSE FOR PLAYBACK ===")
         Timber.tag(TAG).d("videoId: $videoId")
         Timber.tag(TAG).d("playlistId: $playlistId")
         Timber.tag(TAG).d("audioQuality: $audioQuality")
-        audioDebug("REQUEST videoId=$videoId playlistId=$playlistId audioQuality=$audioQuality deviceLocale=${java.util.Locale.getDefault()} isMetered=${connectivityManager.isActiveNetworkMetered}")
+        if (VERBOSE_AUDIO_DIAGNOSTICS) audioDebug("REQUEST videoId=$videoId playlistId=$playlistId audioQuality=$audioQuality deviceLocale=${java.util.Locale.getDefault()} isMetered=${connectivityManager.isActiveNetworkMetered}")
 
         // Check if this is an uploaded/privately owned track
         val isUploadedTrack = playlistId == "MLPT" || playlistId?.contains("MLPT") == true
@@ -348,7 +423,7 @@ object YTPlayerUtils {
             Timber.tag(logTag).d("Attempting to get player response using MAIN_CLIENT: ${MAIN_CLIENT.clientName}")
             YouTube.player(videoId, playlistId, MAIN_CLIENT, signatureTimestamp.timestamp, poToken?.playerRequestPoToken).getOrNull()
         }
-        audioDebug("MAIN_CLIENT=${MAIN_CLIENT.clientName} skipMainClient=$skipMainClient signatureTimestamp=${signatureTimestamp.timestamp != null} poTokenPresent=${poToken != null}")
+        if (VERBOSE_AUDIO_DIAGNOSTICS) audioDebug("MAIN_CLIENT=${MAIN_CLIENT.clientName} skipMainClient=$skipMainClient signatureTimestamp=${signatureTimestamp.timestamp != null} poTokenPresent=${poToken != null}")
         dumpAudioFormats("MAIN_RESPONSE", mainPlayerResponse)
 
         // Debug uploaded track response
@@ -444,7 +519,10 @@ object YTPlayerUtils {
             val clientPoToken = if (nextClient.useWebPoTokens) poToken?.playerRequestPoToken else null
             val clientSigTimestamp = if (wasOriginallyAgeRestricted) null else signatureTimestamp.timestamp
             prefetchedResponses[index] = fallbackScope.async {
-                YouTube.player(videoId, playlistId, nextClient, clientSigTimestamp, clientPoToken).getOrNull()
+                val early = if (index == 0 && requestSession() == earlySession) earlyResponse?.await() else null
+                if (early?.playabilityStatus?.status == "OK" && early.videoDetails?.videoId == videoId &&
+                    requestSession() == earlySession) early
+                else YouTube.player(videoId, playlistId, nextClient, clientSigTimestamp, clientPoToken).getOrNull()
             }
         }
         if (startIndex >= 0) {
@@ -477,7 +555,7 @@ object YTPlayerUtils {
                 }
 
                 Timber.tag(logTag).d("Fetching player response for fallback client: ${client.clientName}")
-                audioDebug("TRY_CLIENT index=$clientIndex client=${client.clientName} loginRequired=${client.loginRequired} useWebPoTokens=${client.useWebPoTokens}")
+                if (VERBOSE_AUDIO_DIAGNOSTICS) audioDebug("TRY_CLIENT index=$clientIndex client=${client.clientName} loginRequired=${client.loginRequired} useWebPoTokens=${client.useWebPoTokens}")
                 // Only pass poToken for clients that support it
                 val clientPoToken = if (client.useWebPoTokens) poToken?.playerRequestPoToken else null
                 // Skip signature timestamp for age-restricted (faster), use it for normal content
@@ -530,13 +608,31 @@ object YTPlayerUtils {
 
                 val targetItag = targetFormat.itag
                 Timber.tag(logTag).d("Selected target itag from metadata: $targetItag (audioTrack: ${targetFormat.audioTrack})")
-                audioDebug("SELECTED client=${client.clientName} targetItag=$targetItag trackId=${targetFormat.audioTrack?.id} trackName=${targetFormat.audioTrack?.displayName} trackLang=${trackLang(targetFormat)} isOriginal=${targetFormat.isOriginal} dubbed=${isDubbedTrack(targetFormat)} mime=${targetFormat.mimeType} bitrate=${targetFormat.bitrate}")
+                if (VERBOSE_AUDIO_DIAGNOSTICS) audioDebug("SELECTED client=${client.clientName} targetItag=$targetItag trackId=${targetFormat.audioTrack?.id} trackName=${targetFormat.audioTrack?.displayName} trackLang=${trackLang(targetFormat)} isOriginal=${targetFormat.isOriginal} dubbed=${isDubbedTrack(targetFormat)} mime=${targetFormat.mimeType} bitrate=${targetFormat.bitrate}")
 
                 // 2. Get decrypted stream URLs via NewPipe method (skip NewPipe for multi-language videos
                 // as NewPipe's single-itag stream mapping overwrites distinct audio tracks)
                 val isMultiLangVideo = hasMultipleAudioTracks(streamPlayerResponse)
 
-                val newPipeResponse = if (wasOriginallyAgeRestricted || isMultiLangVideo) null else YouTube.newPipePlayer(videoId, streamPlayerResponse)
+                val responseForDirect = streamPlayerResponse
+                val directEligible = !wasOriginallyAgeRestricted && !isMultiLangVideo && !client.useWebPoTokens &&
+                    streamPlayerResponse.videoDetails?.musicVideoType != "MUSIC_VIDEO_TYPE_PRIVATELY_OWNED_TRACK" &&
+                    (targetFormat.url?.startsWith("https://") == true ||
+                        !(targetFormat.signatureCipher ?: targetFormat.cipher).isNullOrBlank()) &&
+                    languageMatchesUrl(targetFormat, trackLang(targetFormat))
+                val selectedDirectUrl = if (directEligible && !warmStreams.isCompleted) {
+                    val probe = extractionScope.async { resolveSelectedAudioDirect(targetFormat, videoId, responseForDirect) }
+                    try {
+                        kotlinx.coroutines.selects.select<String?> {
+                            warmStreams.onAwait { null }
+                            probe.onAwait { it }
+                        }
+                    } finally { probe.cancel() }
+                } else null
+                val directVerified = selectedDirectUrl != null
+                val newPipeResponse = if (wasOriginallyAgeRestricted || isMultiLangVideo || directVerified) null
+                    else YouTube.newPipePlayer(videoId, streamPlayerResponse, preloadedStreams = warmStreams.await())
+                if (directVerified) Log.i("SpotuiStartup", "ytDirectAudio verified; extraction wait avoided")
                 val responseToUse = newPipeResponse ?: streamPlayerResponse
 
                 // 3. Match targetItag in responseToUse to get NewPipe's playable URL for that exact Spanish track
@@ -564,16 +660,16 @@ object YTPlayerUtils {
                 }
 
                 Timber.tag(logTag).d("Format found after resolution: ${format.mimeType}, bitrate: ${format.bitrate}, url present: ${!format.url.isNullOrEmpty()}")
-                audioDebug("RESOLVED itag=${format.itag} trackId=${format.audioTrack?.id} trackName=${format.audioTrack?.displayName} trackLang=${trackLang(format)} isOriginal=${format.isOriginal} dubbed=${isDubbedTrack(format)} mime=${format.mimeType} bitrate=${format.bitrate} urlPresent=${!format.url.isNullOrEmpty()}")
+                if (VERBOSE_AUDIO_DIAGNOSTICS) audioDebug("RESOLVED itag=${format.itag} trackId=${format.audioTrack?.id} trackName=${format.audioTrack?.displayName} trackLang=${trackLang(format)} isOriginal=${format.isOriginal} dubbed=${isDubbedTrack(format)} mime=${format.mimeType} bitrate=${format.bitrate} urlPresent=${!format.url.isNullOrEmpty()}")
 
-                audioDebug("URL_SOURCE_RESPONSE newPipeResponse=${newPipeResponse != null} responseAudioCount=${responseToUse.streamingData?.adaptiveFormats.orEmpty().count { it.isAudio }} selectedItag=${format.itag} selectedTrackId=${format.audioTrack?.id} selectedTrackName=${format.audioTrack?.displayName} selectedLang=${trackLang(format)}")
+                if (VERBOSE_AUDIO_DIAGNOSTICS) audioDebug("URL_SOURCE_RESPONSE newPipeResponse=${newPipeResponse != null} responseAudioCount=${responseToUse.streamingData?.adaptiveFormats.orEmpty().count { it.isAudio }} selectedItag=${format.itag} selectedTrackId=${format.audioTrack?.id} selectedTrackName=${format.audioTrack?.displayName} selectedLang=${trackLang(format)}")
                 responseToUse.streamingData?.adaptiveFormats.orEmpty()
                     .filter { it.isAudio && it.itag == format.itag }
                     .forEachIndexed { index, candidate ->
-                        audioDebug("URL_MATCH_CANDIDATE[$index] itag=${candidate.itag} trackId=${candidate.audioTrack?.id} trackName=${candidate.audioTrack?.displayName} lang=${trackLang(candidate)} original=${candidate.isOriginal} mime=${candidate.mimeType} bitrate=${candidate.bitrate} ${safeAudioUrlInfo(candidate.url)}")
+                        if (VERBOSE_AUDIO_DIAGNOSTICS) audioDebug("URL_MATCH_CANDIDATE[$index] itag=${candidate.itag} trackId=${candidate.audioTrack?.id} trackName=${candidate.audioTrack?.displayName} lang=${trackLang(candidate)} original=${candidate.isOriginal} mime=${candidate.mimeType} bitrate=${candidate.bitrate} ${safeAudioUrlInfo(candidate.url)}")
                     }
-                audioDebug("TARGET_FORMAT_URL ${safeAudioUrlInfo(targetFormat.url)}")
-                audioDebug("URL_FORMAT_BEFORE_RESOLVE ${safeAudioUrlInfo(format.url)}")
+                if (VERBOSE_AUDIO_DIAGNOSTICS) audioDebug("TARGET_FORMAT_URL ${safeAudioUrlInfo(targetFormat.url)}")
+                if (VERBOSE_AUDIO_DIAGNOSTICS) audioDebug("URL_FORMAT_BEFORE_RESOLVE ${safeAudioUrlInfo(format.url)}")
 
                 // For multilingual videos, duplicate itags are NOT interchangeable.
                 // Preserve the chosen audio-track identity throughout URL resolution.
@@ -592,8 +688,8 @@ object YTPlayerUtils {
                         ?: format
                 } else format
 
-                format = urlFormat
-                streamUrl = findUrlOrNull(
+                format = if (selectedDirectUrl != null) urlFormat.copy(url = selectedDirectUrl) else urlFormat
+                streamUrl = selectedDirectUrl ?: findUrlOrNull(
                     urlFormat, videoId, responseToUse,
                     skipNewPipe = wasOriginallyAgeRestricted || isMultiLangVideo,
                 ) ?: findUrlOrNull(
@@ -605,7 +701,7 @@ object YTPlayerUtils {
                     audioDebug("NO_TRACK_SAFE_URL videoId=$videoId itag=$targetItag")
                     continue
                 }
-                audioDebug("RESOLVED_URL_INFO ${safeAudioUrlInfo(streamUrl)} wantedLang=$wantedLang")
+                if (VERBOSE_AUDIO_DIAGNOSTICS) audioDebug("RESOLVED_URL_INFO ${safeAudioUrlInfo(streamUrl)} wantedLang=$wantedLang")
 
                 var activeUrl: String = streamUrl
 
@@ -632,9 +728,9 @@ object YTPlayerUtils {
 
                 // Apply n-transform and PoToken for web clients OR for private tracks (including TVHTML5)
                 val hasNParam = activeUrl.contains(Regex("[?&]n="))
-                val needsNTransform = hasNParam || currentClient.useWebPoTokens ||
+                val needsNTransform = !directVerified && (hasNParam || currentClient.useWebPoTokens ||
                         currentClient.clientName in listOf("WEB", "WEB_REMIX", "WEB_CREATOR", "TVHTML5", "TVHTML5_SIMPLY_EMBEDDED_PLAYER") ||
-                        isPrivatelyOwnedTrack
+                        isPrivatelyOwnedTrack)
 
                 Timber.tag(TAG).d("N-transform decision:")
                 Timber.tag(TAG).d("  needsNTransform: $needsNTransform")
@@ -711,7 +807,7 @@ object YTPlayerUtils {
                     break
                 }
 
-                if (skipValidation || validateStatus(activeUrl)) {
+                if (skipValidation || directVerified || validateStatus(activeUrl)) {
                     // working stream found
                     Timber.tag(logTag).d("Stream validated successfully with client: ${currentClient.clientName}")
                     // Log for release builds
@@ -768,7 +864,9 @@ object YTPlayerUtils {
             streamUrl,
             streamExpiresInSeconds,
         )
+        } finally { earlyScope.cancel(); warmStreams.cancel() }
     }.onFailure { e ->
+        if (e is kotlinx.coroutines.CancellationException) throw e
         println("[PLAYBACK_DEBUG] EXCEPTION during playback for videoId=$videoId: ${e::class.simpleName}: ${e.message}")
         e.printStackTrace()
     }
@@ -932,6 +1030,37 @@ object YTPlayerUtils {
             .build()
     }
 
+    /** Resolve only the already-selected audio format, without re-extracting the whole video. */
+    private suspend fun resolveSelectedAudioDirect(
+        format: PlayerResponse.StreamingData.Format, videoId: String, response: PlayerResponse,
+    ): String? { return try {
+        var url = findUrlOrNull(format, videoId, response, skipNewPipe = true)
+        if (url?.startsWith("https://") != true) null else {
+            if (Regex("[?&]n=").containsMatchIn(url)) {
+                val original = url
+                url = CipherDeobfuscator.transformNParamInUrl(original)
+                if (url == original) url = EjsNTransformSolver.transformNParamInUrl(original)
+                // An unchanged throttle signature is not a successful fast resolution.
+                if (url == original) return null
+            }
+            if (languageMatchesUrl(format.copy(url = url), trackLang(format)) && probeDirectAudio(url)) url else null
+        }
+    } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (_: Exception) { null }
+    }
+
+    private val directProbeClient by lazy {
+        httpClient.newBuilder().connectTimeout(500, TimeUnit.MILLISECONDS)
+            .readTimeout(500, TimeUnit.MILLISECONDS).callTimeout(650, TimeUnit.MILLISECONDS).build()
+    }
+    /** Only real HTTP success can bypass extraction. Failure retains the complete old route. */
+    private fun probeDirectAudio(url: String): Boolean = try {
+        val request = okhttp3.Request.Builder().get().addHeader("Range", "bytes=0-0")
+            .addHeader("User-Agent", "com.google.ios.youtube/21.03.1 (iPhone16,2; U; CPU iOS 18_2 like Mac OS X;)")
+            .url(url).build()
+        val response = directProbeClient.newCall(request).execute()
+        try { response.code == 200 || response.code == 206 } finally { response.close() }
+    } catch (_: Exception) { false }
+
     internal fun validateStatus(url: String): Boolean {
         Timber.tag(logTag).d("Validating stream URL status via GET Range bytes=0-0")
         try {
@@ -1031,7 +1160,7 @@ object YTPlayerUtils {
 
         // Fallback: try to get URL from StreamInfo
         Timber.tag(logTag).d("Trying StreamInfo fallback for URL")
-        val streamUrls = YouTube.getNewPipeStreamUrls(videoId)
+        val streamUrls = extractedStreams(videoId)
         if (streamUrls.isNotEmpty()) {
             val wantedLang = normalizeLanguageCode(trackLang(format))
             val sameItag = streamUrls.filter { it.first == format.itag }
@@ -1067,10 +1196,12 @@ object YTPlayerUtils {
     }
 
     fun forceRefreshForVideo(videoId: String) {
+        clearExtractionCache()
         Timber.tag(logTag).d("Force refreshing for videoId: $videoId")
     }
 
     fun resetSession(context: Context) {
+        clearExtractionCache()
         poTokenGenerator.reset()
         com.music.spotui.data.preferences.clearAllCachedStreams(context)
         com.music.spotui.data.preferences.clearAllResolvedVideos(context)
@@ -1079,4 +1210,5 @@ object YTPlayerUtils {
             runCatching { YouTube.visitorData = YouTube.visitorData().getOrNull() }
         }
     }
+
 }

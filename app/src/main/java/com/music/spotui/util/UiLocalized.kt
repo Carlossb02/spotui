@@ -7,6 +7,20 @@ import com.music.spotui.data.preferences.getAppLanguage
 /** Visible UI copy independent of the translation engine used for lyrics.
  * The lookup is bidirectional because older screens hardcoded both languages. */
 private val uiLanguagePairs: List<Pair<String, String>> = listOf(
+    "Signing in…" to "Iniciando sesión…",
+    "Log in to Spotify" to "Iniciar sesión en Spotify",
+    "Connecting…" to "Conectando…",
+    "Spotify took too long to respond. Try again." to "Spotify ha tardado demasiado en responder. Vuelve a intentarlo.",
+    "Could not sign in to Spotify. Check your connection and try again." to "No se pudo iniciar sesión en Spotify. Comprueba la conexión y vuelve a intentarlo.",
+    "Could not establish a secure connection to Spotify." to "No se pudo establecer una conexión segura con Spotify.",
+    "The login page closed. Tap Retry to reopen it." to "La página de acceso se ha cerrado. Pulsa Reintentar para abrirla de nuevo.",
+    "Android WebView is unavailable. Update it or use manual cookie login." to "Android WebView no está disponible. Actualízalo o inicia sesión con la cookie.",
+    "Metadata updated" to "Metadatos actualizados",
+    "Downloading…" to "Descargando…",
+    "Could not delete audio file" to "No se pudo eliminar el archivo de audio",
+    "Saved to Music/spotui" to "Guardado en Música/spotui",
+    "Export failed" to "No se pudo exportar",
+    "Listening to %1\$s by %2\$s" to "Escuchando %1\$s de %2\$s",
     "Could not clear playback cache. Try again." to "No se pudo limpiar la caché. Vuelve a intentarlo.",
     "Choose a folder to enable automatic backups." to "Elige una carpeta para activar las copias automáticas.",
     "Low" to "Baja",
@@ -402,8 +416,10 @@ private val uiSpanishToEnglish = uiLanguagePairs.associate { (en, es) -> es to e
 @Composable
 fun uiLocalized(text: String): String {
     val language = com.music.spotui.data.preferences.SpotuiLanguage.current
-    return when (language) {
+    return localizedUiText(text,language)
+}
+
+fun localizedUiText(text:String,language:String):String = when (language) {
         "es" -> uiEnglishToSpanish[text] ?: text
         else -> uiSpanishToEnglish[text] ?: text
     }
-}

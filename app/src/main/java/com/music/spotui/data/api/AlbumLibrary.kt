@@ -18,7 +18,7 @@ object AlbumLibrary {
         gate.withLock { readUnlocked(context, spotifyId, localId) }
 
     suspend fun setSaved(context: Context, spotifyId: String, localId: Int, saved: Boolean): Boolean =
-        gate.withLock { setSavedUnlocked(context, spotifyId, localId, saved) }
+        setSavedUnlocked(context, spotifyId, localId, saved)
 
     fun cached(context: Context, spotifyId: String, localId: Int): Boolean {
         val prefs = context.getSharedPreferences("AlbumLibraryState", Context.MODE_PRIVATE)
@@ -35,22 +35,25 @@ object AlbumLibrary {
     /** null means unavailable, never 'not saved' following a failed/partial scan. */
     private suspend fun readUnlocked(context: Context, spotifyId: String, localId: Int): Boolean? = withContext(Dispatchers.IO) {
         if (!spotifyId.matches(Regex("[A-Za-z0-9]{22}"))) return@withContext null
+        SpotifyPendingWrites.desired(context, "album", spotifyId)?.let { return@withContext it }
         try {
             if (!SpotifyTokenProvider.ensureToken(context.applicationContext)) return@withContext null
             var offset = 0
             while (true) {
                 val page = Spotify.myAlbums(limit = 50, offset = offset).getOrThrow()
                 if (page.items.any { it.id == spotifyId }) {
-                    remember(context, spotifyId, localId, true)
-                    return@withContext true
+                    val saved = SpotifyPendingWrites.desired(context, "album", spotifyId) ?: true
+                    remember(context, spotifyId, localId, saved)
+                    return@withContext saved
                 }
                 val next = page.offset + page.limit.coerceAtLeast(1)
                 check(next > offset) { "Album pagination did not advance" }
                 offset = next
                 if (offset >= page.total) break
             }
-            remember(context, spotifyId, localId, false)
-            false
+            val saved = SpotifyPendingWrites.desired(context, "album", spotifyId) ?: false
+            remember(context, spotifyId, localId, saved)
+            saved
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -61,10 +64,7 @@ object AlbumLibrary {
     private suspend fun setSavedUnlocked(context: Context, spotifyId: String, localId: Int, saved: Boolean): Boolean = withContext(Dispatchers.IO) {
         if (!spotifyId.matches(Regex("[A-Za-z0-9]{22}"))) return@withContext false
         try {
-            if (!SpotifyTokenProvider.ensureToken(context.applicationContext)) return@withContext false
-            val uri = listOf("spotify:album:$spotifyId")
-            val result = if (saved) Spotify.addToLibrary(uri) else Spotify.removeFromLibrary(uri)
-            if (result.isFailure) return@withContext false
+            if (!SpotifyPendingWrites.enqueue(context, "album", spotifyId, saved = saved)) return@withContext false
             remember(context, spotifyId, localId, saved)
             Api.HomeCache.library = null
             true

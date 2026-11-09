@@ -5,6 +5,8 @@ import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
@@ -15,7 +17,10 @@ import com.music.spotui.ui.utils.AudioDeviceHelper
 @Composable
 fun AudioOutputIcon(modifier: Modifier = Modifier, contentDescription: String? = null) {
     val bluetooth by AudioDeviceHelper.bluetoothRouteActiveState
-    if (bluetooth) {
+    val cloud by com.music.spotui.sync.CloudPlayback.status.collectAsState()
+    if(cloud.remote) {
+        Icon(Icons.Default.PhoneAndroid,contentDescription=contentDescription,tint=Color(0xFF1ED760),modifier=modifier)
+    } else if (bluetooth) {
         Icon(Icons.Default.Headphones, contentDescription = contentDescription,
             tint = Color(0xFF1ED760), modifier = modifier)
     } else {

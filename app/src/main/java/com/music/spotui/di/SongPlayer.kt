@@ -58,6 +58,7 @@ import kotlin.math.sin
 @kotlin.OptIn(androidx.media3.common.util.UnstableApi::class)
 object SongPlayer {
     private const val TAG = "SongPlayer"
+    private const val VERBOSE_MATCH_DIAGNOSTICS = false
     private const val SPOTIFY_TRACK_PREFIX = "spotify:track:"
     private var player: ExoPlayer? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -315,6 +316,7 @@ object SongPlayer {
                     streamResolutions.cancelAllAndJoin()
                     // Downloads may share a raw search: their old results cannot refill the new cache generation.
                     clearCaches(app)
+                    YTPlayerUtils.clearExtractionCache()
                     // Open an existing disk cache even when no player was initialized this session.
                     val cache = mediaCache(app)
                     cache.keys.toList().forEach { cache.removeResource(it) }
@@ -370,8 +372,11 @@ object SongPlayer {
 
     val resolutionLogs = java.util.concurrent.ConcurrentLinkedQueue<String>()
 
+    private val resolutionLogClock = ThreadLocal.withInitial {
+        java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+    }
     fun logResolution(msg: String) {
-        val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+        val time = resolutionLogClock.get()!!.format(java.util.Date())
         resolutionLogs.add("[$time] $msg")
         while (resolutionLogs.size > 50) resolutionLogs.poll()
     }
@@ -648,14 +653,15 @@ object SongPlayer {
     }
 
     fun invalidateResolvedStream(song: String) {
+        // A rejected CDN URL must not be served again by the exact-video warmup cache.
+        YTPlayerUtils.clearExtractionCache()
         streamCache.remove(song)
         sourceCache.remove(song)
         qualityCache.remove(song)
         qualityTierCache.remove(song)
         streamValidatedAt.remove(song)
         streamExpiresAt.remove(song)
-        videoCandidatesCache.remove("$song|FILTER_SONG|MATCH_V12")
-        videoCandidatesCache.remove("$song|FILTER_VIDEO|MATCH_V12")
+        videoCandidatesCache.keys.removeAll { it.startsWith("$song|") }
         appCtx?.let { ctx ->
             com.music.spotui.data.preferences.clearCachedVideoId(ctx, song)
             com.music.spotui.data.preferences.clearCachedStream(ctx, song)
@@ -869,6 +875,9 @@ object SongPlayer {
             onPlayerThread { playSong(song, context.applicationContext, mediaId, isRecovery) }
             return
         }
+        if(isRecovery && com.music.spotui.sync.CloudPlayback.remotePlaying()!=null)return
+        if(!isRecovery && com.music.spotui.sync.CloudPlayback.route("select",if(restoreQuery==song)restorePositionMs else 0L))return
+        startupTapAtMs = android.os.SystemClock.elapsedRealtime()
         com.music.spotui.data.preferences.PodcastResumeStore.flush(context)
         // Mark-as-seen suppresses the CURRENT listening session only. Explicit
         // playback of the same YouTube ID starts a new listening session.
@@ -899,6 +908,9 @@ object SongPlayer {
         appCtx = appContext
         purgeLegacyMatchCachesOnce(appContext)
         currentRequest = song
+        // Keep the target's in-flight preload so the tap can join it. Stop unrelated
+        // speculative work before starting the foreground request.
+        prefetchJobs.entries.filter { it.key != song }.forEach { it.value.cancel() }
         val queue = boundState?.queue?.value.orEmpty()
         // Neighbours are prefetched only AFTER the requested song has been handed to the
         // player, so they never compete with it for network/CPU while it is being resolved.
@@ -939,17 +951,18 @@ object SongPlayer {
             }
         }
 
-        // A user-selected alternate source must win over an old offline copy.
-        // Keep the download stored; only bypass it while the override exists.
+        // A complete download is the first playback source for this recording.
         val manualOverride = if (song.startsWith("yt_ep:")) null else alternativeStreamForPlayback(song, appContext)
         if (manualOverride != null && SpotifyWebPlayer.isPlaying) {
             // Switching from Spotify Web Playback to a user-supplied source must
             // silence the old engine before the ExoPlayer version starts.
             SpotifyWebPlayer.pause()
         }
-        val immediateDownloadedPath = if (manualOverride != null || song.startsWith("yt_ep:")) null else
-            com.music.spotui.data.preferences.downloadedPathForQuery(appContext, song)
+        val immediateDownloadedPath = com.music.spotui.data.preferences.downloadedPathForQuery(
+            appContext, song, matchTrack?.id, matchTrack?.spotifyTrackId.orEmpty())
         if (immediateDownloadedPath != null && java.io.File(immediateDownloadedPath).isFile) {
+            com.music.spotui.ui.screens.PodcastVideoSession.stopIfDifferent(null)
+            boundState?.updateResolveError(null)
             runCatching {
                 ensurePlayer(appContext)
                 player?.pause()
@@ -977,6 +990,9 @@ object SongPlayer {
                 }
                 loadedQuery = song
                 cachedPositionMs = 0L
+            }.onFailure {
+                Log.w(TAG, "Could not open downloaded audio", it)
+                boundState?.updateResolveError("No se pudo abrir la descarga. Prueba a descargarla de nuevo.")
             }
             playbackResolving = false
             publishPlaybackIntent()
@@ -1156,7 +1172,8 @@ object SongPlayer {
         // block preparation without producing a matching entry.
         com.music.spotui.util.ArtworkHelper.attachArtwork(
             metadataBuilder, ctx, metaCover, currentMediaId,
-            if (songQuery.startsWith("yt_ep:")) null else streamUrl
+            streamUrl.takeIf { it.startsWith("file:") || it.startsWith("content:") || it.startsWith("/") },
+            allowBlockingLookup = false,
         )
         val metadata = metadataBuilder.build()
         val query = songQuery.ifBlank { currentRequest }
@@ -1231,7 +1248,7 @@ object SongPlayer {
                     if (listed && song !in prefetchTargets) return@withPermit
                     // Prioritize the current track. Prefetch is never allowed to
                     // compete with stream resolution during a cold start/transition.
-                    kotlinx.coroutines.delay(500L)
+                    if (playbackResolving) kotlinx.coroutines.delay(200L)
                     withTimeoutOrNull(10_000L) {
                         while (playbackResolving) kotlinx.coroutines.delay(200L)
                     }
@@ -1285,7 +1302,9 @@ object SongPlayer {
 
     fun prefetchList(songs: List<String>, context: Context, count: Int = 4) {
         val targetSongs = songs.take(count).filterNot { it.startsWith("yt_ep:") }
+        val oldTargets = prefetchTargets
         prefetchTargets = targetSongs.toSet()
+        (oldTargets - prefetchTargets).filter { it != currentRequest }.forEach { prefetchJobs[it]?.cancel() }
         if (targetSongs.isNotEmpty()) {
             Log.d(TAG, "Preloading next ${targetSongs.size} songs in queue: $targetSongs")
             targetSongs.forEach { songUrl ->
@@ -1384,10 +1403,26 @@ object SongPlayer {
         }.onFailure { Log.d(TAG, "intro preload skipped: ${it.message}") }
     }
 
+    @Volatile private var startupTapAtMs = 0L
+    private var measuredStartupGeneration = -1L
     private val streamResolutions = com.music.spotui.util.SharedWork<String, String?>(scope)
 
     internal suspend fun resolveStreamUrl(song: String, appContext: Context, forPlayback: Boolean = false): String? {
         while (clearingPlaybackCache) delay(25L)
+        com.music.spotui.data.preferences.downloadedPathForQuery(appContext, song,
+            spotifyTrackId = trackIdRegistry[song].orEmpty())?.let { path ->
+            if (forPlayback) {
+                currentSource = "Downloaded"
+                currentQuality = java.io.File(path).extension.uppercase()
+                boundState?.updateResolveDetailNote("Source: Downloaded Local File • Format: $currentQuality")
+                updateResolveStatus(false)
+            }
+            return android.net.Uri.fromFile(java.io.File(path)).toString()
+        }
+        if (song.startsWith("sync_pending:")) {
+            if (forPlayback) { boundState?.updateResolveError("Este archivo se está sincronizando. Espera a que termine la descarga."); updateResolveStatus(false) }
+            return null
+        }
         if (song.startsWith("content://") || song.startsWith("file://")) {
             if (forPlayback) {
                 currentSource = "Local file"
@@ -1522,6 +1557,13 @@ object SongPlayer {
         alternativeStreamForPlayback(song, appContext)?.let { alt ->
             return when {
                 alt.isLocal -> {
+                    if (alt.value.startsWith("sync_pending:")) {
+                        if (forPlayback) {
+                            boundState?.updateResolveError("Este archivo se está sincronizando. Espera a que termine la descarga.")
+                            updateResolveStatus(false)
+                        }
+                        return null
+                    }
                     if (forPlayback) {
                         currentSource = "Alternative file"
                         currentQuality = alt.label.substringAfterLast('.', "").uppercase().takeIf { it.length in 2..5 }.orEmpty()
@@ -2781,6 +2823,9 @@ object SongPlayer {
             if (forPlayback) Log.i("SpotuiStartup", "ytSearch metadataGate=${android.os.SystemClock.elapsedRealtime() - metadataWaitStarted}ms")
             val finalPlan = buildPlan(exactMeta)
             launchPlan(finalPlan)
+            // Run the SAME recording's primary queries as one wave rather than two network waves.
+            // Video fallback queries stay lazy; consumption/deduplication retain their original order.
+            primaryQueries(finalPlan).forEach { searches.getValue(it).start() }
             searches.entries.filter { it.key !in primaryQueries(finalPlan) }.forEach { it.value.cancel() }
             videoSearches.entries.filter { it.key !in finalPlan.videoQueries }.forEach { it.value.cancel() }
 
@@ -2808,39 +2853,71 @@ object SongPlayer {
 
         class Evaluation(val ids: List<String>, val loose: SongItem?, val exactFastPath: Boolean = false)
 
+        val expectedArtistsList = (targetArtist ?: "").split(artistSplitRegex)
+            .map { artistKey(it) }
+            .filter { it.isNotEmpty() }
+        val fullArtistKey = artistKey(targetArtist ?: "")
+        val primaryArtistKey = expectedArtistsList.firstOrNull() ?: artistKey(baseSearchText)
+        val targetArtistKeys = (listOf(primaryArtistKey, fullArtistKey) + expectedArtistsList)
+            .filter { it.isNotEmpty() }
+            .toSet()
+
+        val cleanTargetTitleForMatch = cleanLyricsTitleForMatch(targetTitle)
+        val target = parseTitle(cleanTargetTitleForMatch, targetArtistKeys)
+        val targetAlbumKey = albumKey(targetAlbum)
+        val targetTitleFlags = versionFlags(target.decorations) + fullTitleFlags(cleanTargetTitleForMatch)
+        val targetRecordingFlags = recordingIdentityFlags(target.decorations) + fullTitleFlags(cleanTargetTitleForMatch)
+        val targetAlbumFlags = if (isPlainSingleAlbum(targetAlbum, target.baseKey)) emptySet() else albumFlags(targetAlbum)
+        val expectedFlags = targetTitleFlags
+        val targetIsCompilation = targetAlbum?.let { compilationRegex.containsMatchIn(it.lowercase()) } ?: false
+
+        val targetHasFeat = featMarkerRegex.containsMatchIn(target.decorations.lowercase())
+        val targetCoreKey = target.baseKey.replace(remixSuffixRegex, "")
+        val targetIsRadioEdit = radioEditRegex.containsMatchIn(target.decorations)
+        val targetR = targetRecordingFlags - "language"
+        val targetTitleR = targetTitleFlags - "language"
+        val targetStrongAlbumFlags = targetAlbumFlags intersect strongFlags
+        val targetDecoration = decorationKey(target.decorations)
+
+        // Per-resolution facts only. Identity keys keep distinct responses with the same video ID separate.
+        class CandidateFacts(item: SongItem) {
+            val cleanTitle = cleanLyricsTitleForMatch(item.title)
+            val title = parseTitle(cleanTitle, targetArtistKeys)
+            val artists = item.artists.map { artistKey(it.name) }.filter { it.isNotEmpty() }
+            val artistTitle = artistKey(item.title)
+            val fullTitle = Normalizer.normalize(item.title.lowercase(), Normalizer.Form.NFD)
+                .replace(diacriticsRegex, "").replace(nonAlnumRegex, "")
+            val hasFeat = featMarkerRegex.containsMatchIn(title.decorations.lowercase())
+            val core = title.baseKey.replace(remixSuffixRegex, "")
+            val titleFlags = versionFlags(title.decorations) + fullTitleFlags(cleanTitle)
+            val recordingFlags = recordingIdentityFlags(title.decorations) + fullTitleFlags(cleanTitle)
+            val albumName = item.album?.name
+            val albumFlags = if (isPlainSingleAlbum(albumName, title.baseKey)) emptySet() else albumFlags(albumName)
+            val radioEdit = radioEditRegex.containsMatchIn(title.decorations)
+            val albumKey = albumKey(albumName)
+            val ugc = item.musicVideoType == "MUSIC_VIDEO_TYPE_UGC"
+            val official = item.musicVideoType == "MUSIC_VIDEO_TYPE_OMV" || item.musicVideoType == "MUSIC_VIDEO_TYPE_ATV"
+            val officialTitle = officialUploadMarkerRegex.containsMatchIn(item.title)
+            val unknownDecoration = hasUnknownDecoration(title.decorations)
+            val decoration = decorationKey(title.decorations)
+        }
+        val candidateFacts = java.util.IdentityHashMap<SongItem, CandidateFacts>()
+
         fun evaluate(
             hits: List<SongItem>,
             filter: YouTube.SearchFilter,
             relaxArtistRequirement: Boolean = false,
         ): Evaluation {
-            val expectedArtistsList = (targetArtist ?: "").split(artistSplitRegex)
-                .map { artistKey(it) }
-                .filter { it.isNotEmpty() }
-            val fullArtistKey = artistKey(targetArtist ?: "")
-            val primaryArtistKey = expectedArtistsList.firstOrNull() ?: artistKey(baseSearchText)
-            val targetArtistKeys = (listOf(primaryArtistKey, fullArtistKey) + expectedArtistsList)
-                .filter { it.isNotEmpty() }
-                .toSet()
-
-            val cleanTargetTitleForMatch = cleanLyricsTitleForMatch(targetTitle)
-            val target = parseTitle(cleanTargetTitleForMatch, targetArtistKeys)
-            val targetAlbumKey = albumKey(targetAlbum)
-            val targetTitleFlags = versionFlags(target.decorations) + fullTitleFlags(cleanTargetTitleForMatch)
-            val targetRecordingFlags = recordingIdentityFlags(target.decorations) + fullTitleFlags(cleanTargetTitleForMatch)
-            val targetAlbumFlags = if (isPlainSingleAlbum(targetAlbum, target.baseKey)) emptySet() else albumFlags(targetAlbum)
-            val expectedFlags = targetTitleFlags
-            val targetIsCompilation = targetAlbum?.let { compilationRegex.containsMatchIn(it.lowercase()) } ?: false
-
             val isSongFilter = filter == YouTube.SearchFilter.FILTER_SONG
             val tightTol = if (isSongFilter) maxOf(5, (wantSec ?: 0) / 40) else maxOf(7, (wantSec ?: 0) / 35)
             val wideTol = maxOf(8, (wantSec ?: 0) / 20)
 
             if (forPlayback && wantSec == null) logResolution("⚠ Spotify duration unavailable: matching by album/title only")
-            Log.d(TAG, "==================================================")
-            Log.d(TAG, "▶ MATCHING '$query' [filter=${filter.value}]")
-            Log.d(TAG, "▶ TARGET: title='${target.baseKey}' flags=$expectedFlags | artist='$primaryArtistKey' | album='$targetAlbumKey'")
-            Log.d(TAG, "▶ TARGET: duration=${wantSec}s (tight ±${tightTol}s, wide ±${wideTol}s) | explicit=$wantExplicit")
-            Log.d(TAG, "--------------------------------------------------")
+            if (VERBOSE_MATCH_DIAGNOSTICS) Log.d(TAG, "==================================================")
+            if (VERBOSE_MATCH_DIAGNOSTICS) Log.d(TAG, "▶ MATCHING '$query' [filter=${filter.value}]")
+            if (VERBOSE_MATCH_DIAGNOSTICS) Log.d(TAG, "▶ TARGET: title='${target.baseKey}' flags=$expectedFlags | artist='$primaryArtistKey' | album='$targetAlbumKey'")
+            if (VERBOSE_MATCH_DIAGNOSTICS) Log.d(TAG, "▶ TARGET: duration=${wantSec}s (tight ±${tightTol}s, wide ±${wideTol}s) | explicit=$wantExplicit")
+            if (VERBOSE_MATCH_DIAGNOSTICS) Log.d(TAG, "--------------------------------------------------")
             logResolution("▶ MATCHING target='${target.baseKey}' by '$primaryArtistKey' (want ${wantSec}s)")
 
             val exactCandidates = HashSet<String>()
@@ -2848,14 +2925,14 @@ object SongPlayer {
             // Same artist + same title but failing flags/duration: only usable as a last resort on video search.
             val looseMatches = ArrayList<SongItem>()
             hits.forEachIndexed { index, item ->
-                val cleanCandidateTitleForMatch = cleanLyricsTitleForMatch(item.title)
-                val cand = parseTitle(cleanCandidateTitleForMatch, targetArtistKeys)
-                val candArtistKeys = item.artists.map { artistKey(it.name) }.filter { it.isNotEmpty() }
-                val titleArtistKey = artistKey(item.title)
+                val facts = candidateFacts.getOrPut(item) { CandidateFacts(item) }
+                val cleanCandidateTitleForMatch = facts.cleanTitle
+                val cand = facts.title
+                val candArtistKeys = facts.artists
+                val titleArtistKey = facts.artistTitle
                 // Full title key (brackets kept): a remixer / extra artist credited only in the title,
                 // e.g. "All Night (Alan Walker Remix)" by Lauren Jauregui, Steve Aoki, still counts as present.
-                val fullTitleKey = Normalizer.normalize(item.title.lowercase(), Normalizer.Form.NFD)
-                    .replace(diacriticsRegex, "").replace(nonAlnumRegex, "")
+                val fullTitleKey = facts.fullTitle
                 // `artistKey` strips the "ft./feat. X" tail, so "PYNNO - Still Miss You ft. Kali J" (re-upload
                 // by a channel that is not either artist) never counted as crediting "Kali J". Only in the
                 // last-resort pass (relaxArtistRequirement), also accept artists credited in the full title,
@@ -2893,13 +2970,11 @@ object SongPlayer {
                         t.length >= 4 && k.length >= 4 && (k.contains(t) || t.contains(k))
                     }
                 }
-                val candHasFeat = featMarkerRegex.containsMatchIn(cand.decorations.lowercase())
-                val targetHasFeat = featMarkerRegex.containsMatchIn(target.decorations.lowercase())
+                val candHasFeat = facts.hasFeat
                 val featEq = candExtraArtists.isEmpty() &&
                         (!candHasFeat || targetHasFeat || expectedArtistsList.size >= 2)
                 val artistOk = artistExact && featEq
-                val targetCoreKey = target.baseKey.replace(remixSuffixRegex, "")
-                val candidateCoreKey = cand.baseKey.replace(remixSuffixRegex, "")
+                val candidateCoreKey = facts.core
                 // El match por prefijo existe para sufijos remix ("All Night Alan Walker Remix") y colas
                 // neutras ("... Official Audio"). NO debe aceptar colas arbitrarias como
                 // "... in Blades of Glory" o "... Bass cover TAB": son otros vídeos/grabaciones.
@@ -2912,19 +2987,18 @@ object SongPlayer {
                             )
                 }
                 val titleEq = cand.baseKey.isNotEmpty() && (cand.baseKey == target.baseKey || prefixTitleEq)
-                val candTitleFlags = versionFlags(cand.decorations) + fullTitleFlags(cleanCandidateTitleForMatch)
-                val candRecordingFlags = recordingIdentityFlags(cand.decorations) + fullTitleFlags(cleanCandidateTitleForMatch)
-                val candAlbumName = item.album?.name
-                val candAlbumFlags = if (isPlainSingleAlbum(candAlbumName, cand.baseKey)) emptySet() else albumFlags(candAlbumName)
+                val candTitleFlags = facts.titleFlags
+                val candRecordingFlags = facts.recordingFlags
+                val candAlbumName = facts.albumName
+                val candAlbumFlags = facts.albumFlags
                 val candFlags = candTitleFlags
-                val targetIsRadioEdit = radioEditRegex.containsMatchIn(target.decorations)
-                val candidateIsRadioEdit = radioEditRegex.containsMatchIn(cand.decorations)
+                val candidateIsRadioEdit = facts.radioEdit
                 val editSubtypeEq = !targetIsRadioEdit || candidateIsRadioEdit
-                val titleFlagsEq = candTitleFlags - "language" == targetTitleFlags - "language" && editSubtypeEq
+                val titleFlagsEq = candTitleFlags - "language" == targetTitleR && editSubtypeEq
                 val recordingFlagsEq =
-                    candRecordingFlags - "language" == targetRecordingFlags - "language" && editSubtypeEq
-                val allFlagsEq = candFlags - "language" == expectedFlags - "language" && editSubtypeEq
-                val strongAlbumEq = (candAlbumFlags intersect strongFlags) == (targetAlbumFlags intersect strongFlags)
+                    candRecordingFlags - "language" == targetR && editSubtypeEq
+                val allFlagsEq = candFlags - "language" == targetTitleR && editSubtypeEq
+                val strongAlbumEq = (candAlbumFlags intersect strongFlags) == targetStrongAlbumFlags
 
                 val itemDur = item.duration
                 val durDiff: Int? = if (wantSec != null && itemDur != null) abs(wantSec - itemDur) else null
@@ -2934,11 +3008,10 @@ object SongPlayer {
                 val explicitMatch = wantExplicit == null || item.explicit == wantExplicit
                 val lastResortOk = durDiff == null || durDiff <= maxOf(15, (wantSec ?: 0) / 10)
 
-                val candAlbumKey = albumKey(candAlbumName)
+                val candAlbumKey = facts.albumKey
                 val albumEq = targetAlbumKey.isNotEmpty() && candAlbumKey == targetAlbumKey
 
                 val candR = candRecordingFlags - "language"
-                val targetR = targetRecordingFlags - "language"
                 val onlyEditDiff = "edit" !in targetR && (candR - targetR) == setOf("edit") && (targetR - candR).isEmpty()
                 val editBase = artistOk && titleEq && !recordingFlagsEq && onlyEditDiff && explicitOk
                 val albumAnchored = editBase && albumEq && (durDiff == null || durDiff <= tightTol)
@@ -2949,10 +3022,9 @@ object SongPlayer {
                 // MUSIC_VIDEO_TYPE_UGC is the important negative signal here: it usually means
                 // a user-uploaded video rather than the artist/label's catalogued recording.
                 // Null is left neutral because many normal song results do not expose the type.
-                val isUgcUpload = item.musicVideoType == "MUSIC_VIDEO_TYPE_UGC"
-                val isOfficialMusicType = item.musicVideoType == "MUSIC_VIDEO_TYPE_OMV" ||
-                        item.musicVideoType == "MUSIC_VIDEO_TYPE_ATV"
-                val hasOfficialTitleMarker = officialUploadMarkerRegex.containsMatchIn(item.title)
+                val isUgcUpload = facts.ugc
+                val isOfficialMusicType = facts.official
+                val hasOfficialTitleMarker = facts.officialTitle
                 // Spotify suele traer la versión single/radio y YouTube la del álbum/vídeo (±15%):
                 // una grabación OFICIAL con esa diferencia es mejor que cualquier UGC "cercano en duración".
                 val officialLooseOk = durDiff == null || durDiff <= maxOf(20, (wantSec ?: 0) * 15 / 100)
@@ -3027,11 +3099,11 @@ object SongPlayer {
                 if (artistExact && isOfficialMusicType) score += OFFICIAL_SOURCE_BONUS
                 if (artistExact && hasOfficialTitleMarker) score += OFFICIAL_TITLE_BONUS
 
-                if (!editAnchored && hasUnknownDecoration(cand.decorations) && decorationKey(cand.decorations) != decorationKey(target.decorations)) score -= 40
+                if (!editAnchored && facts.unknownDecoration && facts.decoration != targetDecoration) score -= 40
                 score += if (explicitMatch) 8 else -8
 
-                Log.d(TAG, "  -> '${item.title}' by ${item.artists.joinToString { it.name }} | album='${candAlbumName ?: ""}' | ${itemDur}s | explicit=${item.explicit}")
-                Log.d(TAG, "     artist=${if (artistExact) "exact" else if (artistPartial) "partial" else "no"} extraArtists=$candExtraArtists feat=$candHasFeat titleEq=$titleEq flags=$candFlags recordingFlags=$candRecordingFlags recordingEq=$recordingFlagsEq durDiff=$durDiff albumEq=$albumEq ytType=${item.musicVideoType} ugc=$isUgcUpload officialType=$isOfficialMusicType officialTitle=$hasOfficialTitleMarker -> stage=$stage score=$score")
+                if (VERBOSE_MATCH_DIAGNOSTICS) Log.d(TAG, "  -> '${item.title}' by ${item.artists.joinToString { it.name }} | album='${candAlbumName ?: ""}' | ${itemDur}s | explicit=${item.explicit}")
+                if (VERBOSE_MATCH_DIAGNOSTICS) Log.d(TAG, "     artist=${if (artistExact) "exact" else if (artistPartial) "partial" else "no"} extraArtists=$candExtraArtists feat=$candHasFeat titleEq=$titleEq flags=$candFlags recordingFlags=$candRecordingFlags recordingEq=$recordingFlagsEq durDiff=$durDiff albumEq=$albumEq ytType=${item.musicVideoType} ugc=$isUgcUpload officialType=$isOfficialMusicType officialTitle=$hasOfficialTitleMarker -> stage=$stage score=$score")
                 if (stage < 99) {
                     if (filter == YouTube.SearchFilter.FILTER_SONG && com.music.spotui.audio.PlaybackLoadingPolicy.exactCandidate(
                             stage, artistExact, cand.baseKey.isNotEmpty() && cand.baseKey == target.baseKey,
@@ -3039,12 +3111,12 @@ object SongPlayer {
                             albumEq, strongAlbumEq, explicitMatch && wantExplicit != null, durDiff,
                             isOfficialMusicType, isUgcUpload)) exactCandidates.add(item.id)
                     scored.add(MatchCandidate(item, stage, score, index))
-                    logResolution("  -> '${item.title}' (${itemDur}s) -> stage $stage, score $score")
+                    if (VERBOSE_MATCH_DIAGNOSTICS) logResolution("  -> '${item.title}' (${itemDur}s) -> stage $stage, score $score")
                 }
                 else if (artistExact && titleEq) looseMatches.add(item)
             }
 
-            Log.d(TAG, "--------------------------------------------------")
+            if (VERBOSE_MATCH_DIAGNOSTICS) Log.d(TAG, "--------------------------------------------------")
 
             val bestStage = scored.minOfOrNull { it.stage }
             if (bestStage != null) {
@@ -3053,14 +3125,14 @@ object SongPlayer {
                 val best = chosen.first()
                 if (forPlayback) logResolution("YouTube match: '${best.item.title}' | ${best.item.artists.joinToString { it.name }} | album='${best.item.album?.name ?: ""}' | ${best.item.duration}s vs ${wantSec}s | stage $bestStage")
                 Log.w(TAG, "✅ WINNER: '${best.item.title}' (stage $bestStage, score ${best.score}, ID: ${best.item.id})")
-                Log.d(TAG, "==================================================")
+                if (VERBOSE_MATCH_DIAGNOSTICS) Log.d(TAG, "==================================================")
 
                 return Evaluation(chosen.map { it.item.id }.distinct(), null, best.item.id in exactCandidates)
             }
 
             if (forPlayback) logResolution("YouTube: no candidate matched (${hits.size} hits, want ${wantSec}s, album '${targetAlbum ?: ""}')")
             Log.w(TAG, "❌ NO SUITABLE CANDIDATES for '$query' (see per-candidate lines above)")
-            Log.d(TAG, "==================================================")
+            if (VERBOSE_MATCH_DIAGNOSTICS) Log.d(TAG, "==================================================")
             return Evaluation(emptyList(), looseMatches.firstOrNull())
         }
 
@@ -3074,9 +3146,25 @@ object SongPlayer {
             return ids
         }
 
+        var speculativeVideo: String? = null
+        var speculativeStream: Job? = null
         suspend fun decide(): List<String> {
             val first = if (hits.isNotEmpty()) evaluate(hits, filter) else Evaluation(emptyList(), null)
             if (first.exactFastPath) return cacheAndReturn(first.ids)
+            // Resolve just the leading eligible recording while the full matcher checks alternatives.
+            // Nothing is played here. Only the FINAL ranking may consume this exact-video result.
+            if (combined && forPlayback) first.ids.firstOrNull()?.let { videoId ->
+                speculativeVideo = videoId
+                speculativeStream = CoroutineScope(currentCoroutineContext()).launch {
+                    withTimeoutOrNull(20_000L) {
+                        val ctx = appCtx ?: return@withTimeoutOrNull
+                        val manager = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                        YTPlayerUtils.playerResponseForPlayback(videoId,
+                            audioQuality = com.music.spotui.data.preferences.currentStreamingQuality(ctx).audioQuality,
+                            connectivityManager = manager)
+                    }
+                }
+            }
             // Ambiguous/missing first results still run the complete original plan and ranking.
             val remainingQueries = if (combined) plan.queries else plan.videoQueries
             remainingQueries.forEach { primarySearches.getValue(it).start() }
@@ -3120,9 +3208,13 @@ object SongPlayer {
 
         return try {
             decide().also { result ->
+                if (result.firstOrNull() != speculativeVideo) speculativeStream?.cancel()
                 Log.i("SpotuiStartup", "ytCandidates total=${android.os.SystemClock.elapsedRealtime() - matchStartedAt}ms " +
                     "matches=${result.size} primaryHits=${hits.size} queries=${searchQueries.size}")
             }
+        } catch (failure: Throwable) {
+            speculativeStream?.cancel()
+            throw failure
         } finally {
             primarySearches.values.forEach { it.cancel() }
             videoSearches.values.forEach { it.cancel() }
@@ -3286,7 +3378,7 @@ object SongPlayer {
             .setBufferDurationsMs(
                 20_000,
                 90_000,
-                1_200,
+                400,
                 2_500
             )
             .build()
@@ -3304,6 +3396,16 @@ object SongPlayer {
             .setHandleAudioBecomingNoisy(handleBecomingNoisy)
             .setWakeMode(androidx.media3.common.C.WAKE_MODE_LOCAL)
             .build()
+        p.addListener(object : androidx.media3.common.Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                val generation = playbackGeneration.get()
+                if (isPlaying && p === player && loadedQuery == currentRequest &&
+                    startupTapAtMs > 0L && measuredStartupGeneration != generation) {
+                    measuredStartupGeneration = generation
+                    Log.i("SpotuiStartup", "tapToAudio=${android.os.SystemClock.elapsedRealtime() - startupTapAtMs}ms source=$currentSource")
+                }
+            }
+        })
         return PlayerAudioComponents(p, filter, equalizer, normalizer)
     }
 
@@ -3498,7 +3600,7 @@ object SongPlayer {
     }
 
     fun webPlaybackActive(): Boolean {
-        if (!webPlayerEnabled) return false
+        if (!webPlayerEnabled || !spotifyWebPlaybackSelected) return false
         val ctx = appCtx ?: return false
         return com.music.spotui.data.preferences.isWebPlaybackEnabled(ctx) &&
                 SpotifyWebPlayer.canPlay &&
@@ -3520,6 +3622,7 @@ object SongPlayer {
             onPlayerThread { play() }
             return
         }
+        if(com.music.spotui.sync.CloudPlayback.route("play"))return
         if (webPlaybackActive()) { SpotifyWebPlayer.resume(); return }
 
         val ctx = appCtx ?: com.music.spotui.MyApplication.instance.applicationContext.also {
@@ -3607,6 +3710,7 @@ object SongPlayer {
             onPlayerThread { pause() }
             return
         }
+        if(com.music.spotui.sync.CloudPlayback.route("pause"))return
         recordAudibleState(false)
         cancelCrossfade()
         playbackResolving = false
@@ -3656,6 +3760,7 @@ object SongPlayer {
             onPlayerThread { togglePlay() }
             return
         }
+        com.music.spotui.sync.CloudPlayback.remotePlaying()?.let { if(it)pause()else play();return }
         if (webPlaybackActive()) {
             if (SpotifyWebPlayer.isPlaying) pause() else play()
             return
@@ -3735,6 +3840,7 @@ object SongPlayer {
             onPlayerThread { next(context.applicationContext) }
             return
         }
+        if(com.music.spotui.sync.CloudPlayback.route("next"))return
         val now = SystemClock.elapsedRealtime()
         if (now - lastAdvanceTimestamp < 1000L) {
             android.util.Log.w(TAG, "next: ignored rapid duplicate advance request")
@@ -3780,6 +3886,7 @@ object SongPlayer {
             onPlayerThread { previous(context.applicationContext) }
             return
         }
+        if(com.music.spotui.sync.CloudPlayback.route("previous"))return
         val now = SystemClock.elapsedRealtime()
         if (now - lastAdvanceTimestamp < 1000L) {
             android.util.Log.w(TAG, "previous: ignored rapid duplicate advance request")
@@ -3824,6 +3931,7 @@ object SongPlayer {
             onPlayerThread { seekTo(position) }
             return
         }
+        if(com.music.spotui.sync.CloudPlayback.route("seek",position))return
         cancelCrossfade()
         if (webPlaybackActive()) { SpotifyWebPlayer.seekTo(position); return }
         val target = position.coerceAtLeast(0L)
@@ -3884,12 +3992,14 @@ object SongPlayer {
     }
 
     fun getDuration(): Long {
+        com.music.spotui.sync.CloudPlayback.remoteDuration()?.let {return it}
         if (webPlaybackActive()) return SpotifyWebPlayer.durationMs
         return if (Looper.myLooper() == Looper.getMainLooper()) player?.duration ?: 0L
         else cachedDurationMs
     }
 
     fun getCurrentPosition(): Long {
+        com.music.spotui.sync.CloudPlayback.remotePosition()?.let {return it}
         if (webPlaybackActive()) return SpotifyWebPlayer.positionMs
         return if (Looper.myLooper() == Looper.getMainLooper()) player?.currentPosition ?: 0L
         else cachedPositionMs
@@ -3928,7 +4038,7 @@ object SongPlayer {
 
     @Volatile var onPlayerSwapped: ((ExoPlayer?, ExoPlayer) -> Unit)? = null
 
-    fun bindState(state: CurrentSongState) { boundState = state }
+    fun bindState(state: CurrentSongState) { boundState = state;com.music.spotui.sync.CloudPlayback.bind(state) }
 
     fun updateTrackInQueue(song: com.music.spotui.data.entity.SongsModel, newTitle: String, newArtist: String, newAlbum: String, newCoverUri: String) {
         boundState?.updateTrackInQueue(song, newTitle, newArtist, newAlbum, newCoverUri)
@@ -4033,7 +4143,7 @@ object SongPlayer {
     private var videoMetadataWarmupId: String? = null
 
     private fun warmPodcastVideoOptionsOnWifi(context: Context, song: String) {
-        if (!song.startsWith("yt_ep:")) return
+        if (!song.startsWith("yt_ep:") || currentSource == "Downloaded") return
         val videoId = song.removePrefix("yt_ep:").substringBefore('|')
         if (!videoId.matches(Regex("[A-Za-z0-9_-]{11}"))) return
         if (videoMetadataWarmupId == videoId && videoMetadataWarmupJob?.isActive == true) return
@@ -4070,6 +4180,7 @@ object SongPlayer {
                         if (cachedPositionMs > 0) com.music.spotui.data.preferences.saveLastPosition(ctx, cachedPositionMs)
                     }
                 }
+                if(com.music.spotui.sync.CloudPlayback.remotePlaying()!=null)continue
                 // Record podcast progress from the playback engine every second. This also
                 // works when the screen is closed, the player is paused or video is shown.
                 // Web playback has its own clock; never use ExoPlayer's stale position then.
@@ -4571,8 +4682,11 @@ object SongPlayer {
             playbackResolving = false
             currentRequest = nextSong.url
             loadedQuery = nextSong.url
-            currentSource = sourceCache[nextSong.url] ?: currentSource
-            currentQuality = qualityCache[nextSong.url] ?: currentQuality
+            val localDownload = appCtx?.let { ctx ->
+                com.music.spotui.data.preferences.downloadedPathForQuery(ctx, nextSong.url, nextSong.id, nextSong.spotifyTrackId)
+            }?.takeIf { path -> incoming.currentMediaItem?.localConfiguration?.uri == android.net.Uri.fromFile(java.io.File(path)) }
+            currentSource = if (localDownload != null) "Downloaded" else sourceCache[nextSong.url] ?: currentSource
+            currentQuality = if (localDownload != null) java.io.File(localDownload).extension.uppercase() else qualityCache[nextSong.url] ?: currentQuality
             playWhenResolved = true
             playbackGeneration.incrementAndGet()
             lastEndPrefetchKey = ""

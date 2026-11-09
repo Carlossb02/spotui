@@ -302,6 +302,7 @@ fun HomeFeedContent(
             )
         LazyColumn(
         modifier = Modifier
+            .fillMaxWidth()
             .weight(1f)
             .background(Color(AppBackground.toArgb()))
     ) {
@@ -603,6 +604,7 @@ private fun HomeMusicFeedContent(
             )
         LazyColumn(
         modifier = Modifier
+            .fillMaxWidth()
             .weight(1f)
             .background(Color(AppBackground.toArgb()))
     ) {
@@ -1603,6 +1605,7 @@ private fun HomeAudiobooksFeedContent(
         )
         LazyColumn(
         modifier = Modifier
+            .fillMaxWidth()
             .weight(1f)
             .background(Color(AppBackground.toArgb()))
     ) {
@@ -1812,7 +1815,7 @@ fun SumUpHomeScreen(
             onToggleFollowing = { homeViewModel.toggleFollowing() },
             onResetFilters = { homeViewModel.resetFilters() }
         )
-        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+        Column(modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
         GreetingSection()
 
         if (albums.isNotEmpty()) {

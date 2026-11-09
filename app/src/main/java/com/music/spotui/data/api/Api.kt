@@ -211,7 +211,16 @@ class Api @Inject constructor(
         if (!SpotifyTokenProvider.ensureToken(context)) return cached
         val session = SpotifySession.spDc(context)
         return try {
-            val fresh = fetchAllPages(requireComplete = true) { offset -> Spotify.myArtists(limit = 50, offset = offset) }.map { it.toArtistModel() }
+            val remote = fetchAllPages(requireComplete = true) { offset -> Spotify.myArtists(limit = 50, offset = offset) }.map { it.toArtistModel() }
+            val pending = SpotifyPendingWrites.entries(context).filter { it.kind == "artist" }.associateBy { it.target }
+            val fresh = remote.filterNot { pending[it.id]?.saved == false }.toMutableList()
+            pending.values.filter { it.saved }.forEach { edit ->
+                if (fresh.none { it.id == edit.target }) {
+                    val known = cached.firstOrNull { it.id == edit.target }
+                    val name = context.getSharedPreferences("FollowedArtists", Context.MODE_PRIVATE).getString(edit.target, null)
+                    if (known != null) fresh += known else if (!name.isNullOrBlank()) fresh += ArtistsModel(name, "", edit.target)
+                }
+            }
             LibraryContentMemory.putArtists(context, fresh, session)
             fresh
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -745,7 +754,7 @@ class Api @Inject constructor(
         val session = SpotifySession.spDc(context)
         val key = "playlist:$clean"
         val cached = (LibraryContentMemory.read(context, key)
-            ?: HomeCache.getPlaylistSongs(clean).takeIf { HomeCache.libraryAccount == session })?.let { libraryOverrides(it) }
+            ?: HomeCache.getPlaylistSongs(clean).takeIf { HomeCache.libraryAccount == session })?.let { libraryOverrides(LibraryContentMemory.playlistSongs(context, clean, it)) }
         if (cached != null) {
             emit(Response.Success(cached))
         } else {
@@ -789,14 +798,14 @@ class Api @Inject constructor(
         if (total == 0) {
             LibraryContentMemory.put(context, key, emptyList(), session)
             HomeCache.setPlaylistSongs(clean, emptyList())
-            emit(Response.Success(emptyList()))
+            emit(Response.Success(LibraryContentMemory.playlistSongs(context, clean, emptyList())))
             return@flow
         }
 
 
         if (!isReverse) {
             val songs = probe.items.mapNotNull { it.track?.toSongModel() }.toMutableList()
-            if (cached == null) emit(Response.Success(songs.toList()))
+            if (cached == null) emit(Response.Success(LibraryContentMemory.playlistSongs(context, clean, songs.toList())))
             var offset = probe.offset + probe.limit.coerceAtLeast(1)
             while (offset < total) {
                 val page = Spotify.playlistTracks(clean, limit = 100, offset = offset).getOrNull() ?: return@flow
@@ -804,11 +813,11 @@ class Api @Inject constructor(
                 val next = page.offset + page.limit.coerceAtLeast(1)
                 if (next <= offset) return@flow
                 offset = next
-                if (cached == null) emit(Response.Success(songs.toList()))
+                if (cached == null) emit(Response.Success(LibraryContentMemory.playlistSongs(context, clean, songs.toList())))
             }
             LibraryContentMemory.put(context, key, songs, session)
             HomeCache.setPlaylistSongs(clean, songs.toList())
-            emit(Response.Success(songs.toList()))
+            emit(Response.Success(LibraryContentMemory.playlistSongs(context, clean, songs.toList())))
         } else {
             if (total <= 100) {
                 val pageResult = Spotify.playlistTracks(clean, limit = 100, offset = 0)
@@ -816,7 +825,7 @@ class Api @Inject constructor(
                     val songs = pageResult.getOrThrow().items.mapNotNull { it.track?.toSongModel() }
                     LibraryContentMemory.put(context, key, songs, session)
                     HomeCache.setPlaylistSongs(clean, songs)
-                    emit(Response.Success(songs))
+                    emit(Response.Success(LibraryContentMemory.playlistSongs(context, clean, songs)))
                 } else if (cached == null) {
                     emit(Response.Error(pageResult.exceptionOrNull()?.message ?: "error"))
                 }
@@ -830,12 +839,12 @@ class Api @Inject constructor(
 
                     val pageSongs = page.items.mapNotNull { it.track?.toSongModel() }
                     songs.addAll(0, pageSongs)
-                    if (cached == null) emit(Response.Success(songs.toList()))
+                    if (cached == null) emit(Response.Success(LibraryContentMemory.playlistSongs(context, clean, songs.toList())))
                     offset -= 100
                 }
                 LibraryContentMemory.put(context, key, songs, session)
                 HomeCache.setPlaylistSongs(clean, songs.toList())
-                emit(Response.Success(songs.toList()))
+                emit(Response.Success(LibraryContentMemory.playlistSongs(context, clean, songs.toList())))
             }
         }
     }
@@ -896,11 +905,8 @@ class Api @Inject constructor(
      * playlists (followed + created), merged into one list. Uses the libraryV3
      * GQL endpoint (not rate-limited). Process-cached for instant re-entry.
      */
-    fun cachedLibraryEntries(): List<com.music.spotui.data.entity.LibraryEntry>? {
-        val session = SpotifySession.spDc(context)
-        return if (HomeCache.libraryAccount == session) HomeCache.library ?: LibraryCatalogCache.peek(context)
-            else LibraryCatalogCache.peek(context)
-    }
+    fun cachedLibraryEntries(): List<com.music.spotui.data.entity.LibraryEntry>? =
+        liveLibrary(LibraryCatalogCache.peek(context).orEmpty())
 
     private fun liveLibrary(remote: List<com.music.spotui.data.entity.LibraryEntry>): List<com.music.spotui.data.entity.LibraryEntry> {
         val localEntries = com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylists(context).map { pl ->
@@ -944,14 +950,16 @@ class Api @Inject constructor(
                 if (col.isPlaylist) "Playlist • Available offline" else "Album • ${col.artists} • Available offline",
                 col.coverUri, col.isPlaylist, col.artists)
         }
-        return deduplicateLibraryEntries(preferred + offline)
+        val pendingAlbums = SpotifyPendingWrites.entries(context).filter { it.kind == "album" }.associateBy { it.target }
+        return deduplicateLibraryEntries(preferred + offline).filterNot {
+            !it.isPlaylist && !it.isPodcast && pendingAlbums[cleanId(it.spotifyId)]?.saved == false
+        }
     }
 
     suspend fun getLibrary(): Flow<Response<List<com.music.spotui.data.entity.LibraryEntry>>> = flow {
         val session = SpotifySession.spDc(context)
         if (HomeCache.libraryAccount != session) { HomeCache.library = null; HomeCache.libraryAccount = session }
-        val seed = HomeCache.library?.filterNot { it.isLocal || it.isPodcast || it.spotifyId == LIKED_SONGS_ID || it.spotifyId == DOWNLOADS_ID }
-            ?: LibraryCatalogCache.read(context)
+        val seed = LibraryCatalogCache.peek(context) ?: LibraryCatalogCache.read(context)
         val initial = liveLibrary(seed)
         HomeCache.library = initial
         emit(Response.Success(initial))
@@ -999,7 +1007,26 @@ class Api @Inject constructor(
         val map = java.util.concurrent.ConcurrentHashMap<String, Entry>()
     }
 
-    fun cachedCollectionSongs(key: String): List<SongsModel>? = LibraryContentMemory.peek(context, key)?.let { libraryOverrides(it) }
+    fun cachedCollectionSongs(key: String): List<SongsModel>? {
+        if (key.startsWith("playlist:local_pl_")) return com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylist(context, key.removePrefix("playlist:"))?.songs
+        if (key == "liked") {
+            val stored = LibraryContentMemory.peek(context, key)
+            val songs = withLocalLikes(stored.orEmpty())
+            return songs.takeIf { stored != null || it.isNotEmpty() }?.let(::libraryOverrides)
+        }
+        return LibraryContentMemory.peek(context, key)?.let {
+            val songs = if (key.startsWith("playlist:")) LibraryContentMemory.playlistSongs(context, key.removePrefix("playlist:"), it) else it
+            libraryOverrides(if (key == "liked") withLocalLikes(songs) else songs)
+        }
+    }
+    private fun withLocalLikes(remote: List<SongsModel>): List<SongsModel> {
+        val known = com.music.spotui.data.preferences.LocalLikedSongsPref.songs(context) + com.music.spotui.data.preferences.getLocalSongs(context) +
+            com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylists(context).flatMap { it.songs }
+        val owned = known.filter { it.spotifyTrackId.isBlank() || it.isLocalSpotifyTrack || it.url.startsWith("yt_local:") }
+        val likes = com.music.spotui.data.preferences.getLikedSongIds(context)
+        val ids = owned.mapTo(HashSet()) { it.id }
+        return (remote.filter { it.id !in ids || it.id in likes } + owned.filter { it.id in likes }).distinctBy { it.id }
+    }
     val contentRevision get() = LibraryContentMemory.revision
     private fun libraryOverrides(songs: List<SongsModel>): List<SongsModel> =
         com.music.spotui.data.preferences.CustomMetadataPref.applyOverrides(context, songs)
@@ -1007,12 +1034,14 @@ class Api @Inject constructor(
     /** The user's Spotify "Liked Songs" (saved tracks) as playable songs. */
     suspend fun getLikedSongs(): Flow<Response<List<SongsModel>>> = flow {
         val session = SpotifySession.spDc(context)
-        val cached = LibraryContentMemory.read(context, "liked")?.let { libraryOverrides(it) }
+        val stored = LibraryContentMemory.read(context, "liked")
+        val local = withLocalLikes(stored.orEmpty())
+        val cached = local.takeIf { stored != null || it.isNotEmpty() }?.let(::libraryOverrides)
         if (cached != null) emit(Response.Success(cached)) else emit(Response.Loading())
         if (!SpotifyTokenProvider.ensureToken(context)) {
-            if (cached == null) emit(Response.Success(com.music.spotui.data.preferences.getDownloadedSongs(context).filter {
+            if (cached == null) emit(Response.Success(libraryOverrides(withLocalLikes(com.music.spotui.data.preferences.getDownloadedSongs(context).filter {
                 com.music.spotui.data.preferences.isSongLiked(context, it.id.toString())
-            }))
+            }))))
             return@flow
         }
         try {
@@ -1035,7 +1064,7 @@ class Api @Inject constructor(
             } while (offset < page.total)
             if (SpotifySession.spDc(context) != session) return@flow
             val fresh = LibraryContentMemory.mergeLiked(context, models, session)
-            emit(Response.Success(libraryOverrides(fresh)))
+            emit(Response.Success(libraryOverrides(withLocalLikes(fresh))))
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (failure: Exception) {

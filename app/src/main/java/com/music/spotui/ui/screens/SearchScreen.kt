@@ -192,14 +192,10 @@ fun SumUpSearchScreen(
         }
     }
 
-    // Warm the stream cache for the top search hits so tapping a result plays
-    // (near-)instantly instead of resolving YouTube on the tap.
-    LaunchedEffect(searchedList) {
-        SongPlayer.registerTracksForResolution(searchedList.take(3))
-        SongPlayer.prefetchList(searchedList.map { it.url }, context, count = 3)
-    }
-
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    com.music.spotui.ui.components.VisibleSongPreload(listState, remember(filteredMixed) {
+        filteredMixed.mapIndexedNotNull { i, row -> (row as? SearchRow.Song)?.let { "search_result_$i" to it.song } }
+    })
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
@@ -381,7 +377,7 @@ fun SumUpSearchScreen(
                     }
                 }
 
-                items(filteredMixed.size) { i ->
+                items(filteredMixed.size, key = { "search_result_$it" }) { i ->
                     when (val row = filteredMixed[i]) {
                         is SearchRow.Show -> SearchShowRow(row.show) {
                             recordRecent(

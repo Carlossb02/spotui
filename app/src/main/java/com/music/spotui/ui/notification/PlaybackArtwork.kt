@@ -38,6 +38,7 @@ object PlaybackArtwork {
     private val failedAt = ConcurrentHashMap<String, Long>()
     private val failedSource = ConcurrentHashMap<String, String>()
     private val loadingSource = ConcurrentHashMap<String, String>()
+    private val versions = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
     private val pendingSource = ConcurrentHashMap<String, Pair<String, () -> Unit>>()
     private val executor = Executors.newFixedThreadPool(2)
     private val main = Handler(Looper.getMainLooper())
@@ -53,7 +54,24 @@ object PlaybackArtwork {
      * Garantiza que la carátula de [id] esté en caché. [onReady] se invoca en el hilo
      * principal solo si hubo que cargarla (si ya estaba en caché no se llama).
      */
+    /** Explicit artwork edits replace presentation files only, never an audio source. */
+    fun refresh(context:Context,id:String,coverUri:String,onReady:()->Unit={}) {
+        val app=context.applicationContext
+        val version=versions.getOrPut(id){java.util.concurrent.atomic.AtomicLong()}
+        executor.execute {
+            synchronized(version) {
+                version.incrementAndGet();cache.remove(id);failedAt.remove(id);failedSource.remove(id)
+                val clean=id.removePrefix("song/").removePrefix("playlist/").removePrefix("album/").removePrefix("artist/").trim()
+                File(File(app.filesDir,"downloads"),"${clean}_cover.jpg").delete()
+            }
+            pendingSource[id]=coverUri to onReady
+            ensure(app,id,coverUri,onReady)
+        }
+    }
+
     fun ensure(context: Context, id: String, coverUri: String, onReady: () -> Unit = {}) {
+        val version=versions.getOrPut(id){java.util.concurrent.atomic.AtomicLong()}
+        val expectedVersion=version.get()
         val appContext = context.applicationContext
         val cleanId = id.removePrefix("song/").removePrefix("playlist/").removePrefix("album/").removePrefix("artist/").trim()
         val coverFile = File(File(appContext.filesDir, "downloads"), "${cleanId}_cover.jpg")
@@ -79,6 +97,8 @@ object PlaybackArtwork {
                     ?: if (stored) load(appContext, Uri.fromFile(coverFile).toString())
                     else load(appContext, coverUri)
                 if (bytes != null) {
+                    synchronized(version) {
+                    if(version.get()!=expectedVersion)return@execute
                     cache.put(id, bytes)
                     if (cleanId.isNotBlank() && !stored) {
                         // Safe persistent copy: downloading bytes belong to user library,
@@ -95,7 +115,8 @@ object PlaybackArtwork {
                     }
                     failedAt.remove(id)
                     failedSource.remove(id)
-                    main.post(onReady)
+                    main.post {if(version.get()==expectedVersion)onReady()}
+                    }
                 } else {
                     failedAt[id] = System.currentTimeMillis()
                     failedSource[id] = coverUri
@@ -108,7 +129,7 @@ object PlaybackArtwork {
                 loadingSource.remove(id)
                 inflight.remove(id)
                 pendingSource.remove(id)?.let { (nextUri, callback) ->
-                    if (!coverFile.isFile || coverFile.length() == 0L) {
+                    if (nextUri!=coverUri || !coverFile.isFile || coverFile.length() == 0L) {
                         ensure(appContext, id, nextUri, callback)
                     }
                 }

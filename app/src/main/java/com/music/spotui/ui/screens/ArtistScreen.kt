@@ -123,11 +123,7 @@ private fun ArtistOverviewContent(
     val displayName = overview.name.ifBlank { artistName }
 
     // Warm the stream cache for the top tracks so the first tap plays instantly.
-    LaunchedEffect(tracks) {
-        if (tracks.isNotEmpty()) {
-            SongPlayer.prefetchList(tracks.map { it.song.url }, context)
-        }
-    }
+
 
     // Followed = known locally OR followed on the real Spotify account.
     val followedIds by artistViewModel.followedArtistIds.collectAsState()
@@ -158,6 +154,9 @@ private fun ArtistOverviewContent(
     }
 
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    com.music.spotui.ui.components.VisibleSongPreload(listState, remember(tracks) {
+        tracks.take(5).mapIndexed { i, track -> "artist_song_$i" to track.song }
+    })
     com.music.spotui.ui.components.CollectionContentViewport(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -335,7 +334,7 @@ private fun ArtistOverviewContent(
                     modifier = Modifier.padding(16.dp, 8.dp, 16.dp, 4.dp),
                 )
             }
-            itemsIndexed(tracks.take(5)) { index, item ->
+            itemsIndexed(tracks.take(5), key = { i, _ -> "artist_song_$i" }) { index, item ->
                 PopularTrackRow(
                     item = item,
                     index = index,

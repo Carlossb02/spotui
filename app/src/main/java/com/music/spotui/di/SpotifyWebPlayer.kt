@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Context
 import android.util.Log
 import android.view.ViewGroup
+import com.music.spotui.util.findActivity
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -234,9 +235,7 @@ object SpotifyWebPlayer {
         if (spDc.isBlank()) return
         val wv = webView
         if (wv == null) {
-            if (context is Activity) {
-                attach(context)
-            }
+            context.findActivity()?.takeUnless {it.isFinishing || it.isDestroyed}?.let(::attach)
             return
         }
         CookieManager.getInstance().apply {

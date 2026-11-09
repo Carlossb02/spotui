@@ -122,9 +122,9 @@ class NewPipeUtils(
 object NewPipeExtractor {
     private var newPipeDownloader: NewPipeDownloaderImpl? = null
     private var newPipeUtils: NewPipeUtils? = null
-    private var isInitialized = false
+    @Volatile private var isInitialized = false
 
-    fun init() {
+    @Synchronized fun init() {
         if (!isInitialized) {
             newPipeDownloader = NewPipeDownloaderImpl(
                 proxy = YouTube.proxy,

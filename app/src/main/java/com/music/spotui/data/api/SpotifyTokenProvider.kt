@@ -4,6 +4,9 @@ import android.content.Context
 import android.util.Log
 import com.metrolist.spotify.Spotify
 import com.metrolist.spotify.SpotifyAuth
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -20,23 +23,46 @@ object SpotifyTokenProvider {
     private const val TAG = "SpotifyTokenProvider"
     private val mutex = Mutex()
     private var expiresAtMs: Long = 0L
+    private var tokenAccount: String? = null
+
+    /** Validate before changing the account visible to navigation, caches or the outbox. */
+    suspend fun signIn(context:Context,spDc:String,spKey:String=""):Result<Unit> = mutex.withLock {
+        try {
+            require(spDc.isNotBlank()) {"Empty Spotify session"}
+            val app=context.applicationContext
+            val previous=SpotifySession.spDc(app)
+            val token=SpotifyAuth.fetchAccessToken(spDc.trim(),spKey).getOrThrow()
+            currentCoroutineContext().ensureActive()
+            check(SpotifySession.spDc(app)==previous) {"Spotify account changed during login"}
+            check(!token.isAnonymous && token.accessToken.isNotBlank() &&
+                token.accessTokenExpirationTimestampMs>System.currentTimeMillis()) {"Invalid Spotify token"}
+            SpotifySession.setSpDc(app,spDc.trim())
+            Spotify.accessToken=token.accessToken
+            expiresAtMs=token.accessTokenExpirationTimestampMs
+            tokenAccount=spDc.trim()
+            Result.success(Unit)
+        } catch(cancelled:CancellationException) {throw cancelled} catch(failure:Exception) {Result.failure(failure)}
+    }
 
     suspend fun ensureToken(context: Context): Boolean = mutex.withLock {
         val now = System.currentTimeMillis()
-        if (Spotify.accessToken != null && now < expiresAtMs - 60_000L) {
+        val spDc = SpotifySession.spDc(context)
+        if (tokenAccount == spDc && !Spotify.accessToken.isNullOrBlank() && now < expiresAtMs - 60_000L) {
             return@withLock true
         }
-        val spDc = SpotifySession.spDc(context)
         if (spDc.isBlank()) {
             Log.w(TAG, "No sp_dc cookie set — Spotify data unavailable")
             return@withLock false
         }
         SpotifyAuth.fetchAccessToken(spDc).fold(
             onSuccess = { token ->
-                Spotify.accessToken = token.accessToken
-                expiresAtMs = token.accessTokenExpirationTimestampMs
-                Log.d(TAG, "Spotify token refreshed")
-                true
+                if (SpotifySession.spDc(context) != spDc) false else {
+                    Spotify.accessToken = token.accessToken
+                    expiresAtMs = token.accessTokenExpirationTimestampMs
+                    tokenAccount = spDc
+                    Log.d(TAG, "Spotify token refreshed")
+                    true
+                }
             },
             onFailure = {
                 Log.e(TAG, "Failed to fetch Spotify token", it)

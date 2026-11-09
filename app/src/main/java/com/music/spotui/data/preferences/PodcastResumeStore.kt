@@ -62,6 +62,22 @@ object PodcastResumeStore {
         duration > 0L && position >= 0L &&
             (position.toDouble() / duration >= 0.99 || duration - position < 60_000L)
 
+    /** Export unsaved samples before the native compare-and-apply, under the
+     * same lock as record(). A failed comparison is retried by the coordinator. */
+    internal fun applySync(context:Context, apply:()->Boolean):Boolean = synchronized(lock) {
+        if(dirty)persist(context,System.currentTimeMillis())
+        val applied=apply()
+        if(applied){loaded=false;ensureLoaded(context)}
+        applied
+    }
+
+    internal fun reloadFromSync(context: Context) = synchronized(lock) {
+        loaded = false
+        dirty = false
+        lastDiskWrite = 0L
+        ensureLoaded(context)
+    }
+
     fun ensureLoaded(context: Context) = synchronized(lock) {
         if (loaded) return@synchronized
         val array = runCatching {

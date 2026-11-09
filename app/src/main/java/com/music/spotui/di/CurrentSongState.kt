@@ -73,9 +73,23 @@ class CurrentSongState @Inject constructor() {
             ?: q.indexOfFirst { it.url == _songUrl.value }.takeIf { it >= 0 } ?: -1
     }
 
+    private val playbackWrites = com.music.spotui.util.OrderedIoWrites()
     private fun persistQueue() {
-        com.music.spotui.data.preferences.saveLastQueue(com.music.spotui.MyApplication.instance,
-            _queue.value, queueOrder.originalSongs.ifEmpty { _queue.value }, queueOrder.manualIndices, _songIndex.value, queueOrder.originalIndices)
+        // Capture immutable order/cursor together. Encoding two large JSON arrays must not block a tap.
+        com.music.spotui.sync.CloudPlayback.queueEdited()
+        val queue = _queue.value
+        val original = queueOrder.originalSongs.ifEmpty { queue }
+        val manual = queueOrder.manualIndices
+        val cursor = _songIndex.value
+        val indices = queueOrder.originalIndices
+        playbackWrites.submit {
+            com.music.spotui.data.preferences.saveLastQueue(com.music.spotui.MyApplication.instance,
+                queue, original, manual, cursor, indices)
+        }
+    }
+    private fun persistCursor() {
+        val cursor = _songIndex.value
+        playbackWrites.submit { com.music.spotui.data.preferences.saveLastQueueCursor(com.music.spotui.MyApplication.instance, cursor) }
     }
 
     fun enqueue(songs: List<SongsModel>, next: Boolean = false) {
@@ -177,7 +191,11 @@ class CurrentSongState @Inject constructor() {
             } else song
         }
         _queue.value = updatedQ
-        val activeSong = updatedQ.firstOrNull { isMatch(it) || it.id == _songId.value }
+        if(targetSong.coverUri!=newCoverUri)com.music.spotui.ui.notification.PlaybackArtwork.refresh(
+                com.music.spotui.MyApplication.instance,"song/${targetSong.id}",newCoverUri) {
+                if(_songId.value==targetSong.id)SongPlayer.setNowPlayingMeta(_title.value,_singer.value,_coverUri.value)
+            }
+        val activeSong = updatedQ.getOrNull(currentQueueIndex())?.takeIf {it.id==_songId.value}
         if (activeSong != null && isMatch(activeSong)) {
             _title.value = newTitle
             _singer.value = newArtist
@@ -188,7 +206,9 @@ class CurrentSongState @Inject constructor() {
         updateQueue(updatedQ, isManualEdit = true)
         if (targetSong.url.isNotBlank()) {
             SongPlayer.registerMetadata(listOf(targetSong.url to SongPlayer.TrackMatchMetadata(newTitle, newArtist, newAlbum)))
-            SongPlayer.invalidateSongCacheByUrl(targetSong.url, com.music.spotui.MyApplication.instance, songTitle = newTitle)
+            if(targetSong.title!=newTitle || targetSong.singer!=newArtist || targetSong.album!=newAlbum)
+                SongPlayer.invalidateSongCacheByUrl(targetSong.url, com.music.spotui.MyApplication.instance,
+                    reloadIfPlaying=false,clearAltStream=false,songTitle=newTitle,songId=targetSong.id)
         }
     }
 
@@ -219,6 +239,7 @@ class CurrentSongState @Inject constructor() {
     }
     fun updateRepeatState(newRepeatState : RepeatMode){
         repeat.value = newRepeatState
+        com.music.spotui.sync.CloudPlayback.queueEdited()
         com.music.spotui.data.preferences.saveRepeatMode(com.music.spotui.MyApplication.instance, newRepeatState)
     }
 
@@ -263,6 +284,7 @@ class CurrentSongState @Inject constructor() {
      *  play/pause button immediately shows Pause (is playing = true) and never
      *  gets stuck displaying Play (is playing = false). */
     fun syncWithPlayer() {
+        com.music.spotui.sync.CloudPlayback.remotePlaying()?.let { _playingState.value=it;return }
         val realIsPlaying = SongPlayer.isResolvingOrPlaying()
         if (_playingState.value != realIsPlaying) {
             _playGen++
@@ -282,6 +304,7 @@ class CurrentSongState @Inject constructor() {
      *  events until a manual UI play tap. Syncing generation counters when audio plays
      *  prevents UI desynchronization permanently. */
     fun updatePlayingState(playing: Boolean) {
+        com.music.spotui.sync.CloudPlayback.remotePlaying()?.let { _playingState.value=it;return }
         val realIsPlaying = SongPlayer.isResolvingOrPlaying()
         if (playing || realIsPlaying) {
             _playGen++
@@ -332,11 +355,11 @@ class CurrentSongState @Inject constructor() {
         _songIndex.value = if (actualIndex >= 0) actualIndex else songIndex
         _songId.value = songId
         _queue.value.getOrNull(_songIndex.value)?.let { com.music.spotui.data.api.LibraryContentMemory.register(com.music.spotui.MyApplication.instance, it) }
-        if (queueChanged) persistQueue() else com.music.spotui.data.preferences.saveLastQueueCursor(com.music.spotui.MyApplication.instance, _songIndex.value)
+        if (queueChanged) persistQueue() else persistCursor()
         // Feed the system media notification (MediaSession) with the current track.
         SongPlayer.setNowPlayingMeta(title, singer, coverUri)
         // Persist the current track so a fresh launch can restore the session.
-        if (playingState && title.isNotBlank()) {
+        if (playingState && title.isNotBlank() && com.music.spotui.sync.CloudPlayback.remotePlaying()==null) {
             _queue.value.firstOrNull { it.id == songId }?.let { track ->
                 com.music.spotui.data.preferences.saveLastPlayback(
                     com.music.spotui.MyApplication.instance, track)
@@ -353,7 +376,7 @@ class CurrentSongState @Inject constructor() {
         }
         // Warm the lyrics cache in the background so they're already loaded by the
         // time the user opens the player / scrolls to the lyrics card.
-        if (playingState && title.isNotBlank()) {
+        if (playingState && title.isNotBlank() && com.music.spotui.sync.CloudPlayback.remotePlaying()==null) {
             _queue.value.firstOrNull { it.id == songId }?.let { track ->
                 com.music.spotui.data.api.LyricsApi.prefetch(
                     track.title, track.singer, track.album, track.durationMs / 1000, track.spotifyTrackId
@@ -362,4 +385,39 @@ class CurrentSongState @Inject constructor() {
 
         }
     }
+
+    internal fun devicePlaybackQueue() = com.music.spotui.sync.DevicePlaybackQueue(
+        _queue.value, queueOrder.manualIndices, queueOrder.originalIndices)
+
+    /** Remote clocks redraw metadata without resolving audio or recording a local listen. */
+    internal fun applyDevicePlayback(queue:com.music.spotui.sync.DevicePlaybackQueue, frame:com.music.spotui.sync.DevicePlaybackState) {
+        val song=queue.songs.getOrNull(frame.index)?:return
+        if(_queue.value!=queue.songs || queueOrder.manualIndices!=queue.manual || queueOrder.originalIndices!=queue.original) {
+            queueOrder.replace(queue.songs,false,restoredManual=queue.manual,restoredOriginalIndices=queue.original)
+            _queue.value=queueOrder.songs
+        }
+        _songIndex.value=frame.index;_songId.value=song.id;_songUrl.value=song.url
+        _title.value=song.title;_album.value=song.album;_singer.value=song.singer
+        _artistIds.value=song.artistIds;_coverUri.value=song.coverUri;_playingState.value=frame.playing
+        _sourceName.value=frame.source;shuffle.value=frame.shuffle
+        repeat.value=runCatching {RepeatMode.valueOf(frame.repeat)}.getOrDefault(RepeatMode.OFF)
+        _isResolving.value=false;_isBuffering.value=false;_resolveError.value=null
+    }
+
+    internal fun retainDevicePlayback(frame:com.music.spotui.sync.DevicePlaybackState) {
+        val q=devicePlaybackQueue()
+        val song=q.songs.getOrNull(frame.index)?:return
+        playbackWrites.submit {
+            val context=com.music.spotui.MyApplication.instance
+            com.music.spotui.data.preferences.saveLastQueue(context,q.songs,q.original.mapNotNull(q.songs::getOrNull),q.manual,frame.index,q.original)
+            com.music.spotui.data.preferences.saveLastPlayback(context,song)
+            com.music.spotui.data.preferences.saveLastPosition(context,frame.position)
+            com.music.spotui.data.preferences.saveShuffleEnabled(context,frame.shuffle)
+            com.music.spotui.data.preferences.saveRepeatMode(context,runCatching {RepeatMode.valueOf(frame.repeat)}.getOrDefault(RepeatMode.OFF))
+            com.music.spotui.data.preferences.savePlaybackSource(context,frame.source)
+        }
+    }
+
+    init { com.music.spotui.sync.CloudPlayback.bind(this) }
+
 }

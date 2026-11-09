@@ -19,6 +19,8 @@ internal class ExpiringLruCache<K, V>(
         return entry.value
     }
 
+    @Synchronized fun remove(key: K) { entries.remove(key) }
+
     @Synchronized fun clear() { entries.clear() }
 
     @Synchronized fun put(key: K, value: V) {

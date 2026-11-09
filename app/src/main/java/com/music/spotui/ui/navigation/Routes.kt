@@ -24,6 +24,7 @@ sealed class Routes(
     object Category : Routes(0, "Category", "category")
     object Login : Routes(0, "Login", "login")
     object Settings : Routes(0, "Settings", "settings")
+    object DeviceSync : Routes(0, "DeviceSync", "device_sync")
     object History : Routes(0, "History", "history")
     object LocalFiles : Routes(0, "LocalFiles", "localfiles")
     object DeezerIntro : Routes(0, "DeezerIntro", "deezerintro")

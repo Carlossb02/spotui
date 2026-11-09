@@ -100,6 +100,17 @@ fun SettingsScreen(navController: NavController) {
     var isBackingUp by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
+    LaunchedEffect(Unit) {
+        com.music.spotui.sync.OwnLibraryChanges.revision.collect {
+            appLang = getAppLanguage(context)
+            wifiQ = getWifiQuality(context); cellQ = getCellularQuality(context); dlQ = getDownloadQuality(context)
+            crossfadeMs = getCrossfadeMs(context).toFloat(); videoFallback = isVideoFallbackEnabled(context)
+            autoPlay = isAutoPlayEnabled(context); normalizationMode = getAudioNormalizationMode(context)
+            equalizerEnabled = isEqualizerEnabled(context); equalizerPreset = getEqualizerPreset(context)
+            equalizerGains = getEqualizerBandGains(context)
+        }
+    }
+
     val dirPickerLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -203,6 +214,11 @@ fun SettingsScreen(navController: NavController) {
             contentPadding = PaddingValues(start = 16.dp + horizontalInset, end = 16.dp + horizontalInset, top = 8.dp, bottom = 160.dp),
             verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
+            item(key = "google_sync") {
+                SettingsSection("Cuenta de Google") {
+                    GoogleAccountSettings(onOpenDetails = { navController.navigate(Routes.DeviceSync.route) })
+                }
+            }
             item(key = "general") {
                 SettingsSection(uiLocalized("General")) {
                     SettingsChoiceRow(

@@ -41,6 +41,12 @@ class LibraryViewModel @Inject constructor(private val repository: AppRepository
     private var loadJob: Job? = null
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            com.music.spotui.sync.OwnLibraryChanges.revision.collect {
+                repository.cachedLibraryEntries()?.let { _entries.value = Response.Success(it) }
+            }
+        }
+
         load()
         loadAccount()
         loadFollowedArtists()

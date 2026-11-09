@@ -1991,7 +1991,8 @@ fun PlayerConnectRow(
 
     val routeName by com.music.spotui.ui.utils.AudioDeviceHelper.currentRouteNameState
     val bluetoothRoute by com.music.spotui.ui.utils.AudioDeviceHelper.bluetoothRouteActiveState
-    val outputColor = if (bluetoothRoute) Color(0xFF1ED760) else Color.White
+    val cloudPlayback by com.music.spotui.sync.CloudPlayback.status.collectAsState()
+    val outputColor = if (bluetoothRoute || cloudPlayback.remote) Color(0xFF1ED760) else Color.White
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -2012,7 +2013,7 @@ fun PlayerConnectRow(
             com.music.spotui.ui.components.AudioOutputIcon(
                 modifier = Modifier.size(18.dp), contentDescription = uiLocalized("Device"))
             Text(
-                text = routeName,
+                text = if(cloudPlayback.remote)cloudPlayback.ownerName else routeName,
                 color = outputColor,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,

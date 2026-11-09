@@ -1,6 +1,7 @@
 package com.music.spotui.ui.components
 
 import com.music.spotui.util.uiLocalized
+import com.music.spotui.util.localizedUiText
 
 import android.content.Context
 import android.content.Intent
@@ -22,30 +23,21 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AddCircle
+import androidx.compose.material.icons.outlined.Album
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Favorite
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.People
+import androidx.compose.material.icons.outlined.PlayCircle
+import androidx.compose.material.icons.outlined.PlaylistAdd
+import androidx.compose.material.icons.outlined.QueueMusic
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.RemoveCircle
 import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material.icons.outlined.Album
-import androidx.compose.material.icons.outlined.People
-import androidx.compose.material.icons.outlined.QueueMusic
-import androidx.compose.material.icons.outlined.PlaylistAdd
-import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.filled.PlaylistAdd
-import androidx.compose.material.icons.filled.Album
-import androidx.compose.material.icons.filled.People
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -53,6 +45,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -103,6 +96,10 @@ fun SongOptionsSheet(
     onSongRemovedFromPlaylist: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
+    val language=com.music.spotui.data.preferences.SpotuiLanguage.current
+    fun text(value:String)=localizedUiText(value,language)
+    val revision by com.music.spotui.sync.OwnLibraryChanges.revision.collectAsState()
+    val displaySong=remember(song,revision) {com.music.spotui.data.preferences.CustomMetadataPref.applyOverride(context,song)}
     var showPlaylistRemoval by remember { mutableStateOf(false) }
     val playerViewModel: com.music.spotui.ui.viewmodel.PlayerViewModel =
         androidx.hilt.navigation.compose.hiltViewModel()
@@ -140,14 +137,14 @@ fun SongOptionsSheet(
     }
 
     if (showEditDialog && editableLocalTrack) {
-        var editTitle by remember { mutableStateOf(song.title) }
-        var editArtist by remember { mutableStateOf(song.singer) }
-        var editAlbum by remember { mutableStateOf(song.album) }
-        var editCover by remember { mutableStateOf(song.coverUri) }
+        var editTitle by remember { mutableStateOf(displaySong.title) }
+        var editArtist by remember { mutableStateOf(displaySong.singer) }
+        var editAlbum by remember { mutableStateOf(displaySong.album) }
+        var editCover by remember { mutableStateOf(displaySong.coverUri) }
 
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showEditDialog = false },
-            title = { Text(uiLocalized("Edit Metadata"), color = Color.White) },
+            title = { Text(uiLocalized("Edit Metadata"), color = Color(0xFFECECEC)) },
             containerColor = Color(0xFF242424),
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -157,9 +154,9 @@ fun SongOptionsSheet(
                         onValueChange = { editTitle = it },
                         singleLine = true,
                         colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = Color(AppPalette.toArgb()),
+                            focusedTextColor = Color(0xFFECECEC),
+                            unfocusedTextColor = Color(0xFFECECEC),
+                            focusedBorderColor = Color(0xFF10A37F),
                             unfocusedBorderColor = Color.Gray
                         )
                     )
@@ -169,9 +166,9 @@ fun SongOptionsSheet(
                         onValueChange = { editArtist = it },
                         singleLine = true,
                         colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = Color(AppPalette.toArgb()),
+                            focusedTextColor = Color(0xFFECECEC),
+                            unfocusedTextColor = Color(0xFFECECEC),
+                            focusedBorderColor = Color(0xFF10A37F),
                             unfocusedBorderColor = Color.Gray
                         )
                     )
@@ -181,9 +178,9 @@ fun SongOptionsSheet(
                         onValueChange = { editAlbum = it },
                         singleLine = true,
                         colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = Color(AppPalette.toArgb()),
+                            focusedTextColor = Color(0xFFECECEC),
+                            unfocusedTextColor = Color(0xFFECECEC),
+                            focusedBorderColor = Color(0xFF10A37F),
                             unfocusedBorderColor = Color.Gray
                         )
                     )
@@ -193,9 +190,9 @@ fun SongOptionsSheet(
                         onValueChange = { editCover = it },
                         singleLine = true,
                         colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = Color(AppPalette.toArgb()),
+                            focusedTextColor = Color(0xFFECECEC),
+                            unfocusedTextColor = Color(0xFFECECEC),
+                            focusedBorderColor = Color(0xFF10A37F),
                             unfocusedBorderColor = Color.Gray
                         )
                     )
@@ -204,8 +201,8 @@ fun SongOptionsSheet(
             confirmButton = {
                 androidx.compose.material3.TextButton(
                     onClick = {
-                        val finalTitle = editTitle.ifBlank { "Unknown title" }
-                        val finalArtist = editArtist.ifBlank { "Unknown artist" }
+                        val finalTitle = editTitle.ifBlank { displaySong.title }
+                        val finalArtist = editArtist.ifBlank { displaySong.singer }
                         com.music.spotui.data.preferences.updateLocalTrackMetadata(
                             context,
                             song,
@@ -218,12 +215,12 @@ fun SongOptionsSheet(
                         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                             com.music.spotui.util.BackupHelper.performAutoBackup(context)
                         }
-                        android.widget.Toast.makeText(context, "Metadata updated", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(context, text("Metadata updated"), android.widget.Toast.LENGTH_SHORT).show()
                         showEditDialog = false
                         onDismiss()
                     }
                 ) {
-                    Text(uiLocalized("Save"), color = Color(AppPalette.toArgb()))
+                    Text(uiLocalized("Save"), color = Color(0xFF10A37F))
                 }
             },
             dismissButton = {
@@ -236,8 +233,8 @@ fun SongOptionsSheet(
 
     if (showPlaylistRemoval && !currentPlaylistId.isNullOrBlank()) {
         androidx.compose.material3.AlertDialog(onDismissRequest = { showPlaylistRemoval = false }, containerColor = Color(0xFF242424),
-            title = { Text(uiLocalized("¿Quitar de esta playlist?"), color = Color.White) },
-            text = { Text(song.title, color = Color(0xFFB3B3B3)) },
+            title = { Text(uiLocalized("¿Quitar de esta playlist?"), color = Color(0xFFECECEC)) },
+            text = { Text(displaySong.title, color = Color(0xFFB3B3B3)) },
             confirmButton = { androidx.compose.material3.TextButton(onClick = {
                 showPlaylistRemoval = false
                     if (song.url.startsWith("yt_local:") && !currentPlaylistId.startsWith("local_pl_")) {
@@ -264,14 +261,14 @@ fun SongOptionsSheet(
                         }
                     }
                     onDismiss()
-            }) { Text(uiLocalized("Quitar"), color = Color(0xFF1ED760)) } },
-            dismissButton = { androidx.compose.material3.TextButton(onClick = { showPlaylistRemoval = false }) { Text(uiLocalized("Cancelar"), color = Color.White) } })
+            }) { Text(uiLocalized("Quitar"), color = Color(0xFF10A37F)) } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { showPlaylistRemoval = false }) { Text(uiLocalized("Cancelar"), color = Color(0xFFECECEC)) } })
     }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         sheetGesturesEnabled = false,
-        containerColor = Color(0xFF1D1D1D),
+        containerColor = Color(0xFF212121),
         shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
         dragHandle = {
             var downwardDrag = 0f
@@ -308,21 +305,21 @@ fun SongOptionsSheet(
                     modifier = Modifier
                         .size(58.dp)
                         .clip(RoundedCornerShape(5.dp)),
-                    model = song.coverUri,
+                    model = displaySong.coverUri,
                     contentScale = ContentScale.Crop,
                     contentDescription = ""
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
-                    Text(song.title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(song.singer, color = Color(0xFFB3B3B3), fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(displaySong.title, color = Color(0xFFECECEC), fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(displaySong.singer, color = Color(0xFFB3B3B3), fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             HorizontalDivider(color = Color(0xFF353535))
 
             if (editableLocalTrack) {
                 SongMenuRow(
-                    icon = Icons.Default.Edit,
+                    icon = Icons.Outlined.Edit,
                     label = uiLocalized("Edit metadata"),
                 ) {
                     showEditDialog = true
@@ -332,12 +329,12 @@ fun SongOptionsSheet(
             SongMenuRow(Icons.Outlined.Share, uiLocalized("Share")) {
                 val shareText = song.spotifyTrackId.takeIf { it.isNotBlank() }
                     ?.let { "https://open.spotify.com/track/$it" }
-                    ?: "Listening to ${song.title} by ${song.singer}"
+                    ?: text("Listening to %1\$s by %2\$s").format(song.title,song.singer)
                 val send = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
                     putExtra(Intent.EXTRA_TEXT, shareText)
                 }
-                context.startActivity(Intent.createChooser(send, "Share"))
+                context.startActivity(Intent.createChooser(send, text("Share")))
                 onDismiss()
             }
             SongMenuRow(
@@ -350,7 +347,7 @@ fun SongOptionsSheet(
                 SongMenuRow(
                     icon = Icons.Outlined.RemoveCircle,
                     label = uiLocalized("Remove from this playlist"),
-                    iconTint = Color.White
+                    iconTint = Color(0xFFB4B4B4)
                 ) {
                     showPlaylistRemoval = true
                 }
@@ -376,14 +373,14 @@ fun SongOptionsSheet(
                 }
                 onDismiss()
             }
-            SongMenuRow(Icons.Default.PlayArrow, uiLocalized("Play next")) {
+            SongMenuRow(Icons.Outlined.PlayCircle, uiLocalized("Play next")) {
                 playerViewModel.playNext(song)
                 onDismiss()
             }
             SongMenuRow(
-                icon = if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                label = if (liked) "Remove from Liked Songs" else "Add to Liked Songs",
-                iconTint = Color(0xFF1ED760),
+                icon = if (liked) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
+                label = text(if (liked) "Remove from Liked Songs" else "Add to Liked Songs"),
+                iconTint = Color(0xFF10A37F),
             ) {
                 com.music.spotui.data.api.LibraryContentMemory.register(context, song)
                 if (liked) removeLikedSongId(context, song.id.toString())
@@ -393,19 +390,19 @@ fun SongOptionsSheet(
                 com.music.spotui.data.api.SpotifySync.setTrackSaved(context, song.spotifyTrackId, liked)
             }
             SongMenuRow(
-                icon = if (downloaded) Icons.Default.CheckCircle else ImageVector.vectorResource(R.drawable.ic_download),
+                icon = if (downloaded) Icons.Outlined.CheckCircle else Icons.Outlined.Download,
                 label = when {
-                    downloaded -> "Remove download"
-                    downloadingNow -> if (downloadPct in 1..99) "Downloading… $downloadPct%" else "Downloading…"
-                    else -> "Download"
+                    downloaded -> text("Remove download")
+                    downloadingNow -> text("Downloading…") + if(downloadPct in 1..99) " $downloadPct%" else ""
+                    else -> text("Download")
                 },
-                iconTint = if (downloaded) Color(AppPalette.toArgb()) else Color.White,
+                iconTint = if (downloaded) Color(0xFF10A37F) else Color(0xFFB4B4B4),
                 enabled = !downloadingNow,
             ) {
                 if (downloaded) {
                     val removed = com.music.spotui.data.preferences.removeDownload(context, song.id.toString())
                     if (removed) downloaded = false
-                    else android.widget.Toast.makeText(context, "Could not delete audio file", android.widget.Toast.LENGTH_SHORT).show()
+                    else android.widget.Toast.makeText(context, text("Could not delete audio file"), android.widget.Toast.LENGTH_SHORT).show()
                 } else {
                     downloadingNow = true
                     com.music.spotui.di.SongPlayer.downloadSong(song, context) { ok ->
@@ -416,7 +413,7 @@ fun SongOptionsSheet(
             }
             if (downloaded) {
                 SongMenuRow(
-                    icon = ImageVector.vectorResource(R.drawable.ic_download),
+                    icon = Icons.Outlined.Download,
                     label = uiLocalized("Export to Music"),
                 ) {
                     onDismiss()
@@ -428,7 +425,7 @@ fun SongOptionsSheet(
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                             android.widget.Toast.makeText(
                                 app,
-                                if (ok) "Saved to Music/spotui" else "Export failed",
+                                text(if (ok) "Saved to Music/spotui" else "Export failed"),
                                 android.widget.Toast.LENGTH_SHORT,
                             ).show()
                         }
@@ -440,7 +437,7 @@ fun SongOptionsSheet(
                 label = uiLocalized("Invalidate cache"),
             ) {
                 onDismiss()
-                com.music.spotui.di.SongPlayer.invalidateSongCache(song, context, reloadIfPlaying = true)
+                com.music.spotui.di.SongPlayer.invalidateSongCache(song, context, reloadIfPlaying = true, clearAltStream = false)
             }
             Spacer(modifier = Modifier.padding(20.dp))
         }
@@ -451,7 +448,7 @@ fun SongOptionsSheet(
 private fun SongMenuRow(
     icon: ImageVector,
     label: String,
-    iconTint: Color = Color.White,
+    iconTint: Color = Color(0xFFB4B4B4),
     enabled: Boolean = true,
     trailingArrow: Boolean = false,
     onClick: () -> Unit,
@@ -473,7 +470,7 @@ private fun SongMenuRow(
         Spacer(modifier = Modifier.width(22.dp))
         Text(
             text = label,
-            color = if (enabled) Color.White else Color.Gray.copy(alpha = 0.4f),
+            color = if (enabled) Color(0xFFECECEC) else Color.Gray.copy(alpha = 0.4f),
             fontSize = 16.sp,
             maxLines = 1,
             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,

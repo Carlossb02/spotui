@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 
 object CipherDeobfuscator {
@@ -16,6 +18,7 @@ object CipherDeobfuscator {
         appContext = context.applicationContext
     }
 
+    private val webViewGate = Mutex()
     private var cipherWebView: CipherWebView? = null
     private var currentPlayerHash: String? = null
 
@@ -23,6 +26,7 @@ object CipherDeobfuscator {
         return try {
             deobfuscateInternal(signatureCipher, videoId, isRetry = false)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.tag(TAG).e(e, "Cipher deobfuscation failed, retrying with fresh JS: ${e.message}")
             // Invalidate cache and retry once with fresh player JS
             try {
@@ -30,6 +34,7 @@ object CipherDeobfuscator {
                 closeWebView()
                 deobfuscateInternal(signatureCipher, videoId, isRetry = true)
             } catch (retryE: Exception) {
+                if (retryE is kotlinx.coroutines.CancellationException) throw retryE
                 Timber.tag(TAG).e(retryE, "Cipher deobfuscation retry also failed: ${retryE.message}")
                 null
             }
@@ -73,6 +78,7 @@ object CipherDeobfuscator {
         return try {
             transformNInternal(url)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.tag(TAG).e(e, "N-transform failed, returning original URL: ${e.message}")
             url
         }
@@ -105,21 +111,21 @@ object CipherDeobfuscator {
         )
     }
 
-    private suspend fun getOrCreateWebView(forceRefresh: Boolean): CipherWebView? {
+    private suspend fun getOrCreateWebView(forceRefresh: Boolean): CipherWebView? = webViewGate.withLock {
         if (!forceRefresh && cipherWebView != null) {
-            return cipherWebView
+            return@withLock cipherWebView
         }
 
         // Close existing WebView if any
         if (cipherWebView != null) {
-            closeWebView()
+            closeWebViewUnlocked()
         }
 
         // Fetch player JS
         val result = PlayerJsFetcher.getPlayerJs(forceRefresh = forceRefresh)
         if (result == null) {
             Timber.tag(TAG).e("Failed to get player JS")
-            return null
+            return@withLock null
         }
         val (playerJs, hash) = result
 
@@ -128,7 +134,7 @@ object CipherDeobfuscator {
 
         if (sigInfo == null) {
             Timber.tag(TAG).e("Could not extract signature function info from player JS")
-            return null
+            return@withLock null
         }
 
         // Extract n-transform function info (for throttle avoidance / 403 fix)
@@ -149,10 +155,12 @@ object CipherDeobfuscator {
 
         cipherWebView = webView
         currentPlayerHash = hash
-        return webView
+        return@withLock webView
     }
 
-    private suspend fun closeWebView() {
+    private suspend fun closeWebView() = webViewGate.withLock { closeWebViewUnlocked() }
+
+    private suspend fun closeWebViewUnlocked() {
         withContext(Dispatchers.Main) {
             cipherWebView?.close()
         }

@@ -44,6 +44,12 @@ class LikedSongsViewModel @Inject constructor(
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
+            com.music.spotui.sync.OwnLibraryChanges.revision.collect {
+                repository.cachedLikedSongs()?.let { _songs.value = Response.Success(it) }
+            }
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
             repository.libraryContentRevision.collect {
                 repository.cachedLikedSongs()?.let { _songs.value = Response.Success(it) }
             }

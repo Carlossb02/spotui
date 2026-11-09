@@ -21,11 +21,11 @@ fun setCachedVideoIds(context: Context, cacheKey: String, videoIds: List<String>
 
 fun clearCachedVideoId(context: Context, songQuery: String) {
     val prefs = context.getSharedPreferences(PREF_RESOLVED_VIDEOS, Context.MODE_PRIVATE)
-    // Clear both song and video search cache keys for this query
-    prefs.edit()
-        .remove("$songQuery|FILTER_SONG")
-        .remove("$songQuery|FILTER_VIDEO")
-        .apply()
+    // Keys contain the actual encoded YouTube filter and matcher version.
+    // Remove only this recording's variants, including legacy key layouts.
+    val editor = prefs.edit()
+    prefs.all.keys.filter { it.startsWith("$songQuery|") }.forEach { editor.remove(it) }
+    editor.apply()
 }
 
 fun clearAllResolvedVideos(context: Context) {

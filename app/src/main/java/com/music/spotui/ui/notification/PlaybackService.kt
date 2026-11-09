@@ -273,6 +273,7 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
+            if(com.music.spotui.sync.CloudPlayback.remotePlaying()!=null)return
             scheduleMediaNotificationRefresh()
             currentSongState.updateBufferingState(playbackState == Player.STATE_BUFFERING)
             // ExoPlayer's WAKE_MODE_LOCAL is responsible for the CPU wake lock.
@@ -362,6 +363,7 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            if(com.music.spotui.sync.CloudPlayback.remotePlaying()!=null)return
             // Ignore late errors from an outgoing source while the next stream
             // is being resolved: its metadata/queue now belongs to a new episode.
             if (SongPlayer.isPreparingTrack()) return
@@ -1658,6 +1660,10 @@ class PlaybackService : MediaLibraryService() {
     }.getOrNull()
 
     private fun saveLivePlaybackCheckpoint() {
+        if(com.music.spotui.sync.CloudPlayback.remotePlaying()!=null) {
+            com.music.spotui.data.preferences.PodcastResumeStore.flush(applicationContext)
+            return
+        }
         // The Activity may disappear while the service remains owner of the
         // session. Write just the position; never touch playWhenReady or a player.
         val pos = SongPlayer.getCurrentPosition()

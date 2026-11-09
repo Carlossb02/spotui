@@ -1,6 +1,6 @@
 package com.music.spotui.ui.theme
 
-import android.app.Activity
+import com.music.spotui.util.findActivity
 import android.graphics.Color.toArgb
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -60,7 +60,7 @@ fun SpotuiTheme(
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as Activity).window
+            val window = view.context.findActivity()?.window ?: return@SideEffect
             window.statusBarColor = Color.Transparent.toArgb()
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false // white icons for dark‑mode‑only app
         }

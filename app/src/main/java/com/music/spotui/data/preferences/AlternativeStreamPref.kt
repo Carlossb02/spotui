@@ -119,3 +119,6 @@ fun restoreAlternativeStreams(context: Context, streams: Map<String, Alternative
     editor.apply()
 }
 
+
+/** Remote preference changes invalidate the bounded playback lookup. */
+internal fun invalidateAlternativeStreamMemory() = synchronized(hotLock) { hotStreams.clear() }

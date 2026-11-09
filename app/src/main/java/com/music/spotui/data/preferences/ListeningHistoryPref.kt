@@ -21,6 +21,12 @@ data class HistoryEntry(
     val qualified: Boolean = false, val eventId: String = "", val playCount: Int = 1,
 )
 private val _listeningHistoryVersion = MutableStateFlow(0L)
+private val _deviceListeningHistoryVersion = MutableStateFlow(0L)
+internal val deviceListeningHistoryVersion = _deviceListeningHistoryVersion.asStateFlow()
+private fun deviceHistoryChanged() {
+    _deviceListeningHistoryVersion.update { it + 1L }
+    _listeningHistoryVersion.update { it + 1L }
+}
 val listeningHistoryVersion = _listeningHistoryVersion.asStateFlow()
 internal val historyClearGeneration = java.util.concurrent.atomic.AtomicLong(0L)
 private val historyLock = Any()
@@ -93,10 +99,11 @@ private fun prepare(context: Context) {
 }
 fun listeningHistoryMonths(context: Context): List<YearMonth> = synchronized(historyLock) {
     prepare(context)
-    files(context).mapNotNull { runCatching { YearMonth.parse(it.nameWithoutExtension) }.getOrNull() }
+    (files(context).mapNotNull { runCatching { YearMonth.parse(it.nameWithoutExtension) }.getOrNull() } +
+        com.music.spotui.sync.CloudHistory.projection.orEmpty().map { YearMonth.from(Instant.ofEpochMilli(it.ts).atZone(ZoneId.systemDefault())) }).distinct().sortedDescending()
 }
 /** One row per song/month; no timestamps for individual plays, video files, or audio are stored here. */
-fun getListeningHistory(context: Context, year: Int? = null, month: Int? = null, limit: Int = 500): List<HistoryEntry> = synchronized(historyLock) {
+internal fun getDeviceListeningHistory(context: Context, year: Int? = null, month: Int? = null, limit: Int = 500): List<HistoryEntry> = synchronized(historyLock) {
     prepare(context)
     val result = mutableListOf<HistoryEntry>()
     for (file in files(context)) {
@@ -116,6 +123,14 @@ fun getListeningHistory(context: Context, year: Int? = null, month: Int? = null,
             ?: id.takeIf { it.isNotBlank() }?.let { durations.getInt(it, 0).toLong().takeIf { ms -> ms > 0 } } ?: 0L)
     }
 }
+fun getListeningHistory(context: Context, year: Int? = null, month: Int? = null, limit: Int = 500): List<HistoryEntry> {
+    val synced = com.music.spotui.sync.CloudHistory.projection ?: return getDeviceListeningHistory(context, year, month, limit)
+    return synced.asSequence().filter { e ->
+        val period = YearMonth.from(Instant.ofEpochMilli(e.ts).atZone(ZoneId.systemDefault()))
+        (year == null || period.year == year) && (month == null || period.monthValue == month)
+    }.take(limit).toList()
+}
+internal fun notifySyncedHistoryChanged() { _listeningHistoryVersion.update { it + 1L } }
 internal fun storeQualifiedListening(context: Context, entry: HistoryEntry, expectedClearGeneration: Long) = synchronized(historyLock) {
     if (!entry.qualified || entry.title.isBlank() || entry.eventId.isBlank() || expectedClearGeneration != historyClearGeneration.get()) return@synchronized
     migrate(context)
@@ -128,20 +143,22 @@ internal fun storeQualifiedListening(context: Context, entry: HistoryEntry, expe
         plays = old.plays + if (old.lastEvent == entry.eventId) 0 else 1,
         qualifiedAt = maxOf(old.qualifiedAt, entry.ts), lastEvent = entry.eventId)
     write(file, month.copy(buckets = buckets.values.toList()))
-    _listeningHistoryVersion.update { it + 1L }
+    deviceHistoryChanged()
 }
 fun removeListeningHistory(context: Context, entry: HistoryEntry) = synchronized(historyLock) {
+    com.music.spotui.sync.CloudHistory.requestDelete(context, entry)
     migrate(context)
     val file = File(directory(context), "${monthOf(entry.ts)}.json")
     val month = read(file)
     val updated = month.buckets.map { b -> if (b.track.recordingKey() != entry.recordingKey()) b
         else if (entry.qualified) b.copy(plays = 0) else b.copy(legacy = 0) }.filter { it.plays > 0 || it.legacy > 0 }
     write(file, month.copy(buckets = updated))
-    _listeningHistoryVersion.update { it + 1L }
+    deviceHistoryChanged()
 }
 fun clearListeningHistory(context: Context) = synchronized(historyLock) {
+    com.music.spotui.sync.CloudHistory.requestDelete(context)
     historyClearGeneration.incrementAndGet()
     directory(context).listFiles().orEmpty().forEach { check(!it.exists() || it.delete()) { "Could not clear listening history" } }
     context.getSharedPreferences("ListeningHistory", Context.MODE_PRIVATE).edit().remove("entries").apply()
-    _listeningHistoryVersion.update { it + 1L }
+    deviceHistoryChanged()
 }

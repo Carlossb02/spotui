@@ -22,7 +22,8 @@ object SpotifySession {
     }
 
     fun setSpDc(context: Context, value: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if(spDc(context)!=value.trim())com.metrolist.spotify.Spotify.accessToken=null
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_SP_DC, value.trim())
             .apply()

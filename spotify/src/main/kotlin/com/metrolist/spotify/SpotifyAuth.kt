@@ -1,6 +1,7 @@
 package com.metrolist.spotify
 
 import com.metrolist.spotify.models.SpotifyInternalToken
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -99,12 +100,12 @@ object SpotifyAuth {
         }
 
         token
-    }
+    }.onFailure {if(it is CancellationException)throw it}
 
     private suspend fun fetchNuance(): Nuance = withContext(Dispatchers.IO) {
         val body = try {
             httpGet(NUANCE_GIST_URL, emptyMap())
-        } catch (e: Exception) {
+        } catch(cancelled:CancellationException) {throw cancelled} catch (e: Exception) {
             throw Spotify.SpotifyException(
                 503,
                 "Failed to fetch TOTP secret from gist: ${e.message}",
@@ -121,7 +122,7 @@ object SpotifyAuth {
     private suspend fun fetchServerTime(): Long = withContext(Dispatchers.IO) {
         val body = try {
             httpGet(SERVER_TIME_URL, emptyMap())
-        } catch (e: Exception) {
+        } catch(cancelled:CancellationException) {throw cancelled} catch (e: Exception) {
             throw Spotify.SpotifyException(
                 503,
                 "Failed to fetch Spotify server time: ${e.message}",

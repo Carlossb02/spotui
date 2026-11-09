@@ -670,6 +670,9 @@ object PodcastVideoSession {
      * exact YouTube video ID. Prewarming never creates a second visual player
      * and never changes SongPlayer's audio or MediaSession. */
     fun prewarm(context: Context, videoId: String) {
+        // Saved video preference must not replace a downloaded episode's local audio.
+        // An explicit press on the video button may still request the online video.
+        if (SongPlayer.currentSource == "Downloaded") return
         if (!videoId.matches(Regex("[A-Za-z0-9_-]{11}"))) return
         if (!SongPlayer.isPodcastEpisodeLoaded(videoId)) return
         val preferred = userPreferredVideo ?: loadVideoPreference(context).also { userPreferredVideo = it }

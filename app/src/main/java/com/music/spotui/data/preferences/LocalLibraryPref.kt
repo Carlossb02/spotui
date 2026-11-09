@@ -54,12 +54,18 @@ private fun parse(obj: JSONObject): LocalTrack? = runCatching {
     )
 }.getOrNull()
 
-fun getLocalTracks(context: Context): List<LocalTrack> {
-    val raw = prefs(context).getString(KEY, null) ?: return emptyList()
-    return runCatching {
+private data class LocalTracksMemory(val prefs: android.content.SharedPreferences, val raw: String?, val tracks: List<LocalTrack>)
+@Volatile private var localTracksMemory: LocalTracksMemory? = null
+@Synchronized fun getLocalTracks(context: Context): List<LocalTrack> {
+    val store = prefs(context)
+    val raw = store.getString(KEY, null)
+    localTracksMemory?.takeIf { it.prefs === store && it.raw == raw }?.let { return it.tracks }
+    val tracks = if (raw == null) emptyList() else runCatching {
         val arr = JSONArray(raw)
         (0 until arr.length()).mapNotNull { parse(arr.getJSONObject(it)) }
     }.getOrDefault(emptyList())
+    localTracksMemory = LocalTracksMemory(store, raw, tracks)
+    return tracks
 }
 
 /**
@@ -135,14 +141,15 @@ fun updateLocalTrackMetadata(
 ) {
     // Defensive second check. UI controls alone are not a permission boundary.
     if (!isUserEditableLocalTrack(context, song)) return
+    val cover = newCoverUri.trim().ifBlank { CustomMetadataPref.getOverride(context,song)?.coverUri.orEmpty().ifBlank {song.coverUri} }
     CustomMetadataPref.markVerifiedLocalEdit(context, song)
-    CustomMetadataPref.saveOverride(context, song, newTitle, newArtist, newAlbum, newCoverUri)
+    CustomMetadataPref.saveOverride(context, song, newTitle, newArtist, newAlbum, cover)
 
     // An edited Spotify-local track's playback search string includes the
     // editable title/artist. Save the *post-edit* alias as well as the original
     // stable ID so the menu remains editable even for old queue snapshots.
     val editedSong = song.copy(
-        title = newTitle, singer = newArtist, album = newAlbum, coverUri = newCoverUri
+        title = newTitle, singer = newArtist, album = newAlbum, coverUri = cover
     )
     val editedQuery = if (song.url.startsWith("spotify:track:") && song.spotifyTrackId.isNotBlank()) {
         com.music.spotui.di.SongPlayer.buildSpotifyPlayQuery(
@@ -152,7 +159,7 @@ fun updateLocalTrackMetadata(
     val updatedIdentity = editedSong.copy(url = editedQuery)
     CustomMetadataPref.markVerifiedLocalEdit(context, updatedIdentity)
     CustomMetadataPref.saveOverride(
-        context, updatedIdentity, newTitle, newArtist, newAlbum, newCoverUri
+        context, updatedIdentity, newTitle, newArtist, newAlbum, cover
     )
 
     val tracks = getLocalTracks(context)
@@ -164,15 +171,15 @@ fun updateLocalTrackMetadata(
                 title = newTitle,
                 artist = newArtist,
                 album = newAlbum,
-                coverUri = newCoverUri
+                coverUri = cover
             )
         } else track
     }
     save(context, updatedTracks)
 
-    LocalPlaylistPref.updateSongInPlaylists(context, song, newTitle, newArtist, newAlbum, newCoverUri)
-    PlaylistAdditionsPref.updateSong(context, song, newTitle, newArtist, newAlbum, newCoverUri)
-    com.music.spotui.di.SongPlayer.updateTrackInQueue(song, newTitle, newArtist, newAlbum, newCoverUri)
+    LocalPlaylistPref.updateSongInPlaylists(context, song, newTitle, newArtist, newAlbum, cover)
+    PlaylistAdditionsPref.updateSong(context, song, newTitle, newArtist, newAlbum, cover)
+    com.music.spotui.di.SongPlayer.updateTrackInQueue(song, newTitle, newArtist, newAlbum, cover)
     com.music.spotui.data.api.Api.HomeCache.clear()
 }
 
@@ -201,5 +208,13 @@ fun LocalTrack.toSong(context: Context? = null): SongsModel {
     return context?.let { CustomMetadataPref.applyOverride(it, base) } ?: base
 }
 
-fun getLocalSongs(context: Context): List<SongsModel> =
-    getLocalTracks(context).map { it.toSong(context) }
+private data class LocalSongsMemory(val tracks: List<LocalTrack>, val edits: Map<String, CustomMetadataPref.TrackMetadataOverride>, val songs: List<SongsModel>)
+@Volatile private var localSongsMemory: LocalSongsMemory? = null
+@Synchronized fun getLocalSongs(context: Context): List<SongsModel> {
+    val tracks = getLocalTracks(context)
+    val edits = CustomMetadataPref.getAllOverrides(context)
+    localSongsMemory?.takeIf { it.tracks === tracks && it.edits === edits }?.let { return it.songs }
+    val songs = CustomMetadataPref.applyOverrides(context, tracks.map { it.toSong() })
+    localSongsMemory = LocalSongsMemory(tracks, edits, songs)
+    return songs
+}

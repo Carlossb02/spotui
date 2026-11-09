@@ -74,7 +74,7 @@ object LocalPlaylistPref {
     }.getOrNull()
 
     fun createPlaylist(context: Context, name: String, initialSong: SongsModel? = null): LocalPlaylist {
-        val id = "local_pl_" + System.currentTimeMillis()
+        val id = "local_pl_" + java.util.UUID.randomUUID()
         val songs = if (initialSong != null) listOf(initialSong) else emptyList()
         val coverUri = initialSong?.coverUri ?: ""
         val playlist = LocalPlaylist(id = id, name = name, coverUri = coverUri, songs = songs)
@@ -85,7 +85,7 @@ object LocalPlaylistPref {
     /** Create a local playlist with the supplied tracks. No Spotify write requests. */
     fun createPlaylistWithSongs(context: Context, name: String, songs: List<SongsModel>): LocalPlaylist {
         val playlist = LocalPlaylist(
-            id = "local_pl_" + System.currentTimeMillis(),
+            id = "local_pl_" + java.util.UUID.randomUUID(),
             name = name,
             coverUri = songs.firstOrNull()?.coverUri.orEmpty(),
             songs = songs,
@@ -106,26 +106,26 @@ object LocalPlaylistPref {
         com.music.spotui.util.BackupHelper.scheduleAutoBackup(context)
     }
 
-    fun getLocalPlaylists(context: Context): List<LocalPlaylist> {
-        val ids = getPlaylistIds(context)
+    private data class MemoryEntry(val raw: String, val base: LocalPlaylist,
+        val overrides: Map<String, CustomMetadataPref.TrackMetadataOverride>, val projected: LocalPlaylist)
+    private val memory = java.util.WeakHashMap<android.content.SharedPreferences, MutableMap<String, MemoryEntry>>()
+    fun getLocalPlaylists(context: Context): List<LocalPlaylist> = getPlaylistIds(context).mapNotNull { getLocalPlaylist(context, it) }
+    @Synchronized fun peek(context: Context, playlistId: String): LocalPlaylist? {
         val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-        return ids.mapNotNull { id ->
-            prefs.getString(id, null)?.let { json ->
-                parsePlaylist(json)?.let { playlist ->
-                    val updatedSongs = playlist.songs.map { song -> CustomMetadataPref.applyOverride(context, song) }
-                    playlist.copy(songs = updatedSongs)
-                }
-            }
-        }
+        val item = memory[prefs]?.get(playlistId) ?: return null
+        return item.projected.takeIf { prefs.getString(playlistId, null) == item.raw && CustomMetadataPref.getAllOverrides(context) === item.overrides }
     }
-
-    fun getLocalPlaylist(context: Context, playlistId: String): LocalPlaylist? {
+    @Synchronized fun getLocalPlaylist(context: Context, playlistId: String): LocalPlaylist? {
         val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-        val json = prefs.getString(playlistId, null) ?: return null
-        return parsePlaylist(json)?.let { playlist ->
-            val updatedSongs = playlist.songs.map { song -> CustomMetadataPref.applyOverride(context, song) }
-            playlist.copy(songs = updatedSongs)
-        }
+        val entries = memory.getOrPut(prefs) { mutableMapOf() }
+        val raw = prefs.getString(playlistId, null) ?: return null.also { entries.remove(playlistId) }
+        val edits = CustomMetadataPref.getAllOverrides(context)
+        val old = entries[playlistId]?.takeIf { it.raw == raw }
+        if (old != null && old.overrides === edits) return old.projected
+        val base = old?.base ?: parsePlaylist(raw) ?: return null
+        val projected = base.copy(songs = CustomMetadataPref.applyOverrides(context, base.songs))
+        entries[playlistId] = MemoryEntry(raw, base, edits, projected)
+        return projected
     }
 
     private fun cleanSpotifyTrackId(id: String): String =
@@ -234,13 +234,19 @@ object LocalPlaylistPref {
         }
     }
 
-    private fun getPlaylistIds(context: Context): List<String> {
+    private data class OrderMemory(val raw: String?, val ids: List<String>)
+    private val orderMemory = java.util.WeakHashMap<android.content.SharedPreferences, OrderMemory>()
+    @Synchronized private fun getPlaylistIds(context: Context): List<String> {
         val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-        val raw = prefs.getString(KEY_PLAYLIST_IDS, null) ?: return emptyList()
-        return runCatching {
+        val raw = prefs.getString(KEY_PLAYLIST_IDS, null)
+        orderMemory[prefs]?.takeIf { it.raw == raw }?.let { return it.ids }
+        val ids = if(raw == null) emptyList() else runCatching {
             val arr = JSONArray(raw)
             (0 until arr.length()).map { arr.getString(it) }
         }.getOrDefault(emptyList())
+        orderMemory[prefs] = OrderMemory(raw, ids)
+        memory[prefs]?.keys?.retainAll(ids.toSet())
+        return ids
     }
 
     private fun savePlaylistIds(context: Context, ids: List<String>) {

@@ -12,6 +12,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
@@ -64,10 +65,8 @@ fun MyNavHost(
 
     val context = LocalContext.current
     // First launch (no Spotify session) lands on the login screen.
-    val startDestination = if (SpotifySession.spDc(context).isBlank()) {
-        Routes.Login.route
-    } else {
-        Routes.Home.route
+    val startDestination = remember {
+        if (SpotifySession.spDc(context).isBlank()) Routes.Login.route else Routes.Home.route
     }
 
     // Restore the last session: put the track back into the mini player (paused)
@@ -84,7 +83,8 @@ fun MyNavHost(
                     song.coverUri, song.title, song.singer, false, song.id, idx, song.album)
                 com.music.spotui.di.SongPlayer.setRestorePoint(song.url, positionMs)
                 // Auto-play on startup: resume playing immediately if enabled.
-                if (com.music.spotui.data.preferences.isAutoPlayEnabled(context)) {
+                if (SpotifySession.spDc(context).isNotBlank() &&
+                    com.music.spotui.data.preferences.isAutoPlayEnabled(context)) {
                     playerViewModel.updateSongState(
                         song.coverUri, song.title, song.singer, true, song.id, idx, song.album)
                     com.music.spotui.di.SongPlayer.playSong(song.url, context, "song/${song.id}")
@@ -149,6 +149,8 @@ fun MyNavHost(
         composable(Routes.Settings.route){
             SettingsScreen(navHostController)
         }
+
+        composable(Routes.DeviceSync.route) { com.music.spotui.ui.screens.DeviceSyncScreen(navHostController) }
 
         composable(Routes.History.route){
             HistoryScreen(navHostController)
