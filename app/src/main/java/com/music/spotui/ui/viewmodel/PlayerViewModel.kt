@@ -169,6 +169,7 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
     @Volatile private var lastAutoAdvanceMs = 0L
 
     fun autoAdvance(queueSongs: List<SongsModel>, context: Context) {
+        if(com.music.spotui.sync.CloudPlayback.remotePlaying()!=null)return
         val now = System.currentTimeMillis()
         if (now - lastAutoAdvanceMs < 4000) return
         lastAutoAdvanceMs = now
@@ -177,6 +178,7 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
 
     // Function to play the next song in the album
     fun playNextSongs(queueSongs : List<SongsModel>, context: Context) {
+        if(com.music.spotui.sync.CloudPlayback.route("next"))return
         if (queueSongs.isEmpty()) return
         // A crossfade is already advancing the queue itself — don't double-skip.
         if (SongPlayer.isCrossfadeActive()) return
@@ -347,21 +349,10 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
     }
 
     // Function to play the previous song in the album
-    fun playPreviousSong(queueSongs : List<SongsModel>, context: Context) {
-        if (queueSongs.isEmpty()) return
-        val cur = currentPositionIn(queueSongs)
-        val prevIdx = if (cur > 0) {
-            cur - 1
-        } else {
-            if (currentSongState.repeat.value == RepeatMode.ALL) {
-                queueSongs.size - 1
-            } else {
-                return
-            }
-        }
-        val previousSong = queueSongs[prevIdx]
-        updateSongState(previousSong.coverUri, previousSong.title, previousSong.singer, true, previousSong.id, prevIdx, previousSong.album)
-        SongPlayer.playSong(previousSong.url, context, "song/${previousSong.id}")
+    fun playPreviousSong(queueSongs:List<SongsModel>,context:Context) {
+        if(queueSongs.isEmpty())return
+        SongPlayer.bindState(currentSongState)
+        SongPlayer.previous(context)
     }
 
     private fun fetchSongs() = viewModelScope.launch(Dispatchers.IO) {

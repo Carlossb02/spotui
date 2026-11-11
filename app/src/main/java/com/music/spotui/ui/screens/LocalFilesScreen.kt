@@ -194,7 +194,7 @@ fun LocalFilesScreen(navController: NavController) {
                 } else {
                     songs.forEachIndexed { index, song ->
                         val currentColor = if (song.id == playerViewModel.currentSongId.value)
-                            Color(AppPalette.toArgb()) else Color.White
+                            Color(0xFF1ED760) else Color.White
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier

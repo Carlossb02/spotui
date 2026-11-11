@@ -14,7 +14,7 @@ internal class CloudHistory(private val context:Context,private val assets:Drive
     private var projectedIdentities=-1
     private var projectedEntries:List<HistoryEntry> = emptyList()
     private fun encode(e:HistoryEntry)=JSONObject().put("ts",e.ts).put("songId",e.songId).put("title",e.title).put("singer",e.singer).put("album",e.album)
-        .put("image",e.image).put("url",e.url).put("durationMs",e.durationMs).put("spotifyTrackId",e.spotifyTrackId).put("qualified",e.qualified)
+        .put("image",e.image).put("url",e.url).put("durationMs",e.durationMs).put("spotifyTrackId",e.spotifyTrackId).put("qualified",e.qualified).put("mediaType",e.mediaType)
     private fun key(e:HistoryEntry):String {
         val o=assets.portable(encode(e)) as JSONObject
         val identity=e.historySpotifyId().takeIf { it.isNotBlank() }?.let { "spotify:$it" }?:o.optString("url").substringBefore('|').ifBlank { o.get("songId").toString() }
@@ -84,7 +84,7 @@ internal class CloudHistory(private val context:Context,private val assets:Drive
         val count=counts.keys().asSequence().sumOf { (counts.optLong(it)-reset.optLong(it)).coerceAtLeast(0) }.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         if(count==0)return@mapNotNull null
         val o=assets.native(p) as JSONObject
-        HistoryEntry(o.getLong("ts"),o.optInt("songId"),o.optString("title"),o.optString("singer"),o.optString("album"),o.optString("image"),o.optString("url"),o.optLong("durationMs"),o.optString("spotifyTrackId"),o.optBoolean("qualified"),playCount=count)
+        HistoryEntry(o.getLong("ts"),o.optInt("songId"),o.optString("title"),o.optString("singer"),o.optString("album"),o.optString("image"),o.optString("url"),o.optLong("durationMs"),o.optString("spotifyTrackId"),o.optBoolean("qualified"),playCount=count,mediaType=o.optString("mediaType"))
         }.sortedByDescending { it.ts }
         projectedTrees=current
         projectedIdentities=assets.identityVersion()

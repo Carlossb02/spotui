@@ -463,7 +463,7 @@ fun DownloadsScreen(navController: NavController) {
                     repeat(displayedSongs.size) { index ->
                         val song = displayedSongs[index]
                         val currentColor = if (song.id == playerViewModel.currentSongId.value)
-                            Color(AppPalette.toArgb()) else Color.White
+                            Color(0xFF1ED760) else Color.White
 
                         SwipeToPlayNextWrapper(
                             onPlayNext = {

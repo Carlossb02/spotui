@@ -311,8 +311,9 @@ fun SumUpAlbumScreen(
 
 
     Log.d("color", dominentColor.toString())
-    val listState = rememberLazyListState()
-        com.music.spotui.ui.components.VisibleSongPreload(listState, remember(filteredSongs) { filteredSongs.mapIndexed { i, song -> "${song.id}|${song.url}|$i" to song } })
+    val stableSongKeys=remember(filteredSongs){com.music.spotui.ui.utils.stableSongKeys(filteredSongs)}
+        val listState = rememberLazyListState()
+        com.music.spotui.ui.components.VisibleSongPreload(listState, remember(filteredSongs) { filteredSongs.mapIndexed { i, song -> stableSongKeys[i] to song } })
     val collapsedTitle = com.music.spotui.ui.components.rememberCollectionTitleState(listState, "album_header")
     val searchReveal = rememberCollectionSearchState(listState, albumName)
     val keyboard = LocalSoftwareKeyboardController.current
@@ -329,7 +330,7 @@ fun SumUpAlbumScreen(
         keyboard?.hide()
         focusManager.clearFocus()
     }
-    LaunchedEffect(keyboardVisible) { if (keyboardVisible) listState.scrollToItem(0) }
+    LaunchedEffect(keyboardVisible,searchReveal.expanded) { if (keyboardVisible && searchReveal.expanded) listState.scrollToItem(0) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize().scrollingCollectionBackground(
@@ -392,7 +393,7 @@ fun SumUpAlbumScreen(
                 }
                 item(key = "album_header") {
                     Column {
-            if (!keyboardVisible && !searchReveal.expanded && searchQuery.isBlank()) {
+            if (!searchReveal.expanded && searchQuery.isBlank()) {
                 Column(
                     modifier = Modifier.fillMaxWidth()
                         .heightIn(min = if (tabletCollectionLayout) 260.dp else 400.dp)
@@ -585,7 +586,7 @@ fun SumUpAlbumScreen(
                     }
                     }
                 } else {
-                    itemsIndexed(filteredSongs, key = { index, track -> "${track.id}|${track.url}|$index" }) { songIdx, targetSong ->
+                    itemsIndexed(filteredSongs, key = { index, track -> stableSongKeys[index] }) { songIdx, targetSong ->
 
                         var isLiked by remember(targetSong.id) {
                             mutableStateOf(isSongLiked(context, targetSong.id.toString()))
@@ -606,7 +607,7 @@ fun SumUpAlbumScreen(
                         }
                         val songId = targetSong.id
 
-                        val currentPlayingIndicatorColor = if (songId == albumViewModel.currentSongId.value) Color(AppPalette.toArgb()) else Color.White
+                        val currentPlayingIndicatorColor = if (songId == albumViewModel.currentSongId.value) Color(0xFF1ED760) else Color.White
 
                         SwipeToPlayNextWrapper(
                             onPlayNext = {

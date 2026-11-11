@@ -95,6 +95,9 @@ fun SongOptionsSheet(
     canEditCurrentPlaylist: Boolean = true,
     onSongRemovedFromPlaylist: (() -> Unit)? = null,
     onDismiss: () -> Unit,
+    onOpenQueue:(()->Unit)?=null,
+    onLikedChanged:((Boolean)->Unit)?=null,
+    extraActions:(@Composable ()->Unit)?=null,
 ) {
     val language=com.music.spotui.data.preferences.SpotuiLanguage.current
     fun text(value:String)=localizedUiText(value,language)
@@ -125,7 +128,7 @@ fun SongOptionsSheet(
             song = song,
             context = context,
             onDismiss = { showSavedIn = false; onDismiss() },
-            onLikedChanged = { liked = it },
+            onLikedChanged = { liked = it;onLikedChanged?.invoke(it) },
         )
         return
     }
@@ -144,7 +147,7 @@ fun SongOptionsSheet(
 
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showEditDialog = false },
-            title = { Text(uiLocalized("Edit Metadata"), color = Color(0xFFECECEC)) },
+            title = { Text(uiLocalized("Edit Metadata"), color = Color.White) },
             containerColor = Color(0xFF242424),
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -154,9 +157,9 @@ fun SongOptionsSheet(
                         onValueChange = { editTitle = it },
                         singleLine = true,
                         colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color(0xFFECECEC),
-                            unfocusedTextColor = Color(0xFFECECEC),
-                            focusedBorderColor = Color(0xFF10A37F),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF1ED760),
                             unfocusedBorderColor = Color.Gray
                         )
                     )
@@ -166,9 +169,9 @@ fun SongOptionsSheet(
                         onValueChange = { editArtist = it },
                         singleLine = true,
                         colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color(0xFFECECEC),
-                            unfocusedTextColor = Color(0xFFECECEC),
-                            focusedBorderColor = Color(0xFF10A37F),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF1ED760),
                             unfocusedBorderColor = Color.Gray
                         )
                     )
@@ -178,9 +181,9 @@ fun SongOptionsSheet(
                         onValueChange = { editAlbum = it },
                         singleLine = true,
                         colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color(0xFFECECEC),
-                            unfocusedTextColor = Color(0xFFECECEC),
-                            focusedBorderColor = Color(0xFF10A37F),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF1ED760),
                             unfocusedBorderColor = Color.Gray
                         )
                     )
@@ -190,9 +193,9 @@ fun SongOptionsSheet(
                         onValueChange = { editCover = it },
                         singleLine = true,
                         colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color(0xFFECECEC),
-                            unfocusedTextColor = Color(0xFFECECEC),
-                            focusedBorderColor = Color(0xFF10A37F),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF1ED760),
                             unfocusedBorderColor = Color.Gray
                         )
                     )
@@ -220,7 +223,7 @@ fun SongOptionsSheet(
                         onDismiss()
                     }
                 ) {
-                    Text(uiLocalized("Save"), color = Color(0xFF10A37F))
+                    Text(uiLocalized("Save"), color = Color(0xFF1ED760))
                 }
             },
             dismissButton = {
@@ -233,12 +236,12 @@ fun SongOptionsSheet(
 
     if (showPlaylistRemoval && !currentPlaylistId.isNullOrBlank()) {
         androidx.compose.material3.AlertDialog(onDismissRequest = { showPlaylistRemoval = false }, containerColor = Color(0xFF242424),
-            title = { Text(uiLocalized("¿Quitar de esta playlist?"), color = Color(0xFFECECEC)) },
+            title = { Text(uiLocalized("¿Quitar de esta playlist?"), color = Color.White) },
             text = { Text(displaySong.title, color = Color(0xFFB3B3B3)) },
             confirmButton = { androidx.compose.material3.TextButton(onClick = {
                 showPlaylistRemoval = false
-                    if (song.url.startsWith("yt_local:") && !currentPlaylistId.startsWith("local_pl_")) {
-                        com.music.spotui.data.preferences.PlaylistAdditionsPref.remove(context, currentPlaylistId, song.url)
+                    if (com.music.spotui.data.preferences.PlaylistAdditionsPref.isManaged(context,song) && !currentPlaylistId.startsWith("local_pl_")) {
+                        com.music.spotui.data.preferences.PlaylistAdditionsPref.remove(context, currentPlaylistId, song)
                         onSongRemovedFromPlaylist?.invoke()
                     } else if (currentPlaylistId.startsWith("local_pl_")) {
                         com.music.spotui.data.preferences.LocalPlaylistPref.removeSongFromPlaylist(context, currentPlaylistId, song)
@@ -261,14 +264,14 @@ fun SongOptionsSheet(
                         }
                     }
                     onDismiss()
-            }) { Text(uiLocalized("Quitar"), color = Color(0xFF10A37F)) } },
-            dismissButton = { androidx.compose.material3.TextButton(onClick = { showPlaylistRemoval = false }) { Text(uiLocalized("Cancelar"), color = Color(0xFFECECEC)) } })
+            }) { Text(uiLocalized("Quitar"), color = Color(0xFF1ED760)) } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { showPlaylistRemoval = false }) { Text(uiLocalized("Cancelar"), color = Color.White) } })
     }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         sheetGesturesEnabled = false,
-        containerColor = Color(0xFF212121),
+        containerColor = Color(0xFF1D1D1D),
         shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
         dragHandle = {
             var downwardDrag = 0f
@@ -311,7 +314,7 @@ fun SongOptionsSheet(
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
-                    Text(displaySong.title, color = Color(0xFFECECEC), fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(displaySong.title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(displaySong.singer, color = Color(0xFFB3B3B3), fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
@@ -347,7 +350,7 @@ fun SongOptionsSheet(
                 SongMenuRow(
                     icon = Icons.Outlined.RemoveCircle,
                     label = uiLocalized("Remove from this playlist"),
-                    iconTint = Color(0xFFB4B4B4)
+                    iconTint = Color(0xFFB3B3B3)
                 ) {
                     showPlaylistRemoval = true
                 }
@@ -357,8 +360,8 @@ fun SongOptionsSheet(
                 onDismiss()
             }
             SongMenuRow(Icons.Outlined.QueueMusic, uiLocalized("View queue")) {
-                navController.navigate(com.music.spotui.ui.navigation.Routes.Queue.route)
                 onDismiss()
+                if(onOpenQueue!=null)onOpenQueue()else navController.navigate(com.music.spotui.ui.navigation.Routes.Queue.route)
             }
             SongMenuRow(Icons.Outlined.Album, uiLocalized("Go to album"), enabled = song.album.isNotBlank(), trailingArrow = true) {
                 navController.navigate(albumRoute(song.album, song.singer))
@@ -380,12 +383,13 @@ fun SongOptionsSheet(
             SongMenuRow(
                 icon = if (liked) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
                 label = text(if (liked) "Remove from Liked Songs" else "Add to Liked Songs"),
-                iconTint = Color(0xFF10A37F),
+                iconTint = Color(0xFF1ED760),
             ) {
                 com.music.spotui.data.api.LibraryContentMemory.register(context, song)
                 if (liked) removeLikedSongId(context, song.id.toString())
                 else addLikedSongId(context, song.id.toString())
                 liked = !liked
+                onLikedChanged?.invoke(liked)
                 // Mirror the like to the real Spotify account.
                 com.music.spotui.data.api.SpotifySync.setTrackSaved(context, song.spotifyTrackId, liked)
             }
@@ -396,7 +400,7 @@ fun SongOptionsSheet(
                     downloadingNow -> text("Downloading…") + if(downloadPct in 1..99) " $downloadPct%" else ""
                     else -> text("Download")
                 },
-                iconTint = if (downloaded) Color(0xFF10A37F) else Color(0xFFB4B4B4),
+                iconTint = if (downloaded) Color(0xFF1ED760) else Color(0xFFB3B3B3),
                 enabled = !downloadingNow,
             ) {
                 if (downloaded) {
@@ -439,16 +443,18 @@ fun SongOptionsSheet(
                 onDismiss()
                 com.music.spotui.di.SongPlayer.invalidateSongCache(song, context, reloadIfPlaying = true, clearAltStream = false)
             }
+            extraActions?.invoke()
             Spacer(modifier = Modifier.padding(20.dp))
         }
     }
 }
 
 @Composable
-private fun SongMenuRow(
+internal fun SongMenuRow(
     icon: ImageVector,
     label: String,
-    iconTint: Color = Color(0xFFB4B4B4),
+    subtitle:String?=null,
+    iconTint: Color = Color(0xFFB3B3B3),
     enabled: Boolean = true,
     trailingArrow: Boolean = false,
     onClick: () -> Unit,
@@ -468,14 +474,16 @@ private fun SongMenuRow(
             modifier = Modifier.size(26.dp)
         )
         Spacer(modifier = Modifier.width(22.dp))
+        Column(Modifier.weight(1f)) {
         Text(
-            text = label,
-            color = if (enabled) Color(0xFFECECEC) else Color.Gray.copy(alpha = 0.4f),
+            text = uiLocalized(label),
+            color = if (enabled) Color.White else Color.Gray.copy(alpha = 0.4f),
             fontSize = 16.sp,
             maxLines = 1,
             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
         )
+        if(subtitle!=null)Text(subtitle,color=Color(0xFFB3B3B3),fontSize=12.sp,maxLines=1,overflow=TextOverflow.Ellipsis)
+        }
         if (trailingArrow) {
             Icon(
                 imageVector = Icons.Default.KeyboardArrowRight,

@@ -431,7 +431,7 @@ private fun QueueRow(
                 }
                 Text(
                     text = song.title,
-                    color = if (highlight) Color(AppPalette.toArgb()) else Color.White,
+                    color = if (highlight) Color(0xFF1ED760) else Color.White,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,

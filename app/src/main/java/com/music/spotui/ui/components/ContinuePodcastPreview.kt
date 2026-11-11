@@ -66,6 +66,7 @@ fun ContinuePodcastPreview(
     modifier: Modifier = Modifier,
     radius: Dp = 9.dp,
     onTap: () -> Unit = {},
+    onLongPress:(()->Unit)?=null,
     autoPreview: Boolean = false,
     previewAllowed: Boolean = true,
 ) {
@@ -103,10 +104,7 @@ fun ContinuePodcastPreview(
         finally { if (PodcastPreviewOwner.active === lease) PodcastPreviewOwner.active = null }
     }
     val shouldPreview = wantsPreview && PodcastPreviewOwner.active === lease
-    val currentEpisode by remember(entry.episode.url) {
-        PodcastResumeStore.observeEpisode(entry.episode.url)
-    }.collectAsState()
-    val current = currentEpisode ?: entry
+    val progress=remember(entry.episode.url) {PodcastResumeStore.observeEpisode(entry.episode.url)}
 
     // The LaunchedEffect below owns creation and release of its exact player.
 
@@ -135,7 +133,7 @@ fun ContinuePodcastPreview(
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setBufferDurationsMs(1_500, 4_000, 200, 400)
             .build()
-        val player = ExoPlayer.Builder(context.applicationContext)
+        val player = try { ExoPlayer.Builder(context.applicationContext)
             .setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
                 androidx.media3.datasource.DefaultDataSource.Factory(context.applicationContext, previewHttp)
             ))
@@ -148,7 +146,10 @@ fun ContinuePodcastPreview(
                     .build(),
                 false
             )
-            .build()
+            .build() } catch(failure:RuntimeException) {
+                unavailable=true
+                return@LaunchedEffect
+            }
         try {
             player.volume = 0f
             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
@@ -166,7 +167,7 @@ fun ContinuePodcastPreview(
             previewPlayer = player
             player.setMediaItem(
                 MediaItem.Builder().setUri(stream.url).setMimeType(stream.mimeType).build(),
-                current.positionMs.coerceAtLeast(0L)
+                (progress.value?.positionMs?:entry.positionMs).coerceAtLeast(0L)
             )
             player.prepare()
             player.playWhenReady = true
@@ -218,7 +219,8 @@ fun ContinuePodcastPreview(
                         player = previewPlayer
                     }
                 },
-                update = { it.player = previewPlayer }
+                update = { if(it.player!==previewPlayer)it.player=previewPlayer },
+                onRelease={it.player=null},
             )
         }
 
@@ -227,7 +229,8 @@ fun ContinuePodcastPreview(
                 entry.episode,
                 modifier = Modifier.fillMaxSize(),
                 radius = radius,
-                imageOverride = videoId?.let { "https://i.ytimg.com/vi/$it/mqdefault.jpg" }
+                imageOverride = videoId?.let { "https://i.ytimg.com/vi/$it/mqdefault.jpg" },
+                showProgress=false,
             )
         }
 
@@ -260,25 +263,9 @@ fun ContinuePodcastPreview(
         }
 
         Box(Modifier.matchParentSize().combinedClickable(
-            onClick = onTap, onLongClick = { unavailable = false; hovered = !hovered }
+            onClick = onTap, onLongClick = { if(onLongPress!=null)onLongPress()else {unavailable=false;hovered=!hovered} }
         ))
 
-        if (current.fraction > 0f) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-                    .align(Alignment.BottomCenter)
-                    .background(Color.Black.copy(alpha = 0.65f))
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxHeight()
-                        .fillMaxWidth(current.fraction)
-                        .background(Color(0xFF1ED760))
-                )
-            }
-        }
 
         if (frameReady || resolving) {
             Row(

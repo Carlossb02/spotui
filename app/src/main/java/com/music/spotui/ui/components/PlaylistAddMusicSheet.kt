@@ -57,7 +57,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 /** Two explicit destinations: a Spotify catalogue track is synchronized only after a
- * successful Spotify write; a user-provided YouTube track is stored solely on-device. */
+ * successful Spotify write; a user-provided track uses Spotui membership and the configured Drive sync. */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalGlideComposeApi::class)
 @Composable
 fun PlaylistAddMusicSheet(
@@ -140,6 +140,9 @@ fun PlaylistAddMusicSheet(
                                     if (localPlaylist) {
                                         LocalPlaylistPref.addSongToPlaylist(context, playlistId, song)
                                         onAdded(); onDismiss()
+                                    } else if (PlaylistAdditionsPref.isManaged(context,song)) {
+                                        PlaylistAdditionsPref.add(context,playlistId,song)
+                                        onAdded();onDismiss()
                                     } else {
                                         val spotifyTrack = SpotifySync.cleanTrackId(song.spotifyTrackId).takeIf {
                                             it.matches(Regex("[A-Za-z0-9]{22}"))

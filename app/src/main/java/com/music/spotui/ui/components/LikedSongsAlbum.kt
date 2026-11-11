@@ -274,8 +274,7 @@ fun LikedSongsScreen(
                         )
                     }
                     val songId = likedSongs[song].id
-                    val currentPlayingIndicatorColor = if(songId == albumViewModel.currentSongId.value) Color(
-                        AppPalette.toArgb()) else Color.White
+                    val currentPlayingIndicatorColor = if(songId == albumViewModel.currentSongId.value) Color(0xFF1ED760) else Color.White
 
                     SwipeToPlayNextWrapper(
                         onPlayNext = {

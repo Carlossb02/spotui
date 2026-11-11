@@ -86,6 +86,10 @@ fun SavedInSheet(
             if (contains) LocalPlaylistPref.removeSongFromPlaylist(context, list.id, song)
             else LocalPlaylistPref.addSongToPlaylist(context, list.id, song)
             Api.HomeCache.library = null
+        } else if (PlaylistAdditionsPref.isManaged(context,song)) {
+            localPreview[list.id] = !contains
+            if (contains) PlaylistAdditionsPref.remove(context,list.id,song)
+            else PlaylistAdditionsPref.add(context,list.id,song)
         } else if (trackId.isNotBlank()) {
             val operation = (operations[list.id] ?: 0) + 1
             operations[list.id] = operation
@@ -97,10 +101,6 @@ fun SavedInSheet(
             }; Unit }
             if (contains) SpotifySync.removeTrackFromPlaylist(context, list.id, trackId, done)
             else SpotifySync.addTrackToPlaylist(context, list.id, trackId, done)
-        } else if (song.url.startsWith("yt_local:")) {
-            localPreview[list.id] = !contains
-            if (contains) PlaylistAdditionsPref.remove(context, list.id, song.url)
-            else PlaylistAdditionsPref.add(context, list.id, song)
         }
     }
     @Composable fun likedRow() {
@@ -118,7 +118,7 @@ fun SavedInSheet(
             list.local -> uiLocalized("Playlist de este dispositivo")
             else -> uiLocalized("Tu playlist")
         }, saved = contains(list), isLocal = list.local,
-            enabled = list.checked && (list.local || trackId.isNotBlank() || song.url.startsWith("yt_local:")),
+            enabled = list.checked && (list.local || trackId.isNotBlank() || PlaylistAdditionsPref.isManaged(context,song)),
             cover = {
                 GlideImage(model = list.coverUri, contentDescription = list.name,
                     contentScale = ContentScale.Crop, failure = placeholder(R.drawable.placeholder), loading = placeholder(R.drawable.placeholder),

@@ -842,22 +842,11 @@ fun PlayerScreen(
                                         isDragging = true
                                         dragValue = newValue
                                     },
+                                    onValueChangeCancelled = {isDragging=false},
                                     onValueChangeFinished = {
                                         val dur = SongPlayer.getDuration()
                                         if (dur > 0) SongPlayer.seekTo((dragValue * dur).toLong())
                                         isDragging = false
-                                        if (!songPlayingState) {
-                                            SongPlayer.play()
-                                            playerViewModel.updateSongState(
-                                                playerViewModel.currentSongCoverUri.value,
-                                                playerViewModel.currentSongTitle.value,
-                                                playerViewModel.currentSongSinger.value,
-                                                true,
-                                                playerViewModel.currentSongId.value,
-                                                playerViewModel.currentSongIndex.value,
-                                                playerViewModel.currentSongAlbum.value
-                                            )
-                                        }
                                     },
                                     valueRange = 0f..1f,
                                     steps = 0,
@@ -1067,22 +1056,12 @@ fun PlayerScreen(
                                     isDragging = true
                                     dragValue = newValue
                                 },
+                                onValueChangeCancelled = {isDragging=false},
                                 onValueChangeFinished = {
                                     val dur = SongPlayer.getDuration()
                                     if (dur > 0) SongPlayer.seekTo((dragValue * dur).toLong())
                                     isDragging = false
-                                    if (!songPlayingState) {
-                                        SongPlayer.play()
-                                        playerViewModel.updateSongState(
-                                            playerViewModel.currentSongCoverUri.value,
-                                            playerViewModel.currentSongTitle.value,
-                                            playerViewModel.currentSongSinger.value,
-                                            true,
-                                            playerViewModel.currentSongId.value,
-                                            playerViewModel.currentSongIndex.value,
-                                            playerViewModel.currentSongAlbum.value
-                                        )
-                                    }
+
                                 },
                                 valueRange = 0f..1f,
                                 steps = 0,
@@ -1582,11 +1561,15 @@ fun CustomSlider(
     value: Float,
     onValueChange: (Float) -> Unit,
     onValueChangeFinished: (() -> Unit)? = null,
+    onValueChangeCancelled: (() -> Unit)? = null,
     valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
     steps: Int = 0,
     colors: Any? = null, // kept for API compat; unused
 ) {
     var isDragging by remember { mutableStateOf(false) }
+    val changed by androidx.compose.runtime.rememberUpdatedState(onValueChange)
+    val finished by androidx.compose.runtime.rememberUpdatedState(onValueChangeFinished)
+    val cancelled by androidx.compose.runtime.rememberUpdatedState(onValueChangeCancelled)
 
     // Track height grows slightly while dragging (Spotify micro-animation)
     val trackHeight by animateDpAsState(
@@ -1609,25 +1592,25 @@ fun CustomSlider(
     Box(
         modifier = modifier
             .height(36.dp) // generous vertical touch target
-            .pointerInput(Unit) {
+            .pointerInput(valueRange) {
                 detectTapGestures { offset ->
                     val newFraction = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
                     val mapped =
                         valueRange.start + newFraction * (valueRange.endInclusive - valueRange.start)
-                    onValueChange(mapped)
-                    onValueChangeFinished?.invoke()
+                    changed(mapped)
+                    finished?.invoke()
                 }
             }
-            .pointerInput(Unit) {
+            .pointerInput(valueRange) {
                 detectHorizontalDragGestures(
                     onDragStart = { isDragging = true },
                     onDragEnd = {
                         isDragging = false
-                        onValueChangeFinished?.invoke()
+                        finished?.invoke()
                     },
                     onDragCancel = {
                         isDragging = false
-                        onValueChangeFinished?.invoke()
+                        cancelled?.invoke()
                     },
                     onHorizontalDrag = { change, _ ->
                         change.consume()
@@ -1635,7 +1618,7 @@ fun CustomSlider(
                             (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
                         val mapped =
                             valueRange.start + newFraction * (valueRange.endInclusive - valueRange.start)
-                        onValueChange(mapped)
+                        changed(mapped)
                     }
                 )
             },
@@ -1990,9 +1973,9 @@ fun PlayerConnectRow(
     }
 
     val routeName by com.music.spotui.ui.utils.AudioDeviceHelper.currentRouteNameState
-    val bluetoothRoute by com.music.spotui.ui.utils.AudioDeviceHelper.bluetoothRouteActiveState
+    val routeKind by com.music.spotui.ui.utils.AudioDeviceHelper.currentRouteKindState
     val cloudPlayback by com.music.spotui.sync.CloudPlayback.status.collectAsState()
-    val outputColor = if (bluetoothRoute || cloudPlayback.remote) Color(0xFF1ED760) else Color.White
+    val outputColor = if (routeKind==com.music.spotui.ui.utils.PlaybackDeviceKind.HEADPHONES || cloudPlayback.remote) Color(0xFF1ED760) else Color(0xFFB3B3B3)
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -2254,6 +2237,7 @@ fun PlayerOptionsSheet(
     onDismiss: () -> Unit,
     onOpenQueue: () -> Unit = {}
 ) {
+    fun menuText(text:String)=com.music.spotui.util.localizedUiText(text,com.music.spotui.data.preferences.SpotuiLanguage.current)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showSleep by remember { mutableStateOf(false) }
     var showSavedIn by remember { mutableStateOf(false) }
@@ -2263,13 +2247,15 @@ fun PlayerOptionsSheet(
         hiltViewModel()
 
     var currentTime by remember { mutableStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            currentTime = System.currentTimeMillis()
-            kotlinx.coroutines.delay(250L)
+    val devicePlayback by com.music.spotui.sync.CloudPlayback.status.collectAsState()
+    val sleepTimerEnd = if(devicePlayback.remote)devicePlayback.sleepEnd else SongPlayer.sleepTimerEndAt
+    LaunchedEffect(sleepTimerEnd) {
+        currentTime=System.currentTimeMillis()
+        while(sleepTimerEnd>currentTime) {
+            kotlinx.coroutines.delay(1_000L)
+            currentTime=System.currentTimeMillis()
         }
     }
-    val sleepTimerEnd = SongPlayer.sleepTimerEndAt
     val remainingMillis = (sleepTimerEnd - currentTime).coerceAtLeast(0L)
     val remainingSeconds = remainingMillis / 1000L
     val minutesLeft = (remainingSeconds + 59) / 60
@@ -2282,7 +2268,7 @@ fun PlayerOptionsSheet(
     val currentQueue by playerViewModel.queue
     // The full track model (spotify id, real album, stream url) — the state above
     // only carries display strings, and `album` is the *context* name (playlist…).
-    val currentSong = currentQueue.firstOrNull { it.id == songId }
+    val currentSong = currentQueue.getOrNull(playerViewModel.currentSongIndex.value)?.takeIf {it.id==songId}?:currentQueue.firstOrNull {it.id==songId}
     var downloaded by remember(songId) {
         mutableStateOf(
             com.music.spotui.data.preferences.isDownloaded(
@@ -2322,9 +2308,29 @@ fun PlayerOptionsSheet(
             // Keep any downloaded file for offline use. Alternate playback bypasses it.
             SongPlayer.registerAlternativeKeys(listOf(song.url to alternativeKey))
             currentAlternative = getAlternativeStream(context, alternativeKey)
-            Toast.makeText(context, "Alternative stream set to local file", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, menuText("Alternative stream set to local file"), Toast.LENGTH_SHORT).show()
             SongPlayer.invalidateSongCache(song, context, reloadIfPlaying = true, clearAltStream = false)
         }
+
+    if(!showSleep && !showAlternativeStream && !showYouTubeSearch && currentSong!=null) {
+        com.music.spotui.ui.components.SongOptionsSheet(
+            song=currentSong,navController=navController,context=context,onDismiss=onDismiss,
+            onLikedChanged={isLiked.value=it},onOpenQueue=onOpenQueue,
+            extraActions={
+                com.music.spotui.ui.components.SongMenuRow(
+                    icon=Icons.Outlined.PlayArrow,
+                    label=uiLocalized(if(currentAlternative==null)"Alternative stream" else "Alternative stream set"),
+                    iconTint=if(currentAlternative!=null)Color(0xFF1ED760)else Color(0xFFB3B3B3),trailingArrow=true,
+                ) {showAlternativeStream=true}
+                com.music.spotui.ui.components.SongMenuRow(
+                    icon=Icons.Outlined.Notifications,label=stringResource(R.string.sleep_timer),
+                    subtitle=if(minutesLeft>0)"$minutesLeft ${uiLocalized("min remaining")}" else null,
+                    trailingArrow=true,
+                ) {showSleep=true}
+            },
+        )
+        return
+    }
 
     if (showSavedIn && currentSong != null) {
         com.music.spotui.ui.components.SavedInSheet(
@@ -2388,7 +2394,7 @@ fun PlayerOptionsSheet(
                         showAlternativeStream = false
                         Toast.makeText(
                             context,
-                            "Alternative stream set to YouTube",
+                            menuText("Alternative stream set to YouTube"),
                             Toast.LENGTH_SHORT
                         ).show()
                         SongPlayer.invalidateSongCache(song, context, reloadIfPlaying = true, clearAltStream = false)
@@ -2406,7 +2412,7 @@ fun PlayerOptionsSheet(
                         if (videoId == null) {
                             Toast.makeText(
                                 context,
-                                "Paste a YouTube video link or video ID",
+                                menuText("Paste a YouTube video link or video ID"),
                                 Toast.LENGTH_SHORT
                             ).show()
                         } else {
@@ -2415,7 +2421,7 @@ fun PlayerOptionsSheet(
                             currentAlternative = getAlternativeStream(context, alternativeKey)
                             Toast.makeText(
                                 context,
-                                "Alternative stream set to YouTube",
+                                menuText("Alternative stream set to YouTube"),
                                 Toast.LENGTH_SHORT
                             ).show()
                             SongPlayer.invalidateSongCache(song, context, reloadIfPlaying = true, clearAltStream = false)
@@ -2428,178 +2434,13 @@ fun PlayerOptionsSheet(
                         val song = currentSong ?: return@AlternativeStreamEditor
                         clearAlternativeStream(context, alternativeKey)
                         currentAlternative = null
-                        Toast.makeText(context, "Alternative stream cleared", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, menuText("Alternative stream cleared"), Toast.LENGTH_SHORT).show()
                         SongPlayer.invalidateSongCache(song, context, reloadIfPlaying = true, clearAltStream = true)
                     },
                     onOpenYouTubeSearch = { showYouTubeSearch = true },
                 )
             } else if (!showSleep) {
-                // ── Now-playing header ──
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 22.dp)
-                ) {
-                    GlideImage(
-                        modifier = Modifier
-                            .size(60.dp)
-                            .clip(RoundedCornerShape(5.dp)),
-                        model = cover,
-                        contentScale = ContentScale.Crop,
-                        contentDescription = ""
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            title,
-                            color = Color.White,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                        )
-                        Text(
-                            singer,
-                            color = Color(0xFFB3B3B3),
-                            fontSize = 15.sp,
-                            maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                        )
-                    }
-                }
-                androidx.compose.material3.HorizontalDivider(color = Color(0xFF343434))
-
-                PlayerMenuRow(
-                    icon = Icons.Outlined.Share,
-                    label = uiLocalized("Share")
-                ) {
-                    val shareText = currentSong?.spotifyTrackId?.takeIf { it.isNotBlank() }
-                        ?.let { "https://open.spotify.com/track/$it" }
-                        ?: "Listening to $title by $singer"
-                    val send = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_TEXT, shareText)
-                    }
-                    context.startActivity(Intent.createChooser(send, "Share"))
-                    onDismiss()
-                }
-                PlayerMenuRow(
-                    icon = Icons.Outlined.AddCircle,
-                    label = uiLocalized("Add to playlist"),
-                    enabled = currentSong != null,
-                    trailingArrow = true,
-                ) {
-                    showSavedIn = true
-                }
-                PlayerMenuRow(
-                    icon = Icons.Outlined.PlaylistAdd,
-                    label = uiLocalized("Add to queue"),
-                    enabled = currentSong != null
-                ) {
-                    currentSong?.let { playerViewModel.addToQueue(it) }
-                    onDismiss()
-                }
-                PlayerMenuRow(
-                    icon = Icons.Outlined.QueueMusic,
-                    label = uiLocalized("View queue")
-                ) {
-                    onDismiss()
-                    onOpenQueue()
-                }
-                // Use the track's REAL album (currentSongAlbum is the playing
-                // context — a playlist name would resolve to garbage).
-                val realAlbum = currentSong?.album?.ifBlank { null } ?: album
-                PlayerMenuRow(
-                    icon = Icons.Outlined.Album,
-                    label = uiLocalized("Go to album"),
-                    enabled = realAlbum.isNotBlank()
-                ) {
-                    onDismiss()
-                    navController.navigate(albumRoute(realAlbum, singer))
-                }
-                PlayerMenuRow(
-                    icon = Icons.Outlined.People,
-                    label = uiLocalized("Go to artist"),
-                    enabled = singer.isNotBlank()
-                ) {
-                    onDismiss()
-                    playerViewModel.goToArtist(
-                        currentSong?.spotifyTrackId.orEmpty(),
-                        singer
-                    ) { route ->
-                        navController.navigate(route)
-                    }
-                }
-                PlayerMenuRow(
-                    icon = if (downloaded) Icons.Default.CheckCircle else ImageVector.vectorResource(
-                        R.drawable.ic_download
-                    ),
-                    iconTint = if (downloaded) Color(AppPalette.toArgb()) else Color.White,
-                    label = when {
-                        downloaded -> "Remove download"
-                        downloadingNow -> "Downloading…"
-                        else -> "Download"
-                    },
-                    enabled = currentSong != null && !downloadingNow,
-                ) {
-                    val song = currentSong ?: return@PlayerMenuRow
-                    if (downloaded) {
-                        val removed = com.music.spotui.data.preferences.removeDownload(
-                            context,
-                            song.id.toString()
-                        )
-                        if (removed) downloaded = false
-                        else android.widget.Toast.makeText(context, "Could not delete audio file", android.widget.Toast.LENGTH_SHORT).show()
-                    } else {
-                        downloadingNow = true
-                        SongPlayer.downloadSong(song, context) { ok ->
-                            downloadingNow = false
-                            downloaded = ok
-                        }
-                    }
-                }
-                PlayerMenuRow(
-                    icon = if (isLiked.value) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                    iconTint = Color(0xFF1ED760),
-                    label = if (isLiked.value) "Remove from Liked Songs" else "Add to Liked Songs"
-                ) {
-                    if (isLiked.value) {
-                        removeLikedSongId(context, songId.toString())
-                    } else {
-                        addLikedSongId(context, songId.toString())
-                    }
-                    isLiked.value = isSongLiked(context, songId.toString())
-                    // Mirror the like to the real Spotify account.
-                    com.music.spotui.data.api.SpotifySync.setTrackSaved(
-                        context, currentSong?.spotifyTrackId.orEmpty(), isLiked.value
-                    )
-                    onDismiss()
-                }
-                PlayerMenuRow(
-                    icon = Icons.Outlined.PlayArrow,
-                    iconTint = if (currentAlternative != null) Color(AppPalette.toArgb()) else Color.White,
-                    label = if (currentAlternative == null) "Alternative stream" else "Alternative stream set",
-                    enabled = currentSong != null,
-                    trailingArrow = true,
-                ) {
-                    showAlternativeStream = true
-                }
-                PlayerMenuRow(
-                    icon = Icons.Outlined.Refresh,
-                    label = uiLocalized("Invalidate cache"),
-                    enabled = currentSong != null,
-                ) {
-                    val song = currentSong ?: return@PlayerMenuRow
-                    onDismiss()
-                    SongPlayer.invalidateSongCache(song, context, reloadIfPlaying = true)
-                }
-                PlayerMenuRow(
-                    icon = Icons.Outlined.Notifications,
-                    label = stringResource(R.string.sleep_timer),
-                    subtitle = if (minutesLeft > 0) "$minutesLeft min left" else null,
-                    trailingArrow = true
-                ) { showSleep = true }
+                Text(uiLocalized("No track selected"),color=Color(0xFFB3B3B3),modifier=Modifier.padding(24.dp))
             } else {
                 Row(
                     modifier = Modifier
@@ -2628,7 +2469,7 @@ fun PlayerOptionsSheet(
                         val seconds = remainingSeconds % 60
                         Text(
                             text = String.format("%02d:%02d", minutes, seconds),
-                            color = Color(AppPalette.toArgb()),
+                            color = Color(0xFF1ED760),
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(end = 16.dp)
@@ -2645,7 +2486,7 @@ fun PlayerOptionsSheet(
                     "1 hour" to 60L
                 )
                 options.forEach { (label, minutesOption) ->
-                    PlayerMenuRow(icon = Icons.Default.Notifications, label = label) {
+                    PlayerMenuRow(icon = Icons.Outlined.Notifications, label = label) {
                         SongPlayer.setSleepTimer(minutesOption * 60_000L)
                         onDismiss()
                     }
@@ -3011,56 +2852,9 @@ private fun YouTubeSearchResultRow(
 }
 
 @Composable
-fun PlayerMenuRow(
-    icon: ImageVector,
-    label: String,
-    subtitle: String? = null,
-    iconTint: Color = Color(0xFFB8B8B8),
-    enabled: Boolean = true,
-    trailingArrow: Boolean = false,
-    onClick: () -> Unit
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = enabled) { onClick() }
-            .padding(horizontal = 24.dp, vertical = 16.dp)
-    ) {
-        Icon(
-            imageVector = icon,
-            tint = if (enabled) iconTint else Color.Gray,
-            modifier = Modifier.size(26.dp),
-            contentDescription = null
-        )
-        Spacer(modifier = Modifier.width(22.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = label,
-                color = if (enabled) Color.White else Color.Gray,
-                fontSize = 16.sp,
-                maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-            )
-            if (subtitle != null) {
-                Text(
-                    text = subtitle,
-                    color = Color.Gray,
-                    fontSize = 13.sp,
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                )
-            }
-        }
-        if (trailingArrow) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                tint = Color.Gray,
-                modifier = Modifier.size(20.dp),
-                contentDescription = null
-            )
-        }
-    }
+fun PlayerMenuRow(icon:ImageVector,label:String,subtitle:String?=null,iconTint:Color=Color(0xFFB3B3B3),
+    enabled:Boolean=true,trailingArrow:Boolean=false,onClick:()->Unit) {
+    com.music.spotui.ui.components.SongMenuRow(icon,label,subtitle,iconTint,enabled,trailingArrow,onClick)
 }
 
 /**

@@ -20,6 +20,7 @@ internal class QualifiedListeningSession(
         if (listenedMs < 30_000L || (emittedDuration >= 0L && (duration <= 0L || emittedDuration == duration))) return null
         emittedDuration = duration
         return HistoryEntry(startedAt, song.id, song.title, song.singer, song.album, song.coverUri, song.url,
-            duration, song.spotifyTrackId, qualified = true, eventId = eventId)
+            duration, song.spotifyTrackId, qualified = true, eventId = eventId, mediaType = if (com.music.spotui.data.preferences.isHistoryEpisodeSource(song.url) ||
+                com.music.spotui.data.preferences.isHistoryEpisodeSource(song.spotifyTrackId)) "podcast" else "music")
     }
 }

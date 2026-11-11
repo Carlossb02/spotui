@@ -28,10 +28,10 @@ internal data class DevicePlaybackState(
     val owner:String, val name:String, val epoch:String, val queueId:String, val index:Int,
     val position:Long, val duration:Long, val playing:Boolean, val updated:Long,
     val shuffle:Boolean=false, val repeat:String="OFF", val source:String="",
-    val startToken:String="", val from:String="",
+    val startToken:String="", val from:String="",val sleepEnd:Long=0L,val track:SongsModel?=null,val volume:Float=-1f,
 ) {
     fun positionAt(now:Long):Long {
-        val elapsed=if(playing)(now-updated).coerceIn(0,15_000)else 0L
+        val elapsed=if(playing)(now-updated).coerceAtLeast(0)else 0L
         val target=(position.coerceAtLeast(0)+elapsed).coerceAtLeast(0)
         return if(duration>0)target.coerceAtMost(duration)else target
     }
@@ -39,10 +39,10 @@ internal data class DevicePlaybackState(
     fun canStart(device:String,now:Long)=owner==device && startToken.isNotBlank() && fresh(now)
     fun json()=JSONObject().put("owner",owner).put("name",name).put("epoch",epoch).put("queueId",queueId).put("index",index)
         .put("position",position).put("duration",duration).put("playing",playing).put("updated",updated)
-        .put("shuffle",shuffle).put("repeat",repeat).put("source",source).put("startToken",startToken).put("from",from)
+        .put("shuffle",shuffle).put("repeat",repeat).put("source",source).put("startToken",startToken).put("from",from).put("sleepEnd",sleepEnd).also {o->if(volume>=0f)o.put("volume",volume.toDouble());track?.let {song->o.put("track",DevicePlaybackQueue(listOf(song.copy(description="",releaseDate=""))).json().getJSONArray("songs").getJSONObject(0))}}
     companion object {
         fun parse(o:JSONObject)=DevicePlaybackState(o.getString("owner"),o.getString("name"),o.getString("epoch"),o.getString("queueId"),o.getInt("index"),
             o.optLong("position").coerceAtLeast(0),o.optLong("duration").coerceAtLeast(0),o.optBoolean("playing"),o.getLong("updated"),
-            o.optBoolean("shuffle"),o.optString("repeat","OFF"),o.optString("source"),o.optString("startToken"),o.optString("from"))
+            o.optBoolean("shuffle"),o.optString("repeat","OFF"),o.optString("source"),o.optString("startToken"),o.optString("from"),o.optLong("sleepEnd"),o.optJSONObject("track")?.let {DevicePlaybackQueue.parse(JSONObject().put("songs",JSONArray().put(it))).songs.firstOrNull()},o.optDouble("volume",-1.0).toFloat().coerceIn(-1f,1f))
     }
 }

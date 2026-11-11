@@ -16,6 +16,8 @@ import com.music.spotui.data.entity.HomeFeedModel
 import com.music.spotui.data.entity.HomeItem
 import com.music.spotui.data.entity.HomeSection
 import com.music.spotui.data.entity.SearchResults
+import com.music.spotui.data.entity.mergePlaylistSongs
+import com.music.spotui.data.entity.libraryIdentity
 import com.music.spotui.data.entity.SongsModel
 import com.music.spotui.data.preferences.PlaylistSortOption
 import com.music.spotui.data.preferences.getPlaylistSortOption
@@ -747,14 +749,15 @@ class Api @Inject constructor(
             val local = com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylist(context, playlistId)
             if (local != null) {
                 HomeCache.setPlaylistSongs(clean, local.songs)
-                emit(Response.Success(local.songs))
+                emit(Response.Success(libraryOverrides(local.songs)))
                 return@flow
             }
         }
         val session = SpotifySession.spDc(context)
         val key = "playlist:$clean"
         val cached = (LibraryContentMemory.read(context, key)
-            ?: HomeCache.getPlaylistSongs(clean).takeIf { HomeCache.libraryAccount == session })?.let { libraryOverrides(LibraryContentMemory.playlistSongs(context, clean, it)) }
+            ?: HomeCache.getPlaylistSongs(clean).takeIf { HomeCache.libraryAccount == session }
+            ?: com.music.spotui.data.preferences.PlaylistAdditionsPref.tracks(context,clean).takeIf {it.isNotEmpty()})?.let {playlistSongsForDisplay(clean,it)}
         if (cached != null) {
             emit(Response.Success(cached))
         } else {
@@ -1007,15 +1010,38 @@ class Api @Inject constructor(
         val map = java.util.concurrent.ConcurrentHashMap<String, Entry>()
     }
 
+    fun cachedPlaylistDetail(playlistId:String):AlbumsModel? {
+        val id=cleanId(playlistId)
+        if(id.startsWith("local_pl_"))return com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylist(context,id)?.let {
+            AlbumsModel(stableId("playlist:$id"),"Local Playlist",it.coverUri,it.name,"${it.songs.size} songs")
+        }
+        HomeCache.getPlaylistDetail(id)?.let {return it}
+        val item=LibraryCatalogCache.peek(context)?.firstOrNull {it.isPlaylist && cleanId(it.spotifyId)==id}?:return null
+        return AlbumsModel(stableId("playlist:$id"),item.subtitle,item.coverUri,item.name,"")
+    }
+    fun playlistSongsForDisplay(playlistId:String,fallback:List<SongsModel>):List<SongsModel> {
+        val id=cleanId(playlistId)
+        val base=if(id.startsWith("local_pl_"))com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylist(context,id)?.songs.orEmpty()
+            else LibraryContentMemory.peek(context,"playlist:$id") ?: fallback
+        val extras=if(id.startsWith("local_pl_"))emptyList() else
+            com.music.spotui.data.preferences.PlaylistAdditionsPref.tracks(context,id)+com.music.spotui.data.preferences.PlaylistSyncedPendingPref.tracks(context,id)
+        val merged=mergePlaylistSongs(base,extras)
+        val projected=if(id.startsWith("local_pl_"))merged else LibraryContentMemory.playlistSongs(context,id,merged)
+        val hidden=com.music.spotui.data.preferences.PlaylistAdditionsPref.removedKeys(context,id)
+        return libraryOverrides(projected.filterNot {it.libraryIdentity() in hidden})
+    }
+
     fun cachedCollectionSongs(key: String): List<SongsModel>? {
-        if (key.startsWith("playlist:local_pl_")) return com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylist(context, key.removePrefix("playlist:"))?.songs
+        if (key.startsWith("playlist:local_pl_")) return com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylist(context, key.removePrefix("playlist:"))?.songs?.let(::libraryOverrides)
         if (key == "liked") {
             val stored = LibraryContentMemory.peek(context, key)
             val songs = withLocalLikes(stored.orEmpty())
             return songs.takeIf { stored != null || it.isNotEmpty() }?.let(::libraryOverrides)
         }
+        if(key.startsWith("playlist:"))return playlistSongsForDisplay(key.removePrefix("playlist:"),emptyList()).takeIf {it.isNotEmpty()}
+            ?:LibraryContentMemory.peek(context,key)?.let {emptyList<SongsModel>()}
         return LibraryContentMemory.peek(context, key)?.let {
-            val songs = if (key.startsWith("playlist:")) LibraryContentMemory.playlistSongs(context, key.removePrefix("playlist:"), it) else it
+            val songs = if (key.startsWith("playlist:")) playlistSongsForDisplay(key.removePrefix("playlist:"), it) else it
             libraryOverrides(if (key == "liked") withLocalLikes(songs) else songs)
         }
     }
@@ -1095,7 +1121,7 @@ class Api @Inject constructor(
     /** Loads playlist metadata (name, cover, owner, track count) by id. */
     suspend fun getPlaylist(playlistId: String): Flow<Response<AlbumsModel>> = flow {
         val clean = cleanId(playlistId)
-        val cached = HomeCache.getPlaylistDetail(clean)
+        val cached = cachedPlaylistDetail(clean)
         if (cached != null) {
             emit(Response.Success(cached))
         } else {

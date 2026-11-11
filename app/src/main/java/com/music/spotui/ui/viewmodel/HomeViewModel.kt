@@ -73,7 +73,7 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository)  
                 checks++
                 kotlinx.coroutines.delay(1_000L)
             }
-            ensureMusicCatalogueLoaded()
+            if(_selectedFilter.value!="Podcasts")ensureMusicCatalogueLoaded()
         }
     }
 
@@ -88,7 +88,7 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository)  
 
     fun setSelectedFilter(filter: String) {
         if (_selectedFilter.value != filter) {
-            if (filter == "Music") ensureMusicCatalogueLoaded()
+            if (filter == "Music" || filter == "All") ensureMusicCatalogueLoaded()
             _selectedFilter.value = filter
             _isFollowingOnly.value = false
             if (filter == "Podcasts") {
@@ -105,7 +105,7 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository)  
     fun ensurePodcastsLoaded() {
         if (_isPodcastsLoading.value) return
         val feed = (_podcastFeed.value as? Response.Success)?.data
-        val hasShows = feed?.sections?.any { it.shows.isNotEmpty() } == true
+        val hasShows = feed?.sections?.any { it.shows.isNotEmpty() || it.episodes.isNotEmpty() } == true
         if (hasShows) return
         // Avoid a request storm if all providers are temporarily unavailable.
         if (System.currentTimeMillis() - lastPodcastLoadAtMs < 30_000L) return
@@ -165,7 +165,7 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository)  
                 repository.providePodcastFeedFlow(forceRefresh).collect { feed ->
                     val previous = (_podcastFeed.value as? Response.Success)?.data
                     // Keep already shown cards while a forced refresh resolves new results.
-                    if (feed.sections.any { it.shows.isNotEmpty() } || previous == null) {
+                    if (feed.sections.any { it.shows.isNotEmpty() || it.episodes.isNotEmpty() } || previous == null) {
                         _podcastFeed.value = Response.Success(feed)
                     }
                 }
@@ -173,7 +173,7 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository)  
                 throw e
             } catch (e: Exception) {
                 Log.e("HomeViewModel", "Failed to fetch podcast feed", e)
-                if ((_podcastFeed.value as? Response.Success)?.data?.sections?.none { it.shows.isNotEmpty() } != false) {
+                if ((_podcastFeed.value as? Response.Success)?.data?.sections?.none { it.shows.isNotEmpty() || it.episodes.isNotEmpty() } != false) {
                     _podcastFeed.value = Response.Error(e.message ?: "No se pudieron cargar los podcasts")
                 }
             } finally {

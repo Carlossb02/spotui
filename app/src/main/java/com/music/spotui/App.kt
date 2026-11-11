@@ -55,6 +55,7 @@ import com.music.spotui.ui.navigation.Routes
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @Composable
 fun App() {
+    com.music.spotui.ui.components.GoogleDriveConsentAlert()
     val bottomBarState = rememberSaveable { (mutableStateOf(true)) }
     val bottomBarPlayerState = rememberSaveable { (mutableStateOf(true)) }
     val navController = rememberNavController()
@@ -69,6 +70,14 @@ fun App() {
         ?.removePrefix("yt_ep:")?.substringBefore('|')
         ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
     val foregroundLifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(foregroundLifecycle) {
+        val observer=androidx.lifecycle.LifecycleEventObserver {_,event->
+            if(event==androidx.lifecycle.Lifecycle.Event.ON_START)com.music.spotui.sync.GoogleDeviceSync.onForeground()
+            if(event==androidx.lifecycle.Lifecycle.Event.ON_STOP)com.music.spotui.sync.GoogleDeviceSync.onBackground()
+        }
+        foregroundLifecycle.lifecycle.addObserver(observer)
+        onDispose {foregroundLifecycle.lifecycle.removeObserver(observer);com.music.spotui.sync.GoogleDeviceSync.onBackground()}
+    }
     LaunchedEffect(currentPodcastId) {
         com.music.spotui.ui.screens.PodcastVideoSession.stopIfDifferent(currentPodcastId)
     }

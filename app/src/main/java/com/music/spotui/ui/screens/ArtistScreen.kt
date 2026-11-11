@@ -521,7 +521,7 @@ private fun PopularTrackRow(
     LaunchedEffect(likeState) { isLiked = isSongLiked(context, song.id.toString()) }
     val playerViewModel: PlayerViewModel = hiltViewModel()
     val titleColor =
-        if (song.id == artistViewModel.currentSongId.value) Color(AppPalette.toArgb()) else Color.White
+        if (song.id == artistViewModel.currentSongId.value) Color(0xFF1ED760) else Color.White
 
     SwipeToPlayNextWrapper(
         onPlayNext = {

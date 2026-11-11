@@ -1,7 +1,18 @@
 package com.music.spotui.data.preferences
 
 internal enum class HistoryKind { ALL, MUSIC, PODCASTS }
-internal fun HistoryEntry.isPodcast() = PodcastResumeStore.isEpisode(url)
+/** Use recorded origin first; recognize older episode URLs without guessing from titles. */
+internal fun HistoryEntry.isPodcast(): Boolean = when (mediaType) {
+    "podcast" -> true
+    "music" -> false
+    else -> isHistoryEpisodeSource(url) || isHistoryEpisodeSource(spotifyTrackId)
+}
+internal fun isHistoryEpisodeSource(source: String): Boolean {
+    val value = source.trim().substringBefore('|').lowercase(java.util.Locale.ROOT)
+    return value.startsWith("yt_ep:") || value.startsWith("episode:") ||
+        value.startsWith("spotify:episode:") ||
+        Regex("^https?://open\\.spotify\\.com/(?:intl-[^/]+/)?episode/").containsMatchIn(value)
+}
 internal fun HistoryEntry.historySpotifyId(): String = spotifyTrackId.ifBlank {
     if (url.startsWith("spotify:track:")) url.removePrefix("spotify:track:").substringBefore('|') else ""
 }.removePrefix("spotify:track:").removePrefix("track:").substringBefore('?').trim()

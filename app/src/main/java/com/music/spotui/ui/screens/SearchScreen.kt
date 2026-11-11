@@ -665,7 +665,7 @@ fun SearchSongRow(
     LaunchedEffect(likeState) { isLiked = isSongLiked(context, song.id.toString()) }
     val playerViewModel: PlayerViewModel = hiltViewModel()
     val currentPlayingIndicatorColor =
-        if (song.id == searchViewModel.currentSongId.value) Color(AppPalette.toArgb()) else Color.White
+        if (song.id == searchViewModel.currentSongId.value) Color(0xFF1ED760) else Color.White
 
     SwipeToPlayNextWrapper(
         onPlayNext = {

@@ -9,9 +9,11 @@ import org.json.JSONTokener
 internal class CloudPreferences(private val context:Context,private val assets:DriveAssets) {
     companion object {
         val names=listOf("LocalPlaylists","LocalLibrary","OwnedLikedSongs","CustomMetadata","AlternativeStreams","playlist_youtube_additions_v1",
-            "SubscribedPodcasts","spotui_pinned_library_v1","favorite_external_playlists_v1","spotui_podcast_resume_v1","LikedSongs","settings_prefs","app_sort_preferences","translation_prefs","spotui_podcast_mode_prefs")
+            "SubscribedPodcasts","spotui_pinned_library_v1","favorite_external_playlists_v1","spotui_podcast_resume_v1","LikedSongs","settings_prefs","app_sort_preferences","translation_prefs","spotui_podcast_mode_prefs","RecentItems","tablet_player_layout")
         private val settings=setOf("stream_quality_wifi","stream_quality_cellular","download_quality","preload_enabled","crossfade_duration_ms","crossfade_dj_mode","web_playback_enabled","video_fallback_enabled","library_grid_view","auto_play_startup","app_language","audio_provider_order","disabled_audio_providers","custom_equalizer_bands","update_repo_url")
-        fun allowed(name:String,key:String)=name!="settings_prefs" || key in settings || key.startsWith("audio_normalization_") || key.startsWith("equalizer_")
+        fun allowed(name:String,key:String):Boolean {
+            return name!="settings_prefs" || key in settings || key.startsWith("audio_normalization_") || key.startsWith("equalizer_")
+        }
     }
     val failedKeys=mutableSetOf<String>()
     private data class Memo(val raw:Any,val identities:Int,val portable:Any)
@@ -28,7 +30,7 @@ internal class CloudPreferences(private val context:Context,private val assets:D
         val out=linkedMapOf<String,Any>()
         rawSnapshots.clear();failedKeys.clear()
         val discoveryKeys=mutableSetOf<String>()
-        listOf("LocalLibrary","LocalPlaylists","OwnedLikedSongs").forEach { name ->
+        listOf("LocalLibrary","LocalPlaylists","OwnedLikedSongs","playlist_youtube_additions_v1").filter {SyncOptions.allows("$it:")}.forEach { name ->
             context.getSharedPreferences(name,0).all.forEach discovery@{ (key,raw) ->
                 discoveryKeys+="$name:$key"
                 if(raw !is String || discovered["$name:$key"]==raw)return@discovery
@@ -39,7 +41,7 @@ internal class CloudPreferences(private val context:Context,private val assets:D
         }
         discovered.keys.retainAll(discoveryKeys)
         names.forEach { name->context.getSharedPreferences(name,0).all.forEach entry@{(key,v)->
-            if(v==null || !allowed(name,key) || name=="LikedSongs" && !assets.isOwned(key))return@entry
+            if(!SyncOptions.allows("$name:$key") || v==null || !allowed(name,key) || name=="LikedSongs" && !assets.isOwned(key))return@entry
             var logical="$name:$key"
             runCatching {
                 val global=assets.portableAlias(key)
@@ -63,6 +65,7 @@ internal class CloudPreferences(private val context:Context,private val assets:D
         else applyNative(logical,value,expected)
 
     private fun applyNative(logical:String,value:Any?,expected:Any?):Boolean {
+        if(!SyncOptions.allows(logical))return false
         val name=logical.substringBefore(':');val key=assets.nativeAlias(logical.substringAfter(':'))
         require(name in names && allowed(name,key))
         val prefs=context.getSharedPreferences(name,0)
@@ -70,7 +73,9 @@ internal class CloudPreferences(private val context:Context,private val assets:D
         if(rawNow != rawSnapshots[logical] && !(rawNow == null && expected == null))return false
         val editor=prefs.edit()
         val o=value?.let { assets.native(it) } as? JSONObject
-        if(o==null)editor.remove(key) else {
+        if(o==null) {
+            editor.remove(key)
+        } else {
             val v=o.get("value")
             when(o.getString("type")) {
                 "string"->editor.putString(key,if(name=="LikedSongs")key else v.toString())
@@ -82,6 +87,7 @@ internal class CloudPreferences(private val context:Context,private val assets:D
                 else->error("Unsupported preference")
             }
         }
+        if(!SyncOptions.allows(logical))return false
         check(editor.commit()){ "No se pudieron guardar los cambios." }
         if(value==null)rawSnapshots.remove(logical)else prefs.all[key]?.let { rawSnapshots[logical]=it }
         return true

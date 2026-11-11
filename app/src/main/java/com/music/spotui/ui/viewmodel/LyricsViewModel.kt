@@ -34,7 +34,7 @@ class LyricsViewModel @Inject constructor(
 
     sealed class State {
         object Loading : State()
-        data class Loaded(val lyrics: Lyrics) : State()
+        data class Loaded(val lyrics: Lyrics, val requestKey:String="") : State()
         object NotFound : State()
     }
 
@@ -48,7 +48,9 @@ class LyricsViewModel @Inject constructor(
     private val _state = MutableStateFlow<State>(State.Loading)
     val state: StateFlow<State> = _state
 
-    private var loadedKey: String? = null
+    @Volatile private var loadedKey: String? = null
+    private var generation=0L
+    private var translationSuppressed=false
     private var loadedTitle: String? = null
     private var loadedArtist: String? = null
     private var loadJob: kotlinx.coroutines.Job? = null
@@ -75,37 +77,40 @@ class LyricsViewModel @Inject constructor(
 
     val translationsVisible: Boolean get() = translatedLines != null
 
+    fun visibleState(requestKey:String,value:State):State =
+        if(loadedKey==requestKey && (value !is State.Loaded || value.requestKey==requestKey))value else State.Loading
+
     fun load(title: String, artist: String, album: String, durationSec: Int, trackId: String = "") {
-        val key = "$title|$artist|$album|$durationSec|$trackId"
+        val key = requestKey(title,artist,album,durationSec,trackId)
         if (loadedKey == key && _state.value !is State.NotFound) return
-        loadedKey = key
-        loadedTitle = title
-        loadedArtist = artist
-        _state.value = State.Loading
-        resetTranslationState()
+        val token=++generation
         loadJob?.cancel()
-        loadJob = viewModelScope.launch(Dispatchers.IO) {
-            val lyrics = LyricsApi.fetch(title, artist, album, durationSec, trackId)
-            val detectedLanguage = if (lyrics != null && !lyrics.isEmpty) {
-                val allText = lyrics.lines.joinToString(" ") { it.text }
-                TranslationApi.detectLanguage(allText)
-            } else null
-            withContext(Dispatchers.Main) {
-                _state.value = if (lyrics == null || lyrics.isEmpty) State.NotFound
-                else {
-                    if (detectedLanguage != null) sourceLanguage = detectedLanguage
-                    State.Loaded(lyrics)
+        loadedKey=key;loadedTitle=title;loadedArtist=artist
+        _state.value=State.Loading;resetTranslationState();translationSuppressed=false
+        loadJob=viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val lyrics=LyricsApi.fetch(title,artist,album,durationSec,trackId)
+                withContext(Dispatchers.Main) {
+                    if(token!=generation || loadedKey!=key)return@withContext
+                    _state.value=if(lyrics==null || lyrics.isEmpty)State.NotFound else State.Loaded(lyrics,key)
+                    restoreCachedTranslation(title,artist,lyrics)
                 }
-            }
-            // Auto-display cached translation for the current language pair.
-            withContext(Dispatchers.Main) {
-                restoreCachedTranslation(title, artist, lyrics)
-            }
+                if(lyrics!=null && !lyrics.isEmpty) {
+                    val detected=try {TranslationApi.detectLanguage(lyrics.lines.joinToString(" "){it.text})}
+                        catch(c:kotlinx.coroutines.CancellationException){throw c}catch(_:Exception){null}
+                    withContext(Dispatchers.Main) {
+                        if(token!=generation || loadedKey!=key || translationJob?.isActive==true || showLanguageBar)return@withContext
+                        if(detected!=null)sourceLanguage=detected
+                        restoreCachedTranslation(title,artist,lyrics)
+                    }
+                }
+            } catch(c:kotlinx.coroutines.CancellationException){throw c}
+            catch(_:Exception){withContext(Dispatchers.Main){if(token==generation && loadedKey==key)_state.value=State.NotFound}}
         }
     }
 
     private fun restoreCachedTranslation(title: String, artist: String, lyrics: Lyrics?) {
-        if (lyrics == null || lyrics.isEmpty) return
+        if (translationSuppressed || lyrics == null || lyrics.isEmpty) return
         val key = translationCacheKey(loadedKey ?: title, artist, sourceLanguage, targetLanguage)
         val cached = TranslationCachePref.get(context, key)
         if (cached != null && cached.size == lyrics.lines.size) {
@@ -132,6 +137,7 @@ class LyricsViewModel @Inject constructor(
     }
 
     fun dismissTranslate() {
+        translationSuppressed=true
         translationJob?.cancel()
         translationJob = null
         // Remove from disk so it won't auto-show when lyrics load again.
@@ -161,6 +167,10 @@ class LyricsViewModel @Inject constructor(
             return
         }
 
+        val request=loadedKey
+        val source=sourceLanguage;val target=targetLanguage
+        fun stillCurrent()=loadedKey==request && sourceLanguage==source && targetLanguage==target && !translationSuppressed
+        translationSuppressed=false
         translationError = null
         translationsLoading = true
         translatedLines = null
@@ -169,18 +179,19 @@ class LyricsViewModel @Inject constructor(
         translationJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 Log.d(TAG, "Downloading model: $sourceLanguage → $targetLanguage")
-                TranslationApi.ensureModel(sourceLanguage, targetLanguage)
-                withContext(Dispatchers.Main) { modelState = ModelState.Ready }
+                TranslationApi.ensureModel(source, target)
+                withContext(Dispatchers.Main) { if(stillCurrent())modelState = ModelState.Ready }
 
                 Log.d(TAG, "Starting translation: $sourceLanguage → $targetLanguage ($translatable lines)")
                 val result = TranslationApi.translateLines(
                     lines = current.lyrics.lines,
-                    sourceLang = sourceLanguage,
-                    targetLang = targetLanguage,
+                    sourceLang = source,
+                    targetLang = target,
                 )
                 val translatedCount = result.count { it.translatedText != null }
                 Log.d(TAG, "Translation complete: $translatedCount/${result.size} lines translated")
                 withContext(Dispatchers.Main) {
+                    if(!stillCurrent())return@withContext
                     if (translatedCount == 0) {
                         translationError = "Translation failed — no lines were translated."
                     } else {
@@ -195,6 +206,7 @@ class LyricsViewModel @Inject constructor(
             } catch (e: Exception) {
                 Log.e(TAG, "Translation failed", e)
                 withContext(Dispatchers.Main) {
+                    if(!stillCurrent())return@withContext
                     modelState = ModelState.Failed(e.localizedMessage ?: "Model download failed")
                     translationError = "Translation failed: ${e.localizedMessage ?: "Unknown error"}"
                     translationsLoading = false
@@ -204,6 +216,7 @@ class LyricsViewModel @Inject constructor(
     }
 
     fun chooseSourceLanguage(langCode: String) {
+        translationJob?.cancel();translationJob=null;translationsLoading=false
         if (langCode == sourceLanguage) return
         sourceLanguage = langCode
         setSourceLanguage(context, langCode)
@@ -212,6 +225,7 @@ class LyricsViewModel @Inject constructor(
     }
 
     fun chooseTargetLanguage(langCode: String) {
+        translationJob?.cancel();translationJob=null;translationsLoading=false
         if (langCode == targetLanguage) return
         targetLanguage = langCode
         setTargetLanguage(context, langCode)
@@ -220,6 +234,7 @@ class LyricsViewModel @Inject constructor(
     }
 
     fun swapLanguages() {
+        translationJob?.cancel();translationJob=null;translationsLoading=false
         val tmp = sourceLanguage
         sourceLanguage = targetLanguage
         targetLanguage = tmp
@@ -240,6 +255,7 @@ class LyricsViewModel @Inject constructor(
     }
 
     companion object {
+        fun requestKey(title:String,artist:String,album:String,durationSec:Int,trackId:String) = "$title|$artist|$album|$durationSec|$trackId"
         private const val TAG = "LyricsVM"
     }
 }

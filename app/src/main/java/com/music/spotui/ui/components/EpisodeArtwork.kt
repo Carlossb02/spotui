@@ -38,12 +38,14 @@ fun EpisodeArtwork(
     radius: Dp = 8.dp,
     contentScale: ContentScale = ContentScale.Crop,
     imageOverride: String? = null,
+    showProgress:Boolean=true,
 ) {
     val context = LocalContext.current
     LaunchedEffect(Unit) { PodcastResumeStore.ensureLoaded(context) }
-    val progress by remember(episode.url) {
-        PodcastResumeStore.observeEpisode(episode.url)
-    }.collectAsState()
+    val progress = if(showProgress) {
+        val value by remember(episode.url) {PodcastResumeStore.observeEpisode(episode.url)}.collectAsState()
+        value
+    }else null
     Box(modifier = modifier.clip(RoundedCornerShape(radius))) {
         // Artwork is loaded only for visible LazyRow items. A failed YouTube
         // thumbnail falls back to the episode's actual cover instead of a
@@ -67,7 +69,7 @@ fun EpisodeArtwork(
         )
         // State delegation is not smart-castable; capture one immutable snapshot.
         val displayedProgress = progress
-        if (displayedProgress != null && displayedProgress.fraction > 0f) {
+        if (showProgress && displayedProgress != null && displayedProgress.fraction > 0f) {
             Box(
                 modifier = Modifier.fillMaxWidth().height(4.dp)
                     .align(Alignment.BottomCenter).background(Color.Black.copy(alpha = 0.65f))

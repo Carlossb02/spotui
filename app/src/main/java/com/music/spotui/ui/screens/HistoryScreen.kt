@@ -89,7 +89,7 @@ fun HistoryScreen(navController: NavController) {
             if (result.isFailure) android.widget.Toast.makeText(context, storageError, android.widget.Toast.LENGTH_SHORT).show()
         }
     }
-    var kind by remember { mutableStateOf(HistoryKind.ALL) }
+    var kind by remember { mutableStateOf(HistoryKind.MUSIC) }
     var searchQuery by remember { mutableStateOf("") }
     var currentSort by remember { mutableStateOf(getHistorySortOption(context)) }
     var descending by remember { mutableStateOf(isHistorySortDescending(context)) }
@@ -155,7 +155,7 @@ fun HistoryScreen(navController: NavController) {
                             Icon(Icons.Default.KeyboardArrowDown, null, tint = MutedText)
                         }
                         DropdownMenu(expanded = kindMenu, onDismissRequest = { kindMenu = false }) {
-                            HistoryKind.entries.forEach { option -> DropdownMenuItem(text = {
+                            listOf(HistoryKind.MUSIC, HistoryKind.PODCASTS).forEach { option -> DropdownMenuItem(text = {
                                 Text(uiLocalized(when(option) { HistoryKind.ALL -> "Todo"; HistoryKind.MUSIC -> "Música"; HistoryKind.PODCASTS -> "Podcasts" }), color = if (kind == option) SpotifyGreen else Color.White)
                             }, onClick = { kind = option; kindMenu = false }) }
                         }
@@ -351,7 +351,7 @@ private fun HistoryRow(
                 onClick = onClick,
             ),
     ) {
-        if (com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(entry.url)) {
+        if (entry.isPodcast()) {
             com.music.spotui.ui.components.EpisodeArtwork(
                 episode = com.music.spotui.data.entity.SongsModel(
                     id = entry.songId, title = entry.title, album = entry.album,

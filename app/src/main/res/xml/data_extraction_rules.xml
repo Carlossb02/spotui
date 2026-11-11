@@ -2,8 +2,14 @@
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="file" path="downloads/" />
+        <exclude domain="sharedpref" path="google_device_sync_config.xml" />
+        <exclude domain="sharedpref" path="google_sync_categories.xml" />
+        <exclude domain="file" path="google_text_sync/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="downloads/" />
+        <exclude domain="sharedpref" path="google_device_sync_config.xml" />
+        <exclude domain="sharedpref" path="google_sync_categories.xml" />
+        <exclude domain="file" path="google_text_sync/" />
     </device-transfer>
 </data-extraction-rules>

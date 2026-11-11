@@ -23,3 +23,35 @@ app/release/
 /.artifacts/
 /AGENT_RULES.md
 AGENT_RULES.md
+
+# Local Google/Firebase configuration and signing fingerprint reports
+google-services*.json
+sha1.txt
+sha-1.txt
+sha256.txt
+sha-256.txt
+signing-fingerprints*.txt
+signing-report*.txt
+signingReport*.txt
+/local-signing/
+
+# Private signing keys, service accounts, credentials and device data
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+keystore.properties
+signing.properties
+*service-account*.json
+*service_account*.json
+*firebase-adminsdk*.json
+/credentials/
+/private/
+/device-data/
+/logs/
+*.hprof

@@ -13,6 +13,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
 import javax.inject.Inject
 
 @HiltViewModel
@@ -72,21 +75,23 @@ class PlaylistViewModel @Inject constructor(
         currentSongState.updateLikeState(likeState)
     }
 
-    private var playlistKey: String? = null
-
+    @Volatile private var playlistKey: String? = null
+    private var metadataJob:Job?=null
+    private var songsJob:Job?=null
+    @Volatile private var rawSongs:List<SongsModel> = emptyList()
+    @Volatile private var loadGeneration=0L
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
-            com.music.spotui.sync.OwnLibraryChanges.revision.collect {
-                playlistKey?.takeIf { it.startsWith("local_pl_") }?.let { id ->
-                    val localSongs = repository.cachedCollectionSongs("playlist:$id")
-                    if (localSongs == null) {
-                        _songs.value = Response.Success(emptyList())
-                        _playlist.value = Response.Error("Esta lista se ha eliminado.")
-                        return@collect
-                    }
-                    _songs.value = Response.Success(localSongs)
-                    repository.providePlaylist(id).collect { if (it !is Response.Loading) _playlist.value = it }
+            combine(repository.libraryContentRevision,com.music.spotui.sync.OwnLibraryChanges.revision,
+                com.music.spotui.data.api.SavedTrackLibrary.snapshot) {_,_,_->Unit}.collectLatest {
+                val id=playlistKey?:return@collectLatest
+                val generation=loadGeneration
+                val updated=repository.playlistSongsForDisplay(id,rawSongs)
+                val detail=repository.cachedPlaylistDetail(id)
+                if(playlistKey==id && loadGeneration==generation) {
+                    if(_songs.value is Response.Success || updated.isNotEmpty())_songs.value=Response.Success(updated)
+                    if(detail!=null)_playlist.value=Response.Success(detail)
                 }
             }
         }
@@ -94,30 +99,36 @@ class PlaylistViewModel @Inject constructor(
 
     fun loadPlaylist(playlistId: String) {
         if (playlistKey == playlistId) return
+        com.music.spotui.sync.GoogleDeviceSync.libraryOpened()
         reloadPlaylist(playlistId)
     }
 
     fun reloadPlaylist(playlistId: String) {
-        val differentPlaylist = playlistKey != playlistId
-        playlistKey = playlistId
-        // Initial navigation may show a loader; refreshing the same collection must not
-        // clear its content or discard its LazyListState/visible scroll anchor.
-        if (differentPlaylist) {
-            _playlist.value = Response.Loading()
-            _songs.value = repository.cachedCollectionSongs("playlist:${com.music.spotui.data.api.Api.HomeCache.cleanId(playlistId)}")?.let { Response.Success(it) } ?: Response.Loading()
+        val different=playlistKey!=playlistId
+        playlistKey=playlistId
+        val generation=++loadGeneration
+        metadataJob?.cancel();songsJob?.cancel()
+        if(different) {
+            rawSongs=emptyList()
+            _playlist.value=repository.cachedPlaylistDetail(playlistId)?.let {Response.Success(it)}?:Response.Loading()
+            val initial=repository.cachedCollectionSongs("playlist:${com.music.spotui.data.api.Api.HomeCache.cleanId(playlistId)}")
+                ?:repository.playlistSongsForDisplay(playlistId,emptyList()).takeIf {it.isNotEmpty()}
+            _songs.value=initial?.let {rawSongs=it;Response.Success(it)}?:Response.Loading()
+        } else if(_songs.value is Response.Success) {
+            _songs.value=Response.Success(repository.playlistSongsForDisplay(playlistId,rawSongs))
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            repository.providePlaylist(playlistId).collect { result ->
-                if (result !is Response.Loading || _playlist.value !is Response.Success) {
-                    _playlist.value = result
-                }
+        metadataJob=viewModelScope.launch(Dispatchers.IO) {
+            repository.providePlaylist(playlistId).collect {result->
+                if(generation==loadGeneration && playlistKey==playlistId && (result !is Response.Loading || _playlist.value !is Response.Success))_playlist.value=result
             }
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            repository.providePlaylistSongs(playlistId).collect { result ->
-                if (result !is Response.Loading || _songs.value !is Response.Success) {
-                    _songs.value = result
-                }
+        songsJob=viewModelScope.launch(Dispatchers.IO) {
+            repository.providePlaylistSongs(playlistId).collect {result->
+                if(generation!=loadGeneration || playlistKey!=playlistId)return@collect
+                if(result is Response.Success) {
+                    rawSongs=result.data.orEmpty()
+                    _songs.value=Response.Success(repository.playlistSongsForDisplay(playlistId,rawSongs))
+                } else if(_songs.value !is Response.Success)_songs.value=result
             }
         }
     }

@@ -77,15 +77,16 @@ internal object LibraryContentMemory {
     fun read(context: Context, key: String): List<SongsModel>? = synchronized(lock) { load(context); projected(key) }
     fun playlistSongs(context: Context, id: String, remote: List<SongsModel>): List<SongsModel> {
         val writes = SpotifyPendingWrites.entries(context).filter { it.kind == "playlist" && it.target == id }
-        if (writes.isEmpty()) return remote
+        val intents=SavedTrackLibrary.playlistEdits(id,writes.associate {it.track to it.saved})
+        if (intents.isEmpty()) return remote
         val models = synchronized(lock) {
             load(context)
             (tracks.values + recent.values.takeIf { recentAccount == SpotifySession.spDc(context) }.orEmpty()).associateBy { it.spotifyTrackId }
         }
         return remote.toMutableList().apply {
-            writes.forEach { edit ->
-                if (!edit.saved) removeAll { it.spotifyTrackId == edit.track }
-                else if (none { it.spotifyTrackId == edit.track }) models[edit.track]?.let(::add)
+            intents.forEach { (track,saved) ->
+                if (!saved) removeAll { it.spotifyTrackId == track && !com.music.spotui.data.preferences.PlaylistAdditionsPref.isManaged(context,it) }
+                else if (none { it.spotifyTrackId == track }) models[track]?.takeUnless {com.music.spotui.data.preferences.PlaylistAdditionsPref.isManaged(context,it)}?.let(::add)
             }
         }
     }

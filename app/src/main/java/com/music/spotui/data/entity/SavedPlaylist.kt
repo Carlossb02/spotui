@@ -10,13 +10,16 @@ data class SavedPlaylist(
     val extraSongs: List<SongsModel> = emptyList(),
     val checked: Boolean = false,
     val failed: Boolean = false,
+    val hiddenKeys: Set<String> = emptySet(),
 ) {
     fun contains(song: SongsModel): Boolean {
+        if(song.libraryIdentity() in hiddenKeys)return false
         val trackId = cleanTrack(song.spotifyTrackId)
         if (trackId.isNotBlank() && trackId in trackIds) return true
         return extraSongs.any { other ->
             val otherId = cleanTrack(other.spotifyTrackId)
             when {
+                song.libraryIdentity()==other.libraryIdentity() -> true
                 trackId.isNotBlank() && otherId.isNotBlank() -> trackId == otherId
                 song.url.isNotBlank() && other.url.isNotBlank() -> song.url == other.url
                 else -> song.id != 0 && song.id != -1 && song.id == other.id
@@ -34,7 +37,7 @@ data class SavedLibrarySnapshot(
     val loading: Boolean = false,
     val failed: Boolean = false,
 ) {
-    private val remoteTrackIds = playlists.flatMapTo(HashSet()) { it.trackIds }
+    private val remoteTrackIds = playlists.flatMapTo(HashSet()) { list -> list.trackIds.filterNot { "spotify:$it" in list.hiddenKeys } }
     private val listsWithLocalTracks = playlists.filter { it.extraSongs.isNotEmpty() }
     fun contains(song: SongsModel): Boolean =
         SavedPlaylist.cleanTrack(song.spotifyTrackId).takeIf { it.isNotBlank() }?.let { it in remoteTrackIds } == true ||

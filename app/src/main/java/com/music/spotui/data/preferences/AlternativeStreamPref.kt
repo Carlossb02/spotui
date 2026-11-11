@@ -20,17 +20,21 @@ data class AlternativeStream(
 }
 
 private const val PREF = "AlternativeStreams"
-// Bounded process cache; SharedPreferences remains the durable source of truth.
-private val hotStreams = object : LinkedHashMap<String, AlternativeStream?>(128, .75f, true) {
-    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, AlternativeStream?>?): Boolean = size > 200
+// Entries are checked against preference bytes so remote edits and removals are visible immediately.
+private data class AlternativeMemo(val raw:String?,val stream:AlternativeStream?)
+private val hotStreams = object : LinkedHashMap<String, AlternativeMemo>(128, .75f, true) {
+    override fun removeEldestEntry(eldest:MutableMap.MutableEntry<String,AlternativeMemo>?):Boolean = size>200
 }
-private val hotLock = Any()
+private val hotLock=Any()
 
-fun alternativeStreamKey(song: SongsModel): String =
-    song.spotifyTrackId.takeIf { it.isNotBlank() }?.let { "spotify:$it" } ?: "song:${song.id}"
+private fun cleanAlternativeSpotifyId(id:String)=id.removePrefix("spotify:track:").removePrefix("track:")
+    .substringBefore('|').substringBefore('?').trim()
+internal fun canonicalAlternativeStreamKey(key:String):String =
+    if(key.startsWith("spotify:"))"spotify:"+cleanAlternativeSpotifyId(key.removePrefix("spotify:")) else key
 
-fun alternativeStreamKeyForSpotifyId(spotifyTrackId: String): String =
-    "spotify:$spotifyTrackId"
+fun alternativeStreamKey(song:SongsModel):String = song.spotifyTrackId.takeIf {it.isNotBlank()}
+    ?.let {alternativeStreamKeyForSpotifyId(it)} ?: "song:${song.id}"
+fun alternativeStreamKeyForSpotifyId(spotifyTrackId:String):String = "spotify:"+cleanAlternativeSpotifyId(spotifyTrackId)
 
 private fun AlternativeStream.toJson(): String = JSONObject().apply {
     put("type", type)
@@ -47,47 +51,33 @@ private fun parseAlternativeStream(raw: String): AlternativeStream? = runCatchin
     ).takeIf { it.value.isNotBlank() && (it.isYouTube || it.isLocal) }
 }.getOrNull()
 
-fun getAlternativeStream(context: Context, key: String): AlternativeStream? {
-    synchronized(hotLock) { if (hotStreams.containsKey(key)) return hotStreams[key] }
-    val loaded = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-        .getString(key, null)?.let(::parseAlternativeStream)
-    synchronized(hotLock) { hotStreams[key] = loaded }
-    return loaded
+fun getAlternativeStream(context:Context,key:String):AlternativeStream? {
+    val canonical=canonicalAlternativeStreamKey(key)
+    val prefs=context.getSharedPreferences(PREF,Context.MODE_PRIVATE)
+    val raw=prefs.getString(canonical,null) ?: prefs.all.keys.firstOrNull {canonicalAlternativeStreamKey(it)==canonical}?.let {prefs.getString(it,null)}
+    synchronized(hotLock) {hotStreams[canonical]?.takeIf {it.raw==raw}?.let {return it.stream}}
+    val stream=raw?.let(::parseAlternativeStream)
+    synchronized(hotLock) {hotStreams[canonical]=AlternativeMemo(raw,stream)}
+    return stream
 }
 
-fun setYouTubeAlternativeStream(context: Context, key: String, videoId: String) {
-    val stream = AlternativeStream(
-        type = AlternativeStream.TYPE_YOUTUBE,
-        value = videoId,
-        label = "YouTube video",
-    )
-    synchronized(hotLock) { hotStreams[key] = stream }
-    context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-        .edit()
-        .putString(key, stream.toJson())
-        .apply()
+private fun writeAlternativeStream(context:Context,key:String,stream:AlternativeStream?) {
+    val canonical=canonicalAlternativeStreamKey(key)
+    val prefs=context.getSharedPreferences(PREF,Context.MODE_PRIVATE)
+    val editor=prefs.edit()
+    if(stream==null)editor.remove(canonical)else editor.putString(canonical,stream.toJson())
+    prefs.all.keys.filter {it!=canonical && canonicalAlternativeStreamKey(it)==canonical}.forEach(editor::remove)
+    synchronized(hotLock) {hotStreams.remove(canonical)}
+    editor.apply()
 }
 
-fun setLocalAlternativeStream(context: Context, key: String, uri: Uri, label: String = "") {
-    val stream = AlternativeStream(
-        type = AlternativeStream.TYPE_LOCAL,
-        value = uri.toString(),
-        label = label.ifBlank { uri.lastPathSegment.orEmpty() },
-    )
-    synchronized(hotLock) { hotStreams[key] = stream }
-    context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-        .edit()
-        .putString(key, stream.toJson())
-        .apply()
-}
+fun setYouTubeAlternativeStream(context:Context,key:String,videoId:String) =
+    writeAlternativeStream(context,key,AlternativeStream(AlternativeStream.TYPE_YOUTUBE,videoId,"YouTube video"))
 
-fun clearAlternativeStream(context: Context, key: String) {
-    synchronized(hotLock) { hotStreams.remove(key) }
-    context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-        .edit()
-        .remove(key)
-        .apply()
-}
+fun setLocalAlternativeStream(context:Context,key:String,uri:Uri,label:String="") =
+    writeAlternativeStream(context,key,AlternativeStream(AlternativeStream.TYPE_LOCAL,uri.toString(),label.ifBlank {uri.lastPathSegment.orEmpty()}))
+
+fun clearAlternativeStream(context:Context,key:String) = writeAlternativeStream(context,key,null)
 
 fun clearAllAlternativeStreams(context: Context) {
     synchronized(hotLock) { hotStreams.clear() }
@@ -103,7 +93,8 @@ fun getAllAlternativeStreams(context: Context): Map<String, AlternativeStream> {
     for ((key, value) in prefs.all) {
         if (value is String) {
             parseAlternativeStream(value)?.let { stream ->
-                map[key] = stream
+                val canonical=canonicalAlternativeStreamKey(key)
+                if(canonical !in map || canonical==key)map[canonical] = stream
             }
         }
     }
@@ -111,10 +102,10 @@ fun getAllAlternativeStreams(context: Context): Map<String, AlternativeStream> {
 }
 
 fun restoreAlternativeStreams(context: Context, streams: Map<String, AlternativeStream>) {
-    synchronized(hotLock) { hotStreams.clear(); hotStreams.putAll(streams) }
+    synchronized(hotLock) { hotStreams.clear() }
     val editor = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
     for ((key, stream) in streams) {
-        editor.putString(key, stream.toJson())
+        editor.putString(canonicalAlternativeStreamKey(key), stream.toJson())
     }
     editor.apply()
 }

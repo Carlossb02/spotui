@@ -4,4 +4,7 @@
          Offline audio is intentionally NOT backed up (manual Spotui JSON saves metadata only).
          Private audio survives app updates but disappears when the app is uninstalled. -->
     <exclude domain="file" path="downloads/" />
+        <exclude domain="sharedpref" path="google_device_sync_config.xml" />
+        <exclude domain="sharedpref" path="google_sync_categories.xml" />
+        <exclude domain="file" path="google_text_sync/" />
 </full-backup-content>

@@ -1,6 +1,7 @@
 package com.music.spotui.ui.repository
 
 import com.music.spotui.data.api.Api
+import com.music.spotui.data.entity.SongsModel
 import javax.inject.Inject
 
 class AppRepository @Inject constructor(private val api : Api) {
@@ -47,6 +48,8 @@ class AppRepository @Inject constructor(private val api : Api) {
 
     suspend fun provideRecommendations(seedTrackIds: List<String>) = api.getRecommendations(seedTrackIds)
 
+    fun cachedPlaylistDetail(id:String) = api.cachedPlaylistDetail(id)
+    fun playlistSongsForDisplay(id:String,fallback:List<SongsModel>) = api.playlistSongsForDisplay(id,fallback)
     fun cachedLikedSongs() = api.cachedCollectionSongs("liked")
     fun cachedCollectionSongs(key: String) = api.cachedCollectionSongs(key)
     fun storedFollowedArtists() = api.storedFollowedArtists()

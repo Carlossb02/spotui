@@ -34,11 +34,14 @@ object AudioDeviceHelper {
     private var forcedSpeakerMode: Boolean = false
 
     val currentRouteNameState = androidx.compose.runtime.mutableStateOf("This Phone (Speaker)")
+    val currentRouteKindState=androidx.compose.runtime.mutableStateOf(PlaybackDeviceKind.PHONE)
     val bluetoothRouteActiveState = androidx.compose.runtime.mutableStateOf(false)
 
     fun updateRouteName(context: Context) {
         currentRouteNameState.value = getCurrentAudioRouteName(context)
         bluetoothRouteActiveState.value = isBluetoothRouteActive(context)
+        currentRouteKindState.value=if(currentRouteNameState.value!="This Phone (Speaker)")PlaybackDeviceKind.HEADPHONES
+            else if(context.resources.configuration.smallestScreenWidthDp>=600)PlaybackDeviceKind.TABLET else PlaybackDeviceKind.PHONE
     }
 
     /** Reflect the route selected by this app; do not colour the icon green

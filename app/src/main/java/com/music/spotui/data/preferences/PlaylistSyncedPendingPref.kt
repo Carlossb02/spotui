@@ -3,6 +3,7 @@ package com.music.spotui.data.preferences
 import android.content.Context
 import com.music.spotui.data.api.SpotifySync
 import com.music.spotui.data.entity.SongsModel
+import com.music.spotui.data.entity.libraryIdentity
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -35,6 +36,10 @@ object PlaylistSyncedPendingPref {
     }
 
     fun addConfirmed(context: Context, playlistId: String, song: SongsModel) {
+        if(PlaylistAdditionsPref.isManaged(context,song)) {
+            PlaylistAdditionsPref.add(context,playlistId,song)
+            return
+        }
         val id = SpotifySync.cleanTrackId(song.spotifyTrackId)
         if (id.isBlank()) return
         write(context, playlistId, tracks(context, playlistId).filterNot { it.spotifyTrackId == id } +
@@ -44,6 +49,16 @@ object PlaylistSyncedPendingPref {
     fun remove(context: Context, playlistId: String, trackId: String) {
         val id = SpotifySync.cleanTrackId(trackId)
         write(context, playlistId, tracks(context, playlistId).filterNot { it.spotifyTrackId == id })
+    }
+
+    internal fun recoverOwnedTracks(context:Context) {
+        context.getSharedPreferences(FILE,Context.MODE_PRIVATE).all.keys.toList().forEach {playlist->
+            val known=PlaylistAdditionsPref.tracks(context,playlist).mapTo(HashSet()) {it.libraryIdentity()}
+            val removed=PlaylistAdditionsPref.removedKeys(context,playlist)
+            tracks(context,playlist).filter {PlaylistAdditionsPref.isManaged(context,it)}.forEach {song->
+                if(song.libraryIdentity() !in removed && known.add(song.libraryIdentity()))PlaylistAdditionsPref.add(context,playlist,song)
+            }
+        }
     }
 
     private fun write(context: Context, playlistId: String, songs: List<SongsModel>) {

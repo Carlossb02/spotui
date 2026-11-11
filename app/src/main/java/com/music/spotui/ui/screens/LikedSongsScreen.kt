@@ -174,8 +174,9 @@ fun LikedSongsScreen(navController: NavController) {
         }
 
 
+        val stableSongKeys=remember(filteredSongs){com.music.spotui.ui.utils.stableSongKeys(filteredSongs)}
         val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-        com.music.spotui.ui.components.VisibleSongPreload(listState, remember(filteredSongs) { filteredSongs.mapIndexed { i, song -> "${song.id}_$i" to song } })
+        com.music.spotui.ui.components.VisibleSongPreload(listState, remember(filteredSongs) { filteredSongs.mapIndexed { i, song -> stableSongKeys[i] to song } })
         val collapsedTitle = com.music.spotui.ui.components.rememberCollectionTitleState(listState, "liked_header")
         val searchReveal = rememberCollectionSearchState(listState, "liked_songs")
         val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
@@ -231,8 +232,8 @@ fun LikedSongsScreen(navController: NavController) {
                 keyboardController?.hide()
                 focusManager.clearFocus()
             }
-            LaunchedEffect(keyboardVisible) {
-                if (keyboardVisible) listState.scrollToItem(0)
+            LaunchedEffect(keyboardVisible,searchReveal.expanded) {
+                if (keyboardVisible && searchReveal.expanded) listState.scrollToItem(0)
             }
             // Keep the search field in place; collapse only the expensive artwork/
             // metadata header while the IME is visible, leaving room for results.
@@ -261,7 +262,7 @@ fun LikedSongsScreen(navController: NavController) {
                             placeholder = uiLocalized("Buscar en canciones que te gustan")
                         )
                     }
-                    if (!keyboardVisible && !searchReveal.expanded && searchQuery.isBlank()) {
+                    if (!searchReveal.expanded && searchQuery.isBlank()) {
                     item(key = "liked_header") {
                         Column(
                             modifier = Modifier
@@ -472,9 +473,9 @@ fun LikedSongsScreen(navController: NavController) {
                             }
                         }
                     } else {
-                        itemsIndexed(filteredSongs, key = { index, song -> "${song.id}_$index" }) { index, song ->
+                        itemsIndexed(filteredSongs, key = { index, song -> stableSongKeys[index] }) { index, song ->
                             val currentColor = if (song.id == likedSongsViewModel.currentSongId.value)
-                                Color(AppPalette.toArgb()) else Color.White
+                                Color(0xFF1ED760) else Color.White
 
                             SwipeToPlayNextWrapper(
                                 onPlayNext = {

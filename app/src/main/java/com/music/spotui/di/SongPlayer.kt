@@ -137,7 +137,7 @@ object SongPlayer {
     @Volatile var onPlaybackIntentChanged: (() -> Unit)? = null
 
     private fun publishPlaybackIntent() {
-        onPlayerThread { onPlaybackIntentChanged?.invoke() }
+        onPlayerThread { onPlaybackIntentChanged?.invoke();com.music.spotui.sync.GoogleDeviceSync.onPlaybackActivityChanged();com.music.spotui.sync.CloudPlayback.playbackChanged() }
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -652,7 +652,7 @@ object SongPlayer {
         }
     }
 
-    fun invalidateResolvedStream(song: String) {
+    fun invalidateResolvedStream(song: String, preserveMedia:Boolean=false) {
         // A rejected CDN URL must not be served again by the exact-video warmup cache.
         YTPlayerUtils.clearExtractionCache()
         streamCache.remove(song)
@@ -665,7 +665,7 @@ object SongPlayer {
         appCtx?.let { ctx ->
             com.music.spotui.data.preferences.clearCachedVideoId(ctx, song)
             com.music.spotui.data.preferences.clearCachedStream(ctx, song)
-            clearMediaCacheForTrack(ctx, song)
+            if(!preserveMedia)clearMediaCacheForTrack(ctx, song)
         }
     }
 
@@ -696,7 +696,8 @@ object SongPlayer {
         if (songUrl.isBlank()) return
         val appContext = context.applicationContext
 
-        invalidateResolvedStream(songUrl)
+        val activeEdit=!reloadIfPlaying && ((songId!=null && songId!=0 && songId!=-1 && songId==boundState?.songId?.value) || boundState?.songUrl?.value==songUrl)
+        invalidateResolvedStream(songUrl,preserveMedia=activeEdit)
         streamResolutions.cancel(songUrl)
         // The exact query can be a Spotify synthetic search URI rather than a
         // Spotify ID. Map that URI to the same key the UI used to save the override.
@@ -3397,7 +3398,17 @@ object SongPlayer {
             .setWakeMode(androidx.media3.common.C.WAKE_MODE_LOCAL)
             .build()
         p.addListener(object : androidx.media3.common.Player.Listener {
+            private fun publishKnownTimeline() {
+                if(p!==player || playbackResolving || p.duration<=0L)return
+                cachedDurationMs=p.duration
+                com.music.spotui.sync.CloudPlayback.playbackChanged()
+            }
+            override fun onTimelineChanged(timeline:androidx.media3.common.Timeline,reason:Int) {publishKnownTimeline()}
+            override fun onPlaybackStateChanged(playbackState:Int) {
+                if(playbackState==androidx.media3.common.Player.STATE_READY)publishKnownTimeline()
+            }
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if(isPlaying)publishKnownTimeline()
                 val generation = playbackGeneration.get()
                 if (isPlaying && p === player && loadedQuery == currentRequest &&
                     startupTapAtMs > 0L && measuredStartupGeneration != generation) {
@@ -3614,7 +3625,7 @@ object SongPlayer {
         if (query.isBlank()) return
         restoreQuery = query
         restorePositionMs = positionMs.coerceAtLeast(0L)
-        loadedQuery = query
+        // loadedQuery changes only when the decoder really prepares that source.
     }
 
     fun play() {
@@ -3623,6 +3634,15 @@ object SongPlayer {
             return
         }
         if(com.music.spotui.sync.CloudPlayback.route("play"))return
+        val visibleState=boundState
+        val visibleTrack=visibleState?.let {it.queue.value.getOrNull(it.currentQueueIndex())}
+        val desired=visibleTrack?.url?.takeIf {it.isNotBlank()}?:visibleState?.songUrl?.value.orEmpty()
+        if(currentRequest.isNotBlank() && desired.isNotBlank() && desired!=currentRequest) {
+            registerTracksForResolution(visibleState?.queue?.value.orEmpty())
+            visibleTrack?.let {setNowPlayingMeta(it.title,it.singer,it.coverUri)}
+            playSong(desired,appCtx?:com.music.spotui.MyApplication.instance,visibleTrack?.id?.let {"song/$it"})
+            return
+        }
         if (webPlaybackActive()) { SpotifyWebPlayer.resume(); return }
 
         val ctx = appCtx ?: com.music.spotui.MyApplication.instance.applicationContext.also {
@@ -3835,14 +3855,14 @@ object SongPlayer {
 
     @Volatile private var lastAdvanceTimestamp = 0L
 
-    fun next(context: Context) {
+    fun next(context: Context, immediate:Boolean=false) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            onPlayerThread { next(context.applicationContext) }
+            onPlayerThread { next(context.applicationContext,immediate) }
             return
         }
         if(com.music.spotui.sync.CloudPlayback.route("next"))return
         val now = SystemClock.elapsedRealtime()
-        if (now - lastAdvanceTimestamp < 1000L) {
+        if (!immediate && now - lastAdvanceTimestamp < 1000L) {
             android.util.Log.w(TAG, "next: ignored rapid duplicate advance request")
             return
         }
@@ -3881,49 +3901,29 @@ object SongPlayer {
         playSong(song.url, context, "song/${song.id}")
     }
 
-    fun previous(context: Context) {
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            onPlayerThread { previous(context.applicationContext) }
+    private var lastPreviousAt=0L
+    fun previous(context: Context, immediate:Boolean=false) {
+        if(Looper.myLooper()!=Looper.getMainLooper()) {
+            onPlayerThread {previous(context.applicationContext,immediate)}
             return
         }
         if(com.music.spotui.sync.CloudPlayback.route("previous"))return
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastAdvanceTimestamp < 1000L) {
-            android.util.Log.w(TAG, "previous: ignored rapid duplicate advance request")
+        val now=SystemClock.elapsedRealtime()
+        if(!immediate && now-lastPreviousAt<180L)return
+        lastPreviousAt=now
+        val state=boundState?:return
+        val queue=state.queue.value
+        val current=state.currentQueueIndex().coerceAtLeast(0)
+        val previous=previousPlaybackIndex(current,queue.size,getCurrentPosition(),state.repeat.value==RepeatMode.ALL)?:return
+        if(previous==current) {
+            val song=queue.getOrNull(current)?:return
+            setRestorePoint(song.url,0L)
+            seekTo(0L)
             return
         }
-        lastAdvanceTimestamp = now
-        val state = boundState
-        if (state == null) {
-            android.util.Log.w(TAG, "previous: boundState is null")
-            return
-        }
-        val q = state.queue.value
-        if (q.isEmpty()) {
-            android.util.Log.w(TAG, "previous: queue is empty")
-            return
-        }
-        val curId = state.songId.value
-        val cur = state.currentQueueIndex().coerceIn(0, q.size - 1)
-        android.util.Log.d(TAG, "previous: cur=$cur q.size=${q.size} repeat=${state.repeat.value}")
-        val nextIdx: Int
-        if (cur > 0) {
-            nextIdx = cur - 1
-        } else {
-            if (state.repeat.value == RepeatMode.ALL) {
-                nextIdx = q.size - 1
-            } else {
-                android.util.Log.d(TAG, "previous: at start, repeat off - not going back")
-                return
-            }
-        }
-        val song = q[nextIdx]
-        android.util.Log.d(TAG, "previous: going to idx=$nextIdx song=${song.title}")
-        state.updateSongState(
-            song.coverUri, song.title, song.singer, true,
-            song.id, nextIdx, song.album
-        )
-        playSong(song.url, context, "song/${song.id}")
+        val song=queue[previous]
+        state.updateSongState(song.coverUri,song.title,song.singer,true,song.id,previous,song.album,song.artistIds)
+        playSong(song.url,context,"song/${song.id}")
     }
 
     fun seekTo(position: Long) {
@@ -3936,18 +3936,20 @@ object SongPlayer {
         if (webPlaybackActive()) { SpotifyWebPlayer.seekTo(position); return }
         val target = position.coerceAtLeast(0L)
         com.music.spotui.ui.screens.PodcastVideoSession.seekToAudioPosition(target)
-        if (playbackResolving || loadedQuery != currentRequest || player?.currentMediaItem == null) {
+        if (!canSeekLoadedTrack(playbackResolving,player?.currentMediaItem!=null,loadedQuery,currentRequest,
+                player?.currentMediaItem?.mediaId,currentMediaId)) {
             pendingSeekQuery = currentRequest
             pendingSeekMs = target
+            com.music.spotui.sync.CloudPlayback.playbackChanged()
             return
         }
         // ExoPlayer issues a fresh byte-range request at target; never download the
         // previous timeline to reach it. Existing bytes remain usable in cache.
-        if (loadedQuery == currentRequest) {
-            stablePositionQuery = currentRequest
-            stablePositionMs = target
-        }
+        stablePositionQuery = currentRequest
+        stablePositionMs = target
+        pendingSeekQuery=null
         player?.seekTo(target)
+        com.music.spotui.sync.CloudPlayback.playbackChanged()
     }
 
     fun release() {
@@ -4004,6 +4006,14 @@ object SongPlayer {
         return if (Looper.myLooper() == Looper.getMainLooper()) player?.currentPosition ?: 0L
         else cachedPositionMs
     }
+
+    fun hasPreparedTrack(song:com.music.spotui.data.entity.SongsModel):Boolean {
+        if(Looper.myLooper()!=Looper.getMainLooper())return hasPreparedTrack(song.url)
+        return isPrepared() && canSeekLoadedTrack(playbackResolving,player?.currentMediaItem!=null,loadedQuery,song.url,
+            player?.currentMediaItem?.mediaId,"song/${song.id}")
+    }
+
+    fun hasPreparedTrack(query:String):Boolean = loadedQuery==query && currentRequest==query && isPrepared()
 
     fun isPrepared(): Boolean {
         if (Looper.myLooper() != Looper.getMainLooper()) return cachedDurationMs > 0L
@@ -4712,12 +4722,15 @@ object SongPlayer {
         private set
 
     fun setSleepTimer(durationMillis: Long) {
+        if(com.music.spotui.sync.CloudPlayback.route("sleep",durationMillis))return
         sleepJob?.cancel()
         if (durationMillis <= 0L) {
             sleepTimerEndAt = 0L
+            com.music.spotui.sync.CloudPlayback.playbackChanged()
             return
         }
         sleepTimerEndAt = System.currentTimeMillis() + durationMillis
+        com.music.spotui.sync.CloudPlayback.playbackChanged()
         sleepJob = scope.launch {
             kotlinx.coroutines.delay(durationMillis)
             withContext(Dispatchers.Main) { pause() }
@@ -4726,6 +4739,8 @@ object SongPlayer {
     }
 
     fun cancelSleepTimer() {
+        if(com.music.spotui.sync.CloudPlayback.route("sleep",0))return
+        com.music.spotui.sync.CloudPlayback.playbackChanged()
         sleepJob?.cancel()
         sleepJob = null
         sleepTimerEndAt = 0L

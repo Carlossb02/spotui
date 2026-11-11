@@ -36,22 +36,27 @@ object PodcastResumeStore {
     // carousel never invalidates its LazyRow for each 1-second position sample.
     private val _visibleKeys = MutableStateFlow<List<String>>(emptyList())
     val visibleKeys = _visibleKeys.asStateFlow()
-    private val entryFlows = mutableMapOf<String, MutableStateFlow<PodcastResumeEntry?>>()
+    private val entryFlows = mutableMapOf<String, java.lang.ref.WeakReference<MutableStateFlow<PodcastResumeEntry?>>>()
 
     fun observeEpisode(url: String): kotlinx.coroutines.flow.StateFlow<PodcastResumeEntry?> = synchronized(lock) {
         val key = episodeKey(url)
-        entryFlows.getOrPut(key) {
-            MutableStateFlow(_entries.value.firstOrNull { episodeKey(it.episode.url) == key })
-        }.asStateFlow()
+        val flow=entryFlows[key]?.get()?:MutableStateFlow(_entries.value.firstOrNull {episodeKey(it.episode.url)==key}).also {
+            entryFlows[key]=java.lang.ref.WeakReference(it)
+        }
+        flow.asStateFlow()
     }
 
     private fun publish(next: List<PodcastResumeEntry>) {
         _entries.value = next
-        val keys = next.map { episodeKey(it.episode.url) }
-        if (_visibleKeys.value != keys) _visibleKeys.value = keys
-        entryFlows.forEach { (key, flow) ->
-            val value = next.firstOrNull { episodeKey(it.episode.url) == key }
-            if (flow.value != value) flow.value = value
+        val byKey=next.associateBy {episodeKey(it.episode.url)}
+        val keys=byKey.keys.toList()
+        if(_visibleKeys.value!=keys)_visibleKeys.value=keys
+        val iterator=entryFlows.iterator()
+        while(iterator.hasNext()) {
+            val (key,reference)=iterator.next()
+            val flow=reference.get()
+            if(flow==null)iterator.remove()
+            else if(flow.value!=byKey[key])flow.value=byKey[key]
         }
     }
 
@@ -138,6 +143,8 @@ object PodcastResumeStore {
                 dirty = true
             }
             if (dirty && (finished(positionMs, duration) || now - lastDiskWrite >= 5_000L)) persist(context, now)
+            val entered=old==null && next.any {episodeKey(it.episode.url)==episodeKey(episode.url)}
+            if(entered || finished(positionMs,duration) && old!=null)com.music.spotui.sync.GoogleDeviceSync.requestSync()
         }
     }
 

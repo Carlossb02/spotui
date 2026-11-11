@@ -49,6 +49,16 @@ object SavedTrackLibrary {
     })
     }
 
+    /** Current user intent only: a partial membership scan must never hide unscanned rows. */
+    @Synchronized internal fun playlistEdits(playlistId:String,pending:Map<String,Boolean>):Map<String,Boolean> {
+        val id=SpotifySync.cleanPlaylistId(playlistId)
+        val now=System.currentTimeMillis()
+        val result=edits[id].orEmpty().filterValues {now-it.createdAt in 0..120_000L}.mapValues {it.value.saved}.toMutableMap()
+        result.putAll(pending)
+        previews.forEach {(key,edit)->if(key.first==id)result[key.second]=edit.saved}
+        return result
+    }
+
     @Synchronized internal fun optimistic(context: Context, playlistId: String, trackId: String, saved: Boolean): Mutation? {
         ensureLoaded(context)
         val id = SpotifySync.cleanPlaylistId(playlistId)
@@ -129,7 +139,7 @@ object SavedTrackLibrary {
             val locals = localLists(app)
             synchronized(this@SavedTrackLibrary) {
                 _snapshot.update { old -> old.copy(playlists = locals + old.playlists.filterNot { it.local }.map { remote ->
-                    remote.copy(extraSongs = PlaylistAdditionsPref.tracks(app, remote.id))
+                    remote.copy(extraSongs = PlaylistAdditionsPref.tracks(app, remote.id),hiddenKeys=PlaylistAdditionsPref.removedKeys(app,remote.id))
                 }) }
                 persist()
             }
@@ -197,7 +207,9 @@ object SavedTrackLibrary {
 
     private suspend fun load(app: Context, token: Long) {
         val locals = localLists(app)
-        val disk = synchronized(this) { if (!hydrated) account else null }?.let { SavedPlaylistCache.read(app, it) }
+        val disk = synchronized(this) { if (!hydrated) account else null }?.let { SavedPlaylistCache.read(app, it) }?.let { cached ->
+            cached.copy(playlists=cached.playlists.map {list->list.copy(extraSongs=PlaylistAdditionsPref.tracks(app,list.id),hiddenKeys=PlaylistAdditionsPref.removedKeys(app,list.id))})
+        }
         synchronized(this) {
             if (token != generation) return
             if (disk != null && !hydrated) {
@@ -230,13 +242,14 @@ object SavedTrackLibrary {
                 return SavedPlaylist(id, list.name, list.images.firstOrNull()?.url.orEmpty(),
                     trackIds = previous[id]?.trackIds.orEmpty(),
                     extraSongs = PlaylistAdditionsPref.tracks(app, id),
+                    hiddenKeys = PlaylistAdditionsPref.removedKeys(app,id),
                     checked = previous[id]?.checked == true)
             }
             val known = listings.filter(::verified).map(::entry).distinctBy { it.id }
             val listingIds = listings.map { SpotifySync.cleanPlaylistId(it.id) }.toSet()
             publish(token) { old -> old.copy(playlists = localLists(app) +
                 (known.map { entry -> old.playlists.firstOrNull { it.id == entry.id && !it.local }?.copy(
-                    name = entry.name, coverUri = entry.coverUri, extraSongs = entry.extraSongs) ?: entry } +
+                    name = entry.name, coverUri = entry.coverUri, extraSongs = entry.extraSongs, hiddenKeys=entry.hiddenKeys) ?: entry } +
                     old.playlists.filter { !it.local && (it.id in listingIds || edits[it.id]?.values?.any { edit -> System.currentTimeMillis() - edit.createdAt in 0..120_000L } == true) }).distinctBy { it.id }
                     .sortedBy { order[it.id] ?: Int.MAX_VALUE }) }
             // Owned lists appear immediately; a slow third-party permission check must not

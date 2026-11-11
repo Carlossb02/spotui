@@ -250,11 +250,12 @@ fun LyricsScreen(
         }
     }
 
-    LaunchedEffect(title, artist, album, trackId, trackDurationSec) {
-        val durationSec = trackDurationSec.takeIf { it > 0 } ?: (SongPlayer.getDuration() / 1000).toInt().coerceAtLeast(0)
-        vm.load(title, artist, album, durationSec, trackId)
-    }
-    val state by vm.state.collectAsState()
+    // Never use the previous decoder's duration while a new track is resolving.
+    val durationSec=trackDurationSec.coerceAtLeast(0)
+    val requestKey=LyricsViewModel.requestKey(title,artist,album,durationSec,trackId)
+    LaunchedEffect(requestKey) {vm.load(title,artist,album,durationSec,trackId)}
+    val receivedState by vm.state.collectAsState()
+    val state=vm.visibleState(requestKey,receivedState)
     val positionMs by rememberPlaybackPositionMs()
     val context = LocalContext.current
 
@@ -444,11 +445,12 @@ fun InlineLyrics(
     trackDurationSec: Int = 0,
 ) {
     val vm: LyricsViewModel = hiltViewModel()
-    LaunchedEffect(title, artist, album, trackId, trackDurationSec) {
-        val durationSec = trackDurationSec.takeIf { it > 0 } ?: (SongPlayer.getDuration() / 1000).toInt().coerceAtLeast(0)
-        vm.load(title, artist, album, durationSec, trackId)
-    }
-    val state by vm.state.collectAsState()
+    // Never use the previous decoder's duration while a new track is resolving.
+    val durationSec=trackDurationSec.coerceAtLeast(0)
+    val requestKey=LyricsViewModel.requestKey(title,artist,album,durationSec,trackId)
+    LaunchedEffect(requestKey) {vm.load(title,artist,album,durationSec,trackId)}
+    val receivedState by vm.state.collectAsState()
+    val state=vm.visibleState(requestKey,receivedState)
     val positionMs by rememberPlaybackPositionMs()
 
     Column(

@@ -67,7 +67,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -133,6 +132,12 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     val tabletCollectionLayout = LocalConfiguration.current.smallestScreenWidthDp >= 600 &&
         LocalConfiguration.current.screenWidthDp >= 840
 
+    val syncViewToken=remember {java.util.UUID.randomUUID().toString()}
+    DisposableEffect(syncViewToken) {
+        com.music.spotui.sync.GoogleDeviceSync.libraryVisible(syncViewToken,true)
+        onDispose {com.music.spotui.sync.GoogleDeviceSync.libraryVisible(syncViewToken,false)}
+    }
+
     // Trigger dinámico para refrescar la UI automáticamente cuando una descarga termina
     var downloadRefreshTrigger by remember { mutableStateOf(0) }
     DisposableEffect(Unit) {
@@ -161,28 +166,12 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     var favoritePlaylist by remember(playlistId) {
         mutableStateOf(com.music.spotui.data.preferences.FavoritePlaylistsPref.isFavorite(context, playlistId))
     }
-    var addedSongsRevision by remember(playlistId) { mutableStateOf(0) }
-    val originalSongs = (songsResp as? Response.Success)?.data.orEmpty()
-    val localAdditions = remember(playlistId, addedSongsRevision, songsResp) {
-        if (playlistId.startsWith("local_pl_")) emptyList()
-        else com.music.spotui.data.preferences.PlaylistAdditionsPref.tracks(context, playlistId)
-    }
-    val syncedPending = remember(playlistId, addedSongsRevision, songsResp) {
-        if (playlistId.startsWith("local_pl_")) emptyList()
-        else com.music.spotui.data.preferences.PlaylistSyncedPendingPref.tracks(context, playlistId)
-    }
-    // Spotify may return stale playlist content immediately after a successful POST.
-    // Show confirmed additions now, deduplicating once the remote endpoint catches up.
-    val songs = originalSongs + (localAdditions + syncedPending).filterNot { extra ->
-        originalSongs.any { existing -> existing.url == extra.url ||
-            (extra.spotifyTrackId.isNotBlank() &&
-                com.music.spotui.data.api.SpotifySync.cleanTrackId(existing.spotifyTrackId) == extra.spotifyTrackId) }
-    }
+    val songs=(songsResp as? Response.Success)?.data.orEmpty()
     val playlist = (playlistResp as? Response.Success)?.data
         ?: AlbumsModel(
             id = playlistId.hashCode() and 0x7fffffff,
             artists = "",
-            coverUri = songs.firstOrNull()?.coverUri ?: "",
+            coverUri = "",
             name = playlistName,
             time = "",
         )
@@ -226,7 +215,6 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             playlistId = playlistId,
             onDismiss = { showAddMusic = false },
             onAdded = {
-                addedSongsRevision++
                 com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(playlistId)
                 playlistViewModel.reloadPlaylist(playlistId)
             }
@@ -261,15 +249,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     }
 
     // Keys are stable across insertions and deletions; O(n) even for long playlists.
-    val stableSongKeys = remember(filteredSongs) {
-        val occurrences = HashMap<String, Int>()
-        filteredSongs.map { song ->
-            val identity = song.url.ifBlank { "song-${song.id}" }
-            val occurrence = occurrences[identity] ?: 0
-            occurrences[identity] = occurrence + 1
-            "$identity#$occurrence"
-        }
-    }
+    val stableSongKeys=remember(filteredSongs){com.music.spotui.ui.utils.stableSongKeys(filteredSongs)}
 
     var menuSong by remember { mutableStateOf<com.music.spotui.data.entity.SongsModel?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -393,7 +373,6 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             currentPlaylistId = playlistId,
             canEditCurrentPlaylist = canEditPlaylist,
             onSongRemovedFromPlaylist = {
-                addedSongsRevision++
                 com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(playlistId)
                 playlistViewModel.reloadPlaylist(playlistId)
             },
@@ -401,6 +380,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         )
     }
 
+    val listState=androidx.compose.runtime.key(playlistId) {androidx.compose.foundation.lazy.rememberLazyListState()}
     Surface(
         color = Color.Transparent,
         modifier = Modifier.fillMaxSize().background(Color(AppBackground.toArgb()))
@@ -427,7 +407,6 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         }
 
 
-        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
         com.music.spotui.ui.components.VisibleSongPreload(listState, remember(filteredSongs) { filteredSongs.mapIndexed { i, song -> stableSongKeys[i] to song } })
     val collapsedTitle = com.music.spotui.ui.components.rememberCollectionTitleState(listState, "playlist_header")
         val searchReveal = rememberCollectionSearchState(listState, playlistId)
@@ -494,8 +473,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                 keyboardController?.hide()
                 focusManager.clearFocus()
             }
-            LaunchedEffect(keyboardVisible) {
-                if (keyboardVisible) listState.scrollToItem(0)
+            LaunchedEffect(keyboardVisible,searchReveal.expanded) {
+                if (keyboardVisible && searchReveal.expanded) listState.scrollToItem(0)
             }
             // Keep the search field in place; collapse only the expensive artwork/
             // metadata header while the IME is visible, leaving room for results.
@@ -524,7 +503,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                             placeholder = uiLocalized("Buscar en la lista")
                         )
                     }
-                    if (!keyboardVisible && !searchReveal.expanded && searchQuery.isBlank()) {
+                    if (!searchReveal.expanded && searchQuery.isBlank()) {
                     item(key = "playlist_header") {
                         Column(
                             modifier = Modifier
@@ -542,15 +521,17 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 modifier = Modifier.fillMaxWidth(),
                                 contentAlignment = Alignment.Center
                             ) {
-                                GlideImage(
-                                    modifier = Modifier
-                                        .size(if (tabletCollectionLayout) 212.dp else 230.dp)
-                                        .clip(RoundedCornerShape(5.dp)),
-                                    model = playlist.coverUri,
-                                    contentScale = ContentScale.Crop,
-                                    failure = placeholder(R.drawable.placeholder),
-                                    contentDescription = "Carátula de ${playlist.name}",
-                                )
+                                androidx.compose.runtime.key(playlistId, playlist.coverUri) {
+                                    GlideImage(
+                                        modifier = Modifier
+                                            .size(if (tabletCollectionLayout) 212.dp else 230.dp)
+                                            .clip(RoundedCornerShape(5.dp)),
+                                        model = playlist.coverUri,
+                                        contentScale = ContentScale.Crop,
+                                        failure = placeholder(R.drawable.placeholder),
+                                        contentDescription = "Carátula de ${playlist.name}",
+                                    )
+                                }
                             }
                             Spacer(modifier = Modifier.height(17.dp))
                             val isLocalPlaylist = playlistId.startsWith("local_pl_")
@@ -873,7 +854,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                     }
                     itemsIndexed(filteredSongs, key = { index, _ -> stableSongKeys[index] }) { index, song ->
                         val currentColor = if (song.id == playlistViewModel.currentSongId.value)
-                            Color(AppPalette.toArgb()) else Color.White
+                            Color(0xFF1ED760) else Color.White
 
                         // Forzar recomposición si el trigger de descargas cambia
 
