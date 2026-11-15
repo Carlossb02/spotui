@@ -1106,7 +1106,7 @@ object PodcastVideoSession {
                 if (!SongPlayer.isPodcastEpisodeLoaded(videoId)) {
                     // A tap made while the same episode is still resolving must
                     // not destroy the visual player before the audio starts.
-                    if (SongPlayer.isPreparingTrack() && pendingAudioMs < 20_000L) {
+                    if (SongPlayer.isPreparingPodcastEpisode(videoId) && pendingAudioMs < 20_000L) {
                         pendingAudioMs += 250L
                         delay(250L)
                         continue

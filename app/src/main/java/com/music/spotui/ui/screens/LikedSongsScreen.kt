@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
+import androidx.compose.foundation.layout.heightIn
 
+import androidx.compose.ui.draw.shadow
 import com.music.spotui.ui.components.scrollingCollectionBackground
 import com.music.spotui.util.uiLocalized
 
@@ -186,7 +188,7 @@ fun LikedSongsScreen(navController: NavController) {
         Scaffold(
             modifier = Modifier.fillMaxSize().scrollingCollectionBackground(
                 topColor = likedColor, baseColor = Color(AppBackground.toArgb()),
-                listState = listState, headerKey = "liked_header"),
+                listState = listState, headerKey = "liked_header", coverUri = "https://misc.scdn.co/liked-songs/liked-songs-640.png"),
             containerColor = Color.Transparent,
             topBar = {
                 CenterAlignedTopAppBar(
@@ -218,7 +220,7 @@ fun LikedSongsScreen(navController: NavController) {
                         containerColor = if (collapsedTitle.collapsed) com.music.spotui.ui.components.collectionToolbarColor(likedColor, AppBackground) else Color.Transparent,
                         titleContentColor = Color.White,
                     ),
-                    title = { if (collapsedTitle.collapsed) Text(uiLocalized("Liked Songs"),
+                    title = { if (collapsedTitle.collapsed) Text(uiLocalized("Canciones que te gustan"),
                         maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp) }
                 )
@@ -267,10 +269,10 @@ fun LikedSongsScreen(navController: NavController) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(440.dp),
+                                .heightIn(min = 440.dp),
                             verticalArrangement = Arrangement.Center,
                         ) {
-                            Spacer(modifier = Modifier.padding(25.dp))
+                            Spacer(modifier = Modifier.height(24.dp))
 
                             Box(
                                 modifier = Modifier
@@ -279,7 +281,8 @@ fun LikedSongsScreen(navController: NavController) {
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(230.dp)
+                                        .size(com.music.spotui.ui.components.collectionCoverSize())
+                                        .shadow(16.dp, RoundedCornerShape(18.dp)).clip(RoundedCornerShape(18.dp))
                                         .background(
                                             brush = Brush.linearGradient(
                                                 colors = listOf(Color(0xFF8E6FE0), Color(0xFF3B2A82)),
@@ -300,7 +303,7 @@ fun LikedSongsScreen(navController: NavController) {
                                 modifier = Modifier.padding(20.dp, 5.dp, 0.dp, 0.dp).then(collapsedTitle.titleModifier),
                                 text = "Canciones que te gustan",
                                 color = Color.White,
-                                fontSize = 28.sp,
+                                fontSize = 32.sp,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
@@ -316,12 +319,10 @@ fun LikedSongsScreen(navController: NavController) {
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(52.dp)
+                                    .height(64.dp)
                                     .padding(20.dp, 0.dp)
                             ) {
-                                var likedDownloaded by remember(songs) {
-                                    mutableStateOf(songs.isNotEmpty() && SongPlayer.allDownloaded(songs, context))
-                                }
+
 
                                 if (snackbarVisible) {
                                     Box(modifier = Modifier.weight(1f)) {
@@ -335,70 +336,62 @@ fun LikedSongsScreen(navController: NavController) {
                                         modifier = Modifier.weight(1f)
                                     ) {
                                         if (songs.isNotEmpty()) {
-                                            Icon(
-                                                imageVector = if (likedDownloaded)
-                                                    Icons.Default.CheckCircle else ImageVector.vectorResource(R.drawable.ic_download),
-                                                tint = if (likedDownloaded) Color(AppPalette.toArgb()) else Color.White,
-                                                modifier = Modifier
-                                                    .size(24.dp)
-                                                    .clickable(
-                                                        interactionSource = remember { MutableInteractionSource() },
-                                                        indication = null,
-                                                    ) {
-                                                        if (!likedDownloaded) {
-                                                            SongPlayer.downloadAll(songs, context)
-                                                            snackbarMessage = "Downloading ${songs.size} tracks…"
-                                                            snackbarVisible = true
-                                                        }
-                                                    },
-                                                contentDescription = uiLocalized("Download liked songs"),
-                                            )
-                                            Spacer(modifier = Modifier.width(18.dp))
-                                            Icon(
-                                                painter = painterResource(id = R.drawable.ic_queue_add),
-                                                tint = Color.White,
-                                                modifier = Modifier
-                                                    .size(24.dp)
-                                                    .clickable(
-                                                        interactionSource = remember { MutableInteractionSource() },
-                                                        indication = null,
-                                                    ) {
-                                                        playerViewModel.addAllToQueue(songs)
-                                                        android.widget.Toast.makeText(
-                                                            context,
-                                                            "${songs.size} track(s) added to queue",
-                                                            android.widget.Toast.LENGTH_SHORT,
-                                                        ).show()
-                                                    },
-                                                contentDescription = uiLocalized("Add to queue"),
-                                            )
-                                            Spacer(modifier = Modifier.width(18.dp))
-                                            Icon(
-                                                painter = painterResource(id = R.drawable.ic_player_shuffle),
-                                                tint = Color.White,
-                                                modifier = Modifier
-                                                    .size(24.dp)
-                                                    .clickable(
-                                                        interactionSource = remember { MutableInteractionSource() },
-                                                        indication = null,
-                                                    ) {
-                                                        likedSongsViewModel.startShuffled(songs, sourceName = "Liked Songs")?.let { first ->
-                                                            likedSongsViewModel.updateSongState(
-                                                                first.coverUri,
-                                                                first.title,
-                                                                first.singer,
-                                                                true,
-                                                                first.id,
-                                                                0,
-                                                                "Liked Songs",
-                                                            )
-                                                            SongPlayer.playSong(first.url, context, "song/${first.id}")
-                                                        }
-                                                    },
-                                                contentDescription = uiLocalized("Shuffle play"),
-                                            )
+                                            com.music.spotui.ui.components.CollectionDownloadButton(songs, uiLocalized("Download liked songs")) { complete ->
+                                                if (!complete) {
+                                                    SongPlayer.downloadAll(songs, context)
+                                                    snackbarMessage = "Downloading ${songs.size} tracks…"
+                                                    snackbarVisible = true
+                                                }
+                                            }
+                                            com.music.spotui.ui.components.CollectionSortButton { showSortSheet = true }
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            com.music.spotui.ui.components.CollectionActionSurface(onClick = {
+                                                playerViewModel.addAllToQueue(songs)
+                                                android.widget.Toast.makeText(
+                                                    context,
+                                                    "${songs.size} track(s) added to queue",
+                                                    android.widget.Toast.LENGTH_SHORT,
+                                                ).show()
+                                            }) {
+                                                Icon(
+                                                    painter = painterResource(id = R.drawable.ic_queue_add),
+                                                    tint = Color.White,
+                                                    modifier = Modifier
+                                                        .size(24.dp)
+                                                        ,
+                                                    contentDescription = uiLocalized("Add to queue"),
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.width(8.dp))
+
                                         }
                                     }
+                                }
+                                if (songs.isNotEmpty()) {
+                                    com.music.spotui.ui.components.CollectionActionSurface(onClick = {
+                                        likedSongsViewModel.startShuffled(songs, sourceName = "Canciones que te gustan")?.let { first ->
+                                            likedSongsViewModel.updateSongState(
+                                                first.coverUri,
+                                                first.title,
+                                                first.singer,
+                                                true,
+                                                first.id,
+                                                0,
+                                                "Canciones que te gustan",
+                                            )
+                                            SongPlayer.playSong(first.url, context, "song/${first.id}")
+                                        }
+                                    }) {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.ic_player_shuffle),
+                                            tint = Color.White,
+                                            modifier = Modifier
+                                                .size(24.dp)
+                                                ,
+                                            contentDescription = uiLocalized("Shuffle play"),
+                                        )
+                                    }
+                                    Spacer(Modifier.width(12.dp))
                                 }
                                 if (songs.isNotEmpty()) {
                                     val playing = likedSongsViewModel.currentSongPlayingState.value
@@ -406,7 +399,7 @@ fun LikedSongsScreen(navController: NavController) {
                                     Box(
                                         contentAlignment = Alignment.Center,
                                         modifier = Modifier
-                                            .size(52.dp)
+                                            .size(56.dp)
                                             .clip(RoundedCornerShape(100.dp))
                                             .background(Color(0xFF1ED760))
                                             .clickable(
@@ -416,7 +409,7 @@ fun LikedSongsScreen(navController: NavController) {
                                                 when {
                                                     currentInList -> likedSongsViewModel.setPlaying(!playing)
                                                     else -> {
-                                                        likedSongsViewModel.updateQueue(songs, sourceName = "Liked Songs")
+                                                        likedSongsViewModel.updateQueue(songs, sourceName = "Canciones que te gustan")
                                                         likedSongsViewModel.updateSongState(
                                                             songs[0].coverUri,
                                                             songs[0].title,
@@ -424,7 +417,7 @@ fun LikedSongsScreen(navController: NavController) {
                                                             true,
                                                             songs[0].id,
                                                             0,
-                                                            "Liked Songs"
+                                                            "Canciones que te gustan"
                                                         )
                                                         SongPlayer.playSong(songs[0].url, context, "song/${songs[0].id}")
                                                     }
@@ -448,7 +441,7 @@ fun LikedSongsScreen(navController: NavController) {
                     }
 
                     item(key = "liked_sort") {
-                        if (songs.isNotEmpty()) {
+                        if (songs.isNotEmpty() && (searchReveal.expanded || searchQuery.isNotBlank())) {
                             CollectionSortRow(
                                 label = collectionSortLabel(currentSort.name, isDescending),
                                 onClick = { showSortSheet = true }
@@ -497,7 +490,7 @@ fun LikedSongsScreen(navController: NavController) {
                                             indication = null,
                                             onLongClick = { menuSong = song },
                                             onClick = {
-                                                likedSongsViewModel.updateQueue(filteredSongs, startSongId = song.id, sourceName = "Liked Songs")
+                                                likedSongsViewModel.updateQueue(filteredSongs, startSongId = song.id, sourceName = "Canciones que te gustan")
                                                 likedSongsViewModel.updateSongState(
                                                     song.coverUri,
                                                     song.title,
@@ -505,7 +498,7 @@ fun LikedSongsScreen(navController: NavController) {
                                                     true,
                                                     song.id,
                                                     0,
-                                                    "Liked Songs"
+                                                    "Canciones que te gustan"
                                                 )
                                                 SongPlayer.playSong(song.url, context, "song/${song.id}")
                                             },

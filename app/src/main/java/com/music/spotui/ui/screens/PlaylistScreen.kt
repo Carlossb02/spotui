@@ -1,5 +1,6 @@
 package com.music.spotui.ui.screens
 
+import androidx.compose.ui.draw.shadow
 import com.music.spotui.ui.components.scrollingCollectionBackground
 import com.music.spotui.util.uiLocalized
 
@@ -417,7 +418,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         Scaffold(
             modifier = Modifier.fillMaxSize().scrollingCollectionBackground(
                 topColor = dominentColor, baseColor = Color(AppBackground.toArgb()),
-                listState = listState, headerKey = "playlist_header"),
+                listState = listState, headerKey = "playlist_header", coverUri = playlist.coverUri),
             containerColor = Color.Transparent,
             topBar = {
                 CenterAlignedTopAppBar(
@@ -524,8 +525,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 androidx.compose.runtime.key(playlistId, playlist.coverUri) {
                                     GlideImage(
                                         modifier = Modifier
-                                            .size(if (tabletCollectionLayout) 212.dp else 230.dp)
-                                            .clip(RoundedCornerShape(5.dp)),
+                                            .size(com.music.spotui.ui.components.collectionCoverSize())
+                                            .shadow(16.dp, RoundedCornerShape(18.dp)).clip(RoundedCornerShape(18.dp)),
                                         model = playlist.coverUri,
                                         contentScale = ContentScale.Crop,
                                         failure = placeholder(R.drawable.placeholder),
@@ -542,7 +543,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 Text(
                                     text = playlist.name.ifBlank { playlistName },
                                     color = Color.White,
-                                    fontSize = if (tabletCollectionLayout) 30.sp else 30.sp,
+                                    fontSize = 32.sp,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 2,
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -617,12 +618,10 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(52.dp)
+                                    .height(64.dp)
                                     .padding(20.dp, 0.dp)
                             ) {
-                                var playlistDownloaded by remember(songs, downloadRefreshTrigger) {
-                                    mutableStateOf(songs.isNotEmpty() && SongPlayer.allDownloaded(songs, context))
-                                }
+
 
                                 if (snackbarVisible) {
                                     Box(modifier = Modifier.weight(1f)) {
@@ -639,85 +638,50 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                             com.music.spotui.ui.components.LibrarySaveIcon(
                                                 saved = favoritePlaylist, onClick = { togglePlaylistFavorite() },
                                             )
-                                            Spacer(Modifier.width(18.dp))
+                                            Spacer(Modifier.width(8.dp))
                                         }
                                         if (songs.isNotEmpty()) {
                                             // Add all playlist tracks to the queue.
-                                            Icon(
-                                                painter = painterResource(id = R.drawable.ic_queue_add),
-                                                tint = Color.White,
-                                                modifier = Modifier
-                                                    .size(24.dp)
-                                                    .clickable(
-                                                        interactionSource = remember { MutableInteractionSource() },
-                                                        indication = null,
-                                                    ) {
-                                                        playlistViewModel.addAllToQueue(filteredSongs)
-                                                        android.widget.Toast.makeText(
-                                                            context,
-                                                            "${filteredSongs.size} track(s) added to queue",
-                                                            android.widget.Toast.LENGTH_SHORT,
-                                                        ).show()
-                                                    },
-                                                contentDescription = uiLocalized("Add to queue"),
-                                            )
-                                            Spacer(modifier = Modifier.width(18.dp))
-                                            Icon(
-                                                imageVector = if (playlistDownloaded)
-                                                    Icons.Default.CheckCircle else ImageVector.vectorResource(R.drawable.ic_download),
-                                                tint = if (playlistDownloaded) Color(AppPalette.toArgb()) else Color.White,
-                                                modifier = Modifier
-                                                    .size(24.dp)
-                                                    .clickable(
-                                                        interactionSource = remember { MutableInteractionSource() },
-                                                        indication = null,
-                                                    ) {
-                                                        com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollection(
-                                                            context = context,
-                                                            id = playlistId,
-                                                            name = playlist.name,
-                                                            coverUri = playlist.coverUri,
-                                                            artists = playlist.artists,
-                                                            isPlaylist = true,
-                                                            songs = songs
-                                                        )
-                                                        if (!playlistDownloaded) {
-                                                            SongPlayer.downloadAll(songs, context)
-                                                            snackbarMessage = "Downloading ${songs.size} tracks…"
-                                                            snackbarVisible = true
-                                                        } else {
-                                                            snackbarMessage = "Playlist added to offline library"
-                                                            snackbarVisible = true
-                                                        }
-                                                    },
-                                                contentDescription = uiLocalized("Download playlist"),
-                                            )
-                                            Spacer(modifier = Modifier.width(18.dp))
-                                            // Shuffle-play: start the playlist in random order.
-                                            Icon(
-                                                painter = painterResource(id = R.drawable.ic_player_shuffle),
-                                                tint = Color.White,
-                                                modifier = Modifier
-                                                    .size(24.dp)
-                                                    .clickable(
-                                                        interactionSource = remember { MutableInteractionSource() },
-                                                        indication = null,
-                                                    ) {
-                                                        playlistViewModel.startShuffled(songs, sourceName = playlist.name)?.let { first ->
-                                                            playlistViewModel.updateSongState(
-                                                                first.coverUri,
-                                                                first.title,
-                                                                first.singer,
-                                                                true,
-                                                                first.id,
-                                                                0,
-                                                                playlist.name,
-                                                            )
-                                                            SongPlayer.playSong(first.url, context, "song/${first.id}")
-                                                        }
-                                                    },
-                                                contentDescription = uiLocalized("Shuffle play"),
-                                            )
+                                            com.music.spotui.ui.components.CollectionActionSurface(onClick = {
+                                                playlistViewModel.addAllToQueue(filteredSongs)
+                                                android.widget.Toast.makeText(
+                                                    context,
+                                                    "${filteredSongs.size} track(s) added to queue",
+                                                    android.widget.Toast.LENGTH_SHORT,
+                                                ).show()
+                                            }) {
+                                                Icon(
+                                                    painter = painterResource(id = R.drawable.ic_queue_add),
+                                                    tint = Color.White,
+                                                    modifier = Modifier
+                                                        .size(24.dp)
+                                                        ,
+                                                    contentDescription = uiLocalized("Add to queue"),
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            com.music.spotui.ui.components.CollectionDownloadButton(songs, uiLocalized("Download playlist")) { complete ->
+                                                com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollection(
+                                                    context = context,
+                                                    id = playlistId,
+                                                    name = playlist.name,
+                                                    coverUri = playlist.coverUri,
+                                                    artists = playlist.artists,
+                                                    isPlaylist = true,
+                                                    songs = songs
+                                                )
+                                                if (!complete) {
+                                                    SongPlayer.downloadAll(songs, context)
+                                                    snackbarMessage = "Downloading ${songs.size} tracks…"
+                                                    snackbarVisible = true
+                                                } else {
+                                                    snackbarMessage = "Playlist added to offline library"
+                                                    snackbarVisible = true
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            com.music.spotui.ui.components.CollectionSortButton { showSortSheet = true }
+
 
                                         }
                                     }
@@ -725,12 +689,38 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 // Always visible: pause when playing, resume when this
                                 // list's track is paused, otherwise start from the top.
                                 if (songs.isNotEmpty()) {
+                                    com.music.spotui.ui.components.CollectionActionSurface(onClick = {
+                                        playlistViewModel.startShuffled(songs, sourceName = playlist.name)?.let { first ->
+                                            playlistViewModel.updateSongState(
+                                                first.coverUri,
+                                                first.title,
+                                                first.singer,
+                                                true,
+                                                first.id,
+                                                0,
+                                                playlist.name,
+                                            )
+                                            SongPlayer.playSong(first.url, context, "song/${first.id}")
+                                        }
+                                    }) {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.ic_player_shuffle),
+                                            tint = Color.White,
+                                            modifier = Modifier
+                                                .size(24.dp)
+                                                ,
+                                            contentDescription = uiLocalized("Shuffle play"),
+                                        )
+                                    }
+                                    Spacer(Modifier.width(12.dp))
+                                }
+                                if (songs.isNotEmpty()) {
                                     val playing = playlistViewModel.currentSongPlayingState.value
                                     val currentInList = songs.any { it.id == playlistViewModel.currentSongId.value }
                                     Box(
                                         contentAlignment = Alignment.Center,
                                         modifier = Modifier
-                                            .size(52.dp)
+                                            .size(56.dp)
                                             .clip(RoundedCornerShape(100.dp))
                                             .background(Color(0xFF1ED760))
                                             .clickable(
@@ -771,42 +761,11 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
 
                     }
 
-                    if (playlistId.startsWith("local_pl_")) {
-                        item(key = "local_playlist_actions") {
-                            Row(
-                                modifier = Modifier.fillMaxWidth()
-                                    .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 6.dp),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.clip(RoundedCornerShape(24.dp))
-                                        .background(Color(0xFF292929))
-                                        .clickable { showRenameDialog = true }
-                                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(Icons.Default.Edit, null, tint = Color.White, modifier = Modifier.size(17.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(uiLocalized("Editar"), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                                }
-                                Row(
-                                    modifier = Modifier.clip(RoundedCornerShape(24.dp))
-                                        .background(Color(0xFF292929))
-                                        .clickable { showSortSheet = true }
-                                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(Icons.Default.Menu, null, tint = Color.White, modifier = Modifier.size(17.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(uiLocalized("Ordenar"), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                                }
-                            }
-                        }
-                    }
+
 
                     item(key = "playlist_sort") {
                         // Local playlists already have a visible Spotify-style 'Ordenar' pill.
-                        if (songs.isNotEmpty() && !playlistId.startsWith("local_pl_")) {
+                        if (songs.isNotEmpty() && (searchReveal.expanded || searchQuery.isNotBlank())) {
                             CollectionSortRow(
                                 label = collectionSortLabel(currentSort.name, isDescending),
                                 onClick = { showSortSheet = true }
@@ -827,9 +786,10 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                     }
                     if (canEditPlaylist) item(key = "add_music_to_playlist") {
                         Row(
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 10.dp)
+                                .clip(RoundedCornerShape(32.dp)).background(Color(0xFF202020))
                                 .clickable { showAddMusic = true }
-                                .padding(horizontal = 17.dp, vertical = 10.dp)
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
                                 .height(48.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {

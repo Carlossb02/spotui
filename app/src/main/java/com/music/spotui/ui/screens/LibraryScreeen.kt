@@ -776,7 +776,7 @@ fun SumUpLibraryScreen(
                     )
                 }
                 Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
-                    Text(text = entry.name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(text = if (entry.spotifyId == Api.HomeCache.LIKED_SONGS_ID) "Canciones que te gustan" else entry.name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (entry.spotifyId in pinnedIds) {
                             Icon(Icons.Filled.PushPin, contentDescription = uiLocalized("Fijado"),
@@ -1002,7 +1002,7 @@ fun LibraryGridScreen(
                     )
                 }
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(text = entry.name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(text = if (entry.spotifyId == Api.HomeCache.LIKED_SONGS_ID) "Canciones que te gustan" else entry.name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (entry.spotifyId in pinnedIds) {
                         Icon(Icons.Filled.PushPin, contentDescription = uiLocalized("Fijado"),

@@ -1,6 +1,10 @@
 package com.music.spotui.audio
 
 internal object PlaybackLoadingPolicy {
+    fun deferBackgroundWork(playWhenReady: Boolean, resolving: Boolean, buffering: Boolean) =
+        playWhenReady && (resolving || buffering)
+    fun preparingSameEpisode(query: String, videoId: String, preparing: Boolean) =
+        preparing && (query == "yt_ep:$videoId" || query.startsWith("yt_ep:$videoId|"))
     fun canPreload(resolving: Boolean, hasMedia: Boolean, ready: Boolean): Boolean =
         !resolving && (!hasMedia || ready)
 

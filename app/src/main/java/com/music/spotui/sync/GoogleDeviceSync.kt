@@ -522,7 +522,7 @@ object GoogleDeviceSync {
         }
         private fun cycle() {
             // Foreground source selection owns CPU/disk/network until audio is prepared.
-            if(com.music.spotui.di.SongPlayer.isPreparingTrack()) {
+            if(com.music.spotui.di.SongPlayer.isPlaybackStartupBusy()) {
                 if(playbackSettled?.isActive!=true)playbackSettled=work.launch {delay(750);wake.trySend(Unit)}
                 return
             }

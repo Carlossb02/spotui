@@ -1,6 +1,7 @@
 package com.music.spotui.ui.screens
 
 import androidx.compose.foundation.gestures.animateScrollBy
+import kotlinx.coroutines.flow.first
 
 import com.music.spotui.util.uiLocalized
 import androidx.lifecycle.repeatOnLifecycle
@@ -350,16 +351,22 @@ private fun HomeHeaderRow(
     val musicHasNews=hasUnreadReleases(musicReleases.items.map {it.publishedAt},musicSeen)
     val podcastsHaveNews=hasUnreadReleases(podcastReleases.items.map {it.publishedAt},podcastsSeen)
     val filterScroll = androidx.compose.foundation.lazy.rememberLazyListState()
+    val filterDensity = androidx.compose.ui.platform.LocalDensity.current
     LaunchedEffect(selectedFilter, isFollowingOnly) {
         val index = listOf("All", "Music", "Podcasts", "Audiobooks").indexOf(selectedFilter).coerceAtLeast(0)
         if (selectedFilter == "All") filterScroll.animateScrollToItem(0)
         else {
-            filterScroll.scrollToItem(index)
             androidx.compose.runtime.withFrameNanos { }
-            val layout = filterScroll.layoutInfo
-            layout.visibleItemsInfo.firstOrNull { it.index == index }?.let { item ->
+            val layout = androidx.compose.runtime.snapshotFlow { filterScroll.layoutInfo }.first { it.viewportSize.width > 0 && it.visibleItemsInfo.isNotEmpty() }
+            val item = layout.visibleItemsInfo.firstOrNull { it.index == index }
+            if (item != null) {
                 val centerOffset = (layout.viewportStartOffset + layout.viewportEndOffset - item.size) / 2f
-                filterScroll.animateScrollBy(item.offset - centerOffset)
+                filterScroll.animateScrollBy(item.offset - centerOffset,
+                    androidx.compose.animation.core.tween(440, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+            } else {
+                val estimatedWidth = with(filterDensity) { 220.dp.roundToPx() }
+                val offset = -((layout.viewportSize.width - estimatedWidth).coerceAtLeast(0) / 2)
+                filterScroll.animateScrollToItem(index, offset)
             }
         }
     }

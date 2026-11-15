@@ -2,6 +2,18 @@ package com.music.spotui.audio
 import org.junit.Assert.*
 import org.junit.Test
 class PlaybackLoadingPolicyTest {
+ @Test fun syncingWaitsUntilAudioBytesAreReadyNotOnlyUntilSearchFinishes() {
+  assertTrue(PlaybackLoadingPolicy.deferBackgroundWork(true,true,false))
+  assertTrue(PlaybackLoadingPolicy.deferBackgroundWork(true,false,true))
+  assertFalse(PlaybackLoadingPolicy.deferBackgroundWork(true,false,false))
+  assertFalse(PlaybackLoadingPolicy.deferBackgroundWork(false,true,true))
+ }
+ @Test fun changingFromPodcastToMusicNeverRetainsTheOldVisualDecoder() {
+  assertFalse(PlaybackLoadingPolicy.preparingSameEpisode("spotify:track:id|music", "abcdefghijk", true))
+  assertFalse(PlaybackLoadingPolicy.preparingSameEpisode("yt_ep:other_video|show", "abcdefghijk", true))
+  assertTrue(PlaybackLoadingPolicy.preparingSameEpisode("yt_ep:abcdefghijk|show", "abcdefghijk", true))
+  assertFalse(PlaybackLoadingPolicy.preparingSameEpisode("yt_ep:abcdefghijk|show", "abcdefghijk", false))
+ }
  @Test fun preloadingWaitsForForegroundButCanRunBeforeFirstPlay(){assertTrue(PlaybackLoadingPolicy.canPreload(false,false,false));assertTrue(PlaybackLoadingPolicy.canPreload(false,true,true));assertFalse(PlaybackLoadingPolicy.canPreload(false,true,false));assertFalse(PlaybackLoadingPolicy.canPreload(true,false,false));assertFalse(PlaybackLoadingPolicy.canPreload(true,true,true))}
  @Test fun fastPathRequiresEveryIdentityGate(){
   fun match(flags:List<Boolean>,stage:Int=1,duration:Int?=2,official:Boolean=true,upload:Boolean=false)=PlaybackLoadingPolicy.exactCandidate(stage,flags[0],flags[1],flags[2],flags[3],flags[4],flags[5],duration,official,upload)
