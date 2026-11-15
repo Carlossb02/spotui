@@ -21,7 +21,16 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
-class HomeViewModel @Inject constructor(private val repository: AppRepository)  : ViewModel() {
+class HomeViewModel @Inject constructor(private val repository: AppRepository,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context) : ViewModel() {
+
+    private val followingReleases = com.music.spotui.data.api.FollowingReleaseFeed(appContext, viewModelScope)
+    internal val followedEpisodes = followingReleases.podcasts
+    internal val followedMusicReleases = followingReleases.music
+    internal fun refreshFollowedReleases(force:Boolean=false,kind:com.music.spotui.data.preferences.ReleaseKind?=null) {
+        followingReleases.refresh(com.music.spotui.data.preferences.SubscribedPodcastPref.getSubscribedPodcasts(appContext),
+            _followedArtists.value,force,kind)
+    }
 
 
     private val _albums : MutableStateFlow<Response<List<AlbumsModel>>> = MutableStateFlow(Response.Loading())
@@ -199,6 +208,7 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository)  
     private fun fetchFollowedArtists() = viewModelScope.launch(Dispatchers.IO) {
         _followedArtists.value = repository.provideFollowedArtists()
     }
+    fun refreshFollowedArtists() { fetchFollowedArtists() }
 
     suspend fun getAlbumSongs(albumName: String, artist: String = "") = repository.provideAlbumSongs(albumName, artist)
 }

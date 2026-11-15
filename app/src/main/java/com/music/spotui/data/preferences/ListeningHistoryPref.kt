@@ -125,11 +125,16 @@ internal fun getDeviceListeningHistory(context: Context, year: Int? = null, mont
     }
 }
 fun getListeningHistory(context: Context, year: Int? = null, month: Int? = null, limit: Int = 500): List<HistoryEntry> {
-    val synced = com.music.spotui.sync.CloudHistory.projection ?: return getDeviceListeningHistory(context, year, month, limit)
-    return synced.asSequence().filter { e ->
+    val synced = com.music.spotui.sync.CloudHistory.projection
+    val rows = synced?.asSequence()?.filter { e ->
         val period = YearMonth.from(Instant.ofEpochMilli(e.ts).atZone(ZoneId.systemDefault()))
         (year == null || period.year == year) && (month == null || period.monthValue == month)
-    }.take(limit).toList()
+    }?.take(limit)?.toList() ?: getDeviceListeningHistory(context, year, month, limit)
+    PodcastResumeStore.ensureLoaded(context)
+    val knownEpisodes = PodcastResumeStore.entries.value.map { it.episode.url }.toMutableSet()
+    context.getSharedPreferences("spotui_episode_show_map_v1", Context.MODE_PRIVATE).all.keys
+        .forEach { knownEpisodes += "yt_ep:$it" }
+    return repairLegacyPodcastHistory(rows, knownEpisodes)
 }
 internal fun notifySyncedHistoryChanged() { _listeningHistoryVersion.update { it + 1L } }
 internal fun storeQualifiedListening(context: Context, entry: HistoryEntry, expectedClearGeneration: Long) = synchronized(historyLock) {

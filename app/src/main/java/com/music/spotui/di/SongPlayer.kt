@@ -513,6 +513,7 @@ object SongPlayer {
 
     @Volatile private var currentRequest: String = ""
     @Volatile private var loadedQuery: String? = null
+    private var foregroundPlaybackJob: Job? = null
     @Volatile private var playWhenResolved = true
 
     @Volatile private var metaTitle: String = ""
@@ -558,6 +559,8 @@ object SongPlayer {
         val ctx = appCtx ?: com.music.spotui.MyApplication.instance
         val cleanId = songIdStr?.removePrefix("song/")?.removePrefix("playlist/")?.removePrefix("album/")?.trim()
         scope.launch(Dispatchers.IO) {
+            awaitAudioStartup()
+            if (metadataGeneration.get() != generation) return@launch
             val file = runCatching {
                 com.bumptech.glide.Glide.with(ctx)
                     .downloadOnly()
@@ -908,6 +911,7 @@ object SongPlayer {
         val appContext = context.applicationContext
         appCtx = appContext
         purgeLegacyMatchCachesOnce(appContext)
+        if (currentRequest != song) foregroundPlaybackJob?.cancel()
         currentRequest = song
         // Keep the target's in-flight preload so the tap can join it. Stop unrelated
         // speculative work before starting the foreground request.
@@ -1067,14 +1071,15 @@ object SongPlayer {
             playWhenResolved = false
             boundState?.updatePlayingState(false)
         }
-        acquireWakeLock(appContext, "spotui:playSong", 60_000L)
-        scope.launch {
+        val requestWakeTag = "spotui:playSong:$requestGeneration"
+        acquireWakeLock(appContext, requestWakeTag, 60_000L)
+        foregroundPlaybackJob = scope.launch {
             try {
                 val streamUrl = resolveStreamUrl(song, appContext, forPlayback = true) ?: run {
                     if (playbackGeneration.get() != requestGeneration) return@launch
                     playbackResolving = false
                     publishPlaybackIntent()
-                    releaseWakeLock("spotui:playSong")
+                    releaseWakeLock(requestWakeTag)
                     val existingError = boundState?.resolveError?.value
                     if (currentRequest == song && existingError.isNullOrBlank()) {
                         withContext(Dispatchers.Main) {
@@ -1134,7 +1139,7 @@ object SongPlayer {
                     publishPlaybackIntent()
                     updateResolveStatus(false)
                 }
-                releaseWakeLock("spotui:playSong")
+                releaseWakeLock(requestWakeTag)
                 startPrefetch()
                 startPositionWatch()
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -1143,7 +1148,7 @@ object SongPlayer {
                 if (playbackGeneration.get() != requestGeneration) return@launch
                 playbackResolving = false
                 publishPlaybackIntent()
-                releaseWakeLock("spotui:playSong")
+                releaseWakeLock(requestWakeTag)
                 Log.e(TAG, "playSong failed for query: $song", e)
                 boundState?.updateResolveError(e.message ?: "Playback failed")
                 updateResolveStatus(false)
@@ -1159,6 +1164,8 @@ object SongPlayer {
                         consecutiveResolutionFailures = 0
                     }
                 }
+            } finally {
+                releaseWakeLock(requestWakeTag)
             }
         }
     }
@@ -3234,17 +3241,10 @@ object SongPlayer {
         val cacheKey = "$query|${com.metrolist.innertube.YouTube.SearchFilter.FILTER_SONG.value}|MATCH_V12"
         val candidatesCached = videoCandidatesCache.containsKey(cacheKey)
         val tried = mutableSetOf<String>()
-        val streamResolutionSemaphore = Semaphore(2)
         suspend fun tryIds(ids: List<String>, skipValidation: Boolean = false): YTPlayerUtils.PlaybackData? {
             val uniqueIds = ids.filter { it.isNotBlank() }.distinct().filter { tried.add(it) }
             if (uniqueIds.isEmpty()) return null
-            val attempts = uniqueIds.mapIndexed { index, videoId ->
-                scope.async {
-                    // Warm lower-priority candidates shortly after the first.
-                    // Two parallel stream resolvers max; the winner is still
-                    // chosen in the exact original ranking order.
-                    if (index > 0) delay(index * 180L)
-                    streamResolutionSemaphore.withPermit {
+            return orderedFirstNotNull(uniqueIds, parallelism = 2) { videoId, index ->
                         if (forPlayback) {
                             updateResolveStatus(true, "Resolving YouTube stream ${index + 1}/${uniqueIds.size}...")
                         }
@@ -3265,18 +3265,6 @@ object SongPlayer {
                             Log.w(TAG, "stream failed for $videoId (${error.message}) — trying next candidate for: ${searchTextForPlayback(query)}", error)
                             null
                         }
-                    }
-                }
-            }
-            // All candidates resolve in parallel, but the winner is still the first one (in match
-            // order) that succeeds; as soon as it does, the slower/lower-ranked ones are dropped.
-            try {
-                for (attempt in attempts) {
-                    attempt.await()?.let { return it }
-                }
-                return null
-            } finally {
-                attempts.forEach { it.cancel() }
             }
         }
         val isPodcast = query.startsWith("yt_ep:")
@@ -3590,6 +3578,16 @@ object SongPlayer {
     }
 
     fun isPreparingTrack(): Boolean = playbackResolving && playWhenResolved
+
+    /** Decorative work yields until resolution and the initial audio buffer settle. */
+    suspend fun awaitAudioStartup() {
+        // Selection updates metadata just before playSong marks the new request busy.
+        kotlinx.coroutines.yield()
+        while (withContext(Dispatchers.Main.immediate) {
+            com.music.spotui.sync.CloudPlayback.remotePlaying() == null &&
+                (playbackResolving || (playWhenResolved && player?.playbackState == ExoPlayer.STATE_BUFFERING))
+        }) delay(75L)
+    }
     /** Main-thread media3 state check for conservative visual-only prebuffer. */
     fun hasAudioHeadroom(): Boolean = player?.let {
         it.playbackState == ExoPlayer.STATE_READY && it.totalBufferedDuration >= 5_000L

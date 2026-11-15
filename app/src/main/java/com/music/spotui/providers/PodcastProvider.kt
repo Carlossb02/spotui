@@ -767,7 +767,9 @@ object PodcastProvider {
      */
     fun getShowEpisodesFlow(
         showId: String,
-        showName: String = ""
+        showName: String = "",
+        publishedSince: Long? = null,
+        forceRefresh: Boolean = false,
     ): kotlinx.coroutines.flow.Flow<List<SongsModel>> = kotlinx.coroutines.flow.flow {
         if (showId.isBlank() || showId.startsWith(ITUNES_PREFIX)) {
             emit(emptyList())
@@ -777,7 +779,7 @@ object PodcastProvider {
         // Emisión instantánea desde caché en memoria si está fresco
         val cached = episodeMemoryCache[showId]
         val now = System.currentTimeMillis()
-        if (cached != null && now - cached.first < EPISODE_CACHE_TTL_MS && cached.second.isNotEmpty()) {
+        if (!forceRefresh && cached != null && now - cached.first < EPISODE_CACHE_TTL_MS && cached.second.isNotEmpty()) {
             emit(cached.second)
             if (now - cached.first < 3 * 60_000L) {
                 return@flow
@@ -788,7 +790,7 @@ object PodcastProvider {
             val youtubeShow = showName.takeIf { it.isNotBlank() }
                 ?.let { withTimeoutOrNull(15_000L) { resolveCuratedPodcast(it) } }
             if (youtubeShow != null) {
-                getShowEpisodesFlow(youtubeShow.id, youtubeShow.name).collect { emit(it) }
+                getShowEpisodesFlow(youtubeShow.id, youtubeShow.name, publishedSince, forceRefresh).collect { emit(it) }
             } else emit(emptyList())
             return@flow
         }
@@ -812,8 +814,12 @@ object PodcastProvider {
                 if (initialEpisodes.isNotEmpty()) {
                     val allEpisodes = initialEpisodes.toMutableList()
                     rememberEpisodes(showId, resolvedName, allEpisodes)
-                    episodeMemoryCache[showId] = System.currentTimeMillis() to allEpisodes.toList()
+                    if(publishedSince==null)episodeMemoryCache[showId] = System.currentTimeMillis() to allEpisodes.toList()
                     emit(allEpisodes.toList())
+
+                    fun olderPage(episodes:List<SongsModel>):Boolean = publishedSince!=null && episodes.isNotEmpty() &&
+                        episodes.all { com.music.spotui.data.publicationTime(it.releaseDate,now)?.let {date->date<publishedSince}==true }
+                    if(olderPage(initialEpisodes))return@flow
 
                     var currentRoot = root
                     var pageCount = 0
@@ -828,8 +834,9 @@ object PodcastProvider {
                         if (newEpisodes.isEmpty()) break
                         allEpisodes.addAll(newEpisodes)
                         rememberEpisodes(showId, resolvedName, newEpisodes)
-                        episodeMemoryCache[showId] = System.currentTimeMillis() to allEpisodes.toList()
+                        if(publishedSince==null)episodeMemoryCache[showId] = System.currentTimeMillis() to allEpisodes.toList()
                         emit(allEpisodes.toList())
+                        if(olderPage(nextBatch))break
                         currentRoot = contRoot
                         pageCount++
                     }

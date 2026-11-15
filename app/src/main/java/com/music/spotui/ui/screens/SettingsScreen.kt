@@ -82,6 +82,7 @@ fun SettingsScreen(navController: NavController) {
     var crossfadeMs by remember { mutableStateOf(getCrossfadeMs(context).toFloat()) }
     var videoFallback by remember { mutableStateOf(isVideoFallbackEnabled(context)) }
     var autoPlay by remember { mutableStateOf(isAutoPlayEnabled(context)) }
+    var playerLyricLine by remember { mutableStateOf(isPlayerLyricLineEnabled(context)) }
     var normalizationMode by remember { mutableStateOf(com.music.spotui.data.preferences.getAudioNormalizationMode(context)) }
     var equalizerEnabled by remember { mutableStateOf(com.music.spotui.data.preferences.isEqualizerEnabled(context)) }
     var equalizerPreset by remember { mutableStateOf(com.music.spotui.data.preferences.getEqualizerPreset(context)) }
@@ -106,6 +107,7 @@ fun SettingsScreen(navController: NavController) {
             wifiQ = getWifiQuality(context); cellQ = getCellularQuality(context); dlQ = getDownloadQuality(context)
             crossfadeMs = getCrossfadeMs(context).toFloat(); videoFallback = isVideoFallbackEnabled(context)
             autoPlay = isAutoPlayEnabled(context); normalizationMode = getAudioNormalizationMode(context)
+            playerLyricLine = isPlayerLyricLineEnabled(context)
             equalizerEnabled = isEqualizerEnabled(context); equalizerPreset = getEqualizerPreset(context)
             equalizerGains = getEqualizerBandGains(context)
         }
@@ -272,6 +274,12 @@ fun SettingsScreen(navController: NavController) {
                         uiLocalized("Search videos as a fallback"),
                         uiLocalized("Try YouTube videos when no matching song is found in YouTube Music."), videoFallback) {
                         videoFallback = it; setVideoFallbackEnabled(context, it)
+                    }
+                    SettingsDivider()
+                    SettingsSwitchRow(Icons.Default.MusicNote,
+                        uiLocalized("Current lyric line"),
+                        uiLocalized("Show the current synced lyric above the song title."), playerLyricLine) {
+                        playerLyricLine = it; setPlayerLyricLineEnabled(context, it)
                     }
                 }
             }

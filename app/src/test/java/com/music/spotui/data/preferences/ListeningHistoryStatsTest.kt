@@ -4,6 +4,45 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ListeningHistoryStatsTest {
+    @Test fun staleMusicLabelCannotPromoteAnEpisodeIntoMusicRankings() {
+        val podcast = entry(1, "yt_ep:episode|label", "Host").copy(mediaType = "music", playCount = 99)
+        val music = entry(2).copy(playCount = 2)
+        val stats = ListeningHistoryStats(listOf(podcast, music))
+        assertEquals(listOf(music), stats.music)
+        assertEquals(2, stats.musicPlays)
+        assertEquals(99, stats.podcastPlays)
+        assertEquals(music, stats.tracks.single().latest)
+        assertEquals(listOf("Artist"), stats.artists.map { it.name })
+    }
+    @Test fun knownLegacyYouTubeEpisodeIsReclassifiedWithoutLosingCounts() {
+        val old = entry(1, "https://www.youtube.com/watch?v=AbCdEfGhI12", "Host").copy(mediaType = "music", playCount = 8)
+        val repaired = repairLegacyPodcastHistory(listOf(old), setOf("yt_ep:AbCdEfGhI12|Episode"))
+        assertTrue(repaired.single().isPodcast())
+        assertEquals(8, ListeningHistoryStats(repaired).podcastPlays)
+        assertTrue(ListeningHistoryStats(repaired).tracks.isEmpty())
+        assertEquals(old.url, repaired.single().url)
+    }
+    @Test fun episodeIdsAndSpotifyEmbedLinksStayOutOfMusic() {
+        val id = "0123456789ABCDEFGHIJKL"
+        val rows = listOf(entry(1).copy(spotifyTrackId = "spotify:episode:$id", mediaType = "music"),
+            entry(2, "https://open.spotify.com/embed/episode/$id?utm_source=test").copy(mediaType = "music"))
+        assertEquals(2, ListeningHistoryStats(rows).podcasts.size)
+        assertTrue(ListeningHistoryStats(rows).music.isEmpty())
+    }
+    @Test fun titleAndHostNameNeverTurnMusicIntoAPodcast() {
+        val music = entry(1).copy(title = "Podcast Episode", singer = "Host", mediaType = "music")
+        assertEquals(listOf(music), repairLegacyPodcastHistory(listOf(music), setOf("yt_ep:different12")))
+        assertFalse(music.isPodcast())
+    }
+    @Test fun knownSpotifyEpisodeWithLegacyBareIdIsRepaired() {
+        val id = "0123456789ABCDEFGHIJKL"
+        val old = entry(1).copy(spotifyTrackId = id)
+        assertTrue(repairLegacyPodcastHistory(listOf(old), setOf("episode:$id")).single().isPodcast())
+    }
+    @Test fun sameYouTubeTitleDoesNotJoinDifferentCaseSensitiveIds() {
+        val music = entry(1, "https://youtu.be/abcdefghI12")
+        assertFalse(repairLegacyPodcastHistory(listOf(music), setOf("yt_ep:AbCdEfGhI12")).single().isPodcast())
+    }
     private fun entry(id: Int, url: String = "song:$id", artist: String = "Artist", album: String = "Album") =
         HistoryEntry(id.toLong(), id, "Title", artist, album, url = url, qualified = true)
 

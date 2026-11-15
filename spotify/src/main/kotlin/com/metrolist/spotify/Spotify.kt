@@ -2100,7 +2100,13 @@ object Spotify {
                     // missing or wrong, which made album/EP labels look random.
                     albumType = forcedType ?: rel.str("type")?.lowercase(),
                     images = parseGqlImages(rel.obj("coverArt")?.arr("sources")),
-                    releaseDate = rel.obj("date")?.int("year")?.toString(),
+                    releaseDate = rel.obj("date")?.let dateValue@ { date ->
+                        date.str("isoString")?.let { return@dateValue it }
+                        val year = date.int("year") ?: return@dateValue null
+                        val month = date.int("month")
+                        val day = date.int("day")
+                        if (month != null && day != null) "%04d-%02d-%02d".format(java.util.Locale.ROOT, year, month, day) else year.toString()
+                    },
                     uri = uri,
                 )
             }
@@ -2119,7 +2125,7 @@ object Spotify {
                             .mapNotNull { parseRelease(it, forcedType) }
                     }
                     .distinctBy { it.id }
-                    .sortedByDescending { it.releaseDate?.toIntOrNull() ?: 0 }
+                    .sortedByDescending { it.releaseDate.orEmpty() }
 
             // Albums/compilations this artist appears on (features). Same nested
             // `releases.items[0]` shape as popularReleases; degrade to empty.

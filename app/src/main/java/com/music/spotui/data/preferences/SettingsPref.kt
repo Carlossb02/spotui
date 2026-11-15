@@ -40,6 +40,7 @@ private const val KEY_EQUALIZER_ENABLED = "equalizer_enabled"
 private const val KEY_EQUALIZER_PRESET = "equalizer_preset"
 private const val KEY_EQUALIZER_BANDS = "equalizer_bands"
 private const val KEY_LANGUAGE = "app_language"
+private const val KEY_PLAYER_LYRIC_LINE = "player_current_lyric_line"
 const val DEFAULT_UPDATE_REPO_URL = "https://github.com/Carlossb02/spotui"
 
 /** Off (0s) … 12s. 0 disables crossfade. */
@@ -48,6 +49,10 @@ const val CROSSFADE_MAX_MS = 12000
 const val CROSSFADE_DEFAULT_MS = 6000
 
 private fun prefs(c: Context) = c.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+
+fun isPlayerLyricLineEnabled(c: Context): Boolean = prefs(c).getBoolean(KEY_PLAYER_LYRIC_LINE, true)
+fun setPlayerLyricLineEnabled(c: Context, enabled: Boolean) =
+    prefs(c).edit().putBoolean(KEY_PLAYER_LYRIC_LINE, enabled).apply()
 
 private fun readQ(c: Context, key: String, def: StreamQuality): StreamQuality =
     runCatching { StreamQuality.valueOf(prefs(c).getString(key, def.name)!!) }.getOrDefault(def)
