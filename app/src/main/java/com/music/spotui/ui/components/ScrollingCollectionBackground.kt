@@ -9,8 +9,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -78,16 +77,10 @@ fun Modifier.scrollingCollectionBackground(
             if (bottom > 0f) {
                 drawRect(Brush.verticalGradient(colors = listOf(topColor.copy(alpha = .8f), baseColor), startY = top, endY = bottom))
                 image?.let { bitmap ->
-                    val imageBottom = top + header.size * .85f
-                    val curve = Path().apply {
-                        moveTo(0f, top - 100.dp.toPx()); lineTo(size.width, top - 100.dp.toPx())
-                        lineTo(size.width, imageBottom - 36.dp.toPx())
-                        cubicTo(size.width * .68f, imageBottom + 20.dp.toPx(), size.width * .35f, imageBottom - 72.dp.toPx(), 0f, imageBottom)
-                        close()
-                    }
-                    clipPath(curve) {
+                    val imageBottom = bottom
+                    clipRect(top = top - 100.dp.toPx(), bottom = imageBottom) {
                         drawImage(bitmap, dstOffset = IntOffset(0, (top - 100.dp.toPx()).roundToInt()),
-                            dstSize = IntSize(size.width.roundToInt(), (header.size * .85f + 100.dp.toPx()).roundToInt().coerceAtLeast(1)))
+                            dstSize = IntSize(size.width.roundToInt(), (header.size + 100.dp.toPx()).roundToInt().coerceAtLeast(1)))
                         drawRect(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .12f), baseColor.copy(alpha = .4f), baseColor),
                             startY = top, endY = imageBottom))
                     }

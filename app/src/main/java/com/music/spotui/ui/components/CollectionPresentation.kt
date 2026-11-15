@@ -1,10 +1,13 @@
 package com.music.spotui.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material3.*
@@ -29,7 +32,7 @@ import kotlinx.coroutines.withContext
 internal val CollectionGreen = Color(0xFF1ED760)
 
 @Composable
-internal fun collectionCoverSize(): Dp = (LocalConfiguration.current.screenWidthDp.dp * .5f).coerceIn(180.dp, 260.dp)
+internal fun collectionCoverSize(): Dp = (LocalConfiguration.current.screenWidthDp.dp * .46f).coerceIn(160.dp, 220.dp)
 
 @Composable
 internal fun CollectionSortButton(onClick: () -> Unit) {
@@ -55,10 +58,12 @@ internal fun collectionDownloadState(keys: Set<String>, saved: Set<String>, task
 }
 
 /** One aggregated ring, updated by real transfer progress and verified completed files. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun CollectionDownloadButton(songs: List<SongsModel>, description: String, onClick: (Boolean) -> Unit) {
     val context = LocalContext.current
     val transfers by SongPlayer.downloadQueue.collectAsState()
+    val pausedKeys by SongPlayer.pausedDownloads.collectAsState()
     val version by downloadsVersion.collectAsState()
     val keys = remember(songs) { songs.map { downloadRecordingKey(it.url, it.spotifyTrackId) }.toSet() }
     val saved by produceState<Set<String>>(emptySet(), version) {
@@ -68,12 +73,31 @@ internal fun CollectionDownloadButton(songs: List<SongsModel>, description: Stri
         downloadRecordingKey(it.song.url, it.song.spotifyTrackId) to it.progress
     }) }
     var requested by remember(keys) { mutableStateOf(false) }
+    LaunchedEffect(status.active, status.complete) { if (status.active || status.complete) requested = false }
+    var menu by remember { mutableStateOf(false) }
+    val paused = keys.any { it in pausedKeys }
     val fraction by androidx.compose.animation.core.animateFloatAsState(status.progress, label = "collectionDownload")
     Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-        IconButton(enabled = keys.isNotEmpty(), onClick = { requested = true; onClick(status.complete) },
-            modifier = Modifier.size(44.dp).clip(CircleShape).background(Color.White.copy(alpha = .065f))) {
-            Icon(Icons.Default.Download, description, tint = if (status.complete) CollectionGreen else Color.White,
-                modifier = Modifier.size(24.dp))
+        Box(Modifier.size(44.dp).clip(CircleShape).background(Color.White.copy(alpha = .065f))
+            .combinedClickable(enabled = keys.isNotEmpty(), role = androidx.compose.ui.semantics.Role.Button,
+                onClick = {
+                    when {
+                        paused -> SongPlayer.pauseDownloads(songs, false)
+                        status.active || requested -> SongPlayer.pauseDownloads(songs, true)
+                        !status.complete -> { requested = true; onClick(false) }
+                    }
+                }, onLongClick = { menu = true }), contentAlignment = Alignment.Center) {
+            Icon(if (paused) Icons.Default.PlayArrow else if (status.active) Icons.Default.Pause else Icons.Default.Download,
+                if (paused) "Reanudar descargas" else if (status.active) "Pausar descargas" else description,
+                tint = if (status.complete) CollectionGreen else Color.White, modifier = Modifier.size(24.dp))
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text("Cancelar descargas de esta colección") }, onClick = {
+                    menu = false; requested = false; SongPlayer.manageCollectionDownloads(songs, context, delete = false)
+                })
+                DropdownMenuItem(text = { Text("Borrar descargas de esta colección") }, onClick = {
+                    menu = false; requested = false; SongPlayer.manageCollectionDownloads(songs, context, delete = true)
+                })
+            }
         }
         if (!status.complete && (requested || status.active)) CircularProgressIndicator(
             progress = { fraction.coerceAtLeast(.015f) }, modifier = Modifier.fillMaxSize(),

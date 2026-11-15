@@ -121,6 +121,8 @@ import com.music.spotui.ui.viewmodel.PlayerViewModel
 import java.time.LocalTime
 
 
+private val LocalHomeFilterScroll = androidx.compose.runtime.staticCompositionLocalOf<androidx.compose.foundation.lazy.LazyListState?> { null }
+
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun HomeScreen(navController: NavController, initialFilter: String? = null){
@@ -157,6 +159,8 @@ fun HomeScreen(navController: NavController, initialFilter: String? = null){
         }
     }
 
+    val headerScroll = androidx.compose.foundation.lazy.rememberLazyListState()
+    androidx.compose.runtime.CompositionLocalProvider(LocalHomeFilterScroll provides headerScroll) {
     Surface(
         modifier = Modifier
             .fillMaxSize()
@@ -279,6 +283,7 @@ fun HomeScreen(navController: NavController, initialFilter: String? = null){
             }
         }
     }
+    }
 }
 
 private fun onHomeItemClick(navController: NavController, item: HomeItem) {
@@ -350,7 +355,7 @@ private fun HomeHeaderRow(
     val podcastsSeen by rememberReleaseCheck(ReleaseKind.PODCASTS)
     val musicHasNews=hasUnreadReleases(musicReleases.items.map {it.publishedAt},musicSeen)
     val podcastsHaveNews=hasUnreadReleases(podcastReleases.items.map {it.publishedAt},podcastsSeen)
-    val filterScroll = androidx.compose.foundation.lazy.rememberLazyListState()
+    val filterScroll = LocalHomeFilterScroll.current ?: androidx.compose.foundation.lazy.rememberLazyListState()
     val filterDensity = androidx.compose.ui.platform.LocalDensity.current
     LaunchedEffect(selectedFilter, isFollowingOnly) {
         val index = listOf("All", "Music", "Podcasts", "Audiobooks").indexOf(selectedFilter).coerceAtLeast(0)

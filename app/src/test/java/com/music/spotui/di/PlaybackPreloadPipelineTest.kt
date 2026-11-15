@@ -6,6 +6,21 @@ import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
 
 class PlaybackPreloadPipelineTest {
+    @Test fun waitingForFullDownloadHeadroomDoesNotBlockTheNextPlayablePrefix() = runBlocking {
+        val pipeline = PlaybackPreloadPipeline()
+        val waiting = CompletableDeferred<Unit>()
+        val first = launch {
+            pipeline.prepare(resolve = { "first" }, beforeCompleteCache = { waiting.complete(Unit); awaitCancellation() },
+                completeCache = { error("Must wait for headroom") }, cache = { })
+        }
+        waiting.await()
+        try {
+            var prefix = false
+            withTimeout(1000) { pipeline.prepare(resolve = { "next" }, cache = { prefix = true }) }
+            assertTrue(prefix)
+        } finally { first.cancelAndJoin() }
+    }
+
     @Test fun aSkipCanCancelTheFullDownloadAfterItsPlayablePrefixWasCommitted() = runBlocking {
         val pipeline = PlaybackPreloadPipeline()
         val prefix = CompletableDeferred<Unit>(); var prefixSaved = false; var fullStarted = false

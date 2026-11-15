@@ -117,7 +117,7 @@ fun addDownload(context: Context, song: SongsModel, filePath: String) {
 }
 
 /** Delete the real audio and cached cover, not merely the Downloads preference. */
-fun removeDownload(context: Context, songId: String): Boolean {
+fun removeDownload(context: Context, songId: String, notify: Boolean = true): Boolean {
     if (songId.toIntOrNull() == null) return false
     val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
     val registeredPath = prefs.getString(songId, null)?.let(::parse)?.second
@@ -133,8 +133,10 @@ fun removeDownload(context: Context, songId: String): Boolean {
     }
     prefs.edit().remove(songId).commit()
     DownloadRestorePref.removePending(context, songId)
-    notifyDownloadsChanged()
-    com.music.spotui.util.BackupHelper.scheduleAutoBackup(context)
+    if (notify) {
+        notifyDownloadsChanged()
+        com.music.spotui.util.BackupHelper.scheduleAutoBackup(context)
+    }
     return true
 }
 

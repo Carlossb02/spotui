@@ -2,6 +2,12 @@ package com.music.spotui.audio
 import org.junit.Assert.*
 import org.junit.Test
 class QueuePreloadPolicyTest {
+    @Test fun replacingReorderingAndAddingManualSongsRebuildsTheUpcomingWindow() {
+        assertEquals(listOf("b", "c"), QueuePreloadPolicy.next(listOf("a", "b", "c"), 0, 2))
+        assertEquals(listOf("manual", "c"), QueuePreloadPolicy.next(listOf("a", "manual", "c", "b"), 0, 2))
+        assertEquals(listOf("b"), QueuePreloadPolicy.next(listOf("a", "c", "b"), 1, 2))
+    }
+
     @Test fun windowUsesTheActualUpcomingOrderAndAvoidsDuplicateWork() {
         assertEquals(listOf("manual","next","last"),QueuePreloadPolicy.next(listOf("current","manual","next","next","last"),0,3))
         assertTrue(QueuePreloadPolicy.next(listOf("only"),0,3).isEmpty())
