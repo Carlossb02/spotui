@@ -74,6 +74,7 @@ class MyApplication : Application(){
         // YouTube playback runs anonymously; age-gated official audio falls back
         // to matching normal YouTube uploads instead of requiring sign-in.
         YouTube.cookie = null
+        com.music.spotui.data.api.FollowingReleaseFeed.get(this)
 
         // Pre-warm the YouTube playback pipeline so the first tap doesn't pay for
         // cold-starting the player.js parser and BotGuard WebView (~2-4s combined).

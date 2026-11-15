@@ -6,6 +6,14 @@ import java.time.Instant
 import java.time.ZoneId
 
 class PublicationDateTest {
+    @Test fun youtubeAbbreviatedAndNoYearDatesAreRecognised() {
+        val now=Instant.parse("2026-11-15T12:00:00Z").toEpochMilli()
+        assertEquals(now-24*60*60_000L,publicationTime("hace 1 d",now,utc))
+        assertEquals(now-2*60*60_000L,publicationTime("hace 2 h",now,utc))
+        assertEquals(Instant.parse("2026-11-13T00:00:00Z").toEpochMilli(),publicationTime("13 nov",now,utc))
+        assertEquals(Instant.parse("2025-12-30T00:00:00Z").toEpochMilli(),publicationTime("30 dic",now,utc))
+        assertNull(publicationTime("Description about 13 nov",now,utc))
+    }
     private val now=Instant.parse("2026-11-15T12:00:00Z").toEpochMilli()
     private val utc=ZoneId.of("UTC")
     @Test fun spanishAndEnglishDatesHaveTheSamePublicationDay() {

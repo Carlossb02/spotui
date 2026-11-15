@@ -481,7 +481,9 @@ object SongPlayer {
 
     fun registerExplicit(pairs: List<Pair<String, Boolean>>) {
         pairs.forEach { (query, explicit) ->
-            if (query.isNotBlank()) explicitRegistry[query] = explicit
+            // Persisted queues from older builds lost contentRating. They must not
+            // overwrite an edition that was just verified against Spotify.
+            if (query.isNotBlank() && !hasRecentVerifiedMetadata(query)) explicitRegistry[query] = explicit
         }
     }
 
@@ -1495,7 +1497,7 @@ object SongPlayer {
             }
             return playback.streamUrl
         }
-        val expectedTier = "${quality.name}:audio-v3-explicit:${explicitRegistry[song] ?: "unknown"}"
+        var expectedTier = "${quality.name}:audio-v4-content-rating:${explicitRegistry[song] ?: "unknown"}"
 
         val meta = metadataRegistry[song]
         val matchSong = boundState?.queue?.value?.firstOrNull { it.url == song }
@@ -1627,6 +1629,12 @@ object SongPlayer {
             updateResolveStatus(true, "Checking cache...")
         }
         val networkAvailable = isNetworkAvailable(appContext)
+        // Older stored SongsModel records defaulted every GQL track to false.
+        // Verify those snapshots before reusing either URL or candidate caches.
+        if(networkAvailable && flacSpotifyId!=null && !hasRecentVerifiedMetadata(song)) {
+            ensureSpotifyMatchMetadata(song)
+            expectedTier="${quality.name}:audio-v4-content-rating:${explicitRegistry[song] ?: "unknown"}"
+        }
         // A fast cache hit is useful only when the CDN signature is still valid.
         // Without this guard, the player could try a stale URL, hit 403 and spend
         // much longer recovering than a fresh resolution would take.
@@ -2597,6 +2605,10 @@ object SongPlayer {
     private val verifiedMatchMetadata = java.util.concurrent.ConcurrentHashMap<
         String, Triple<Long, String, TrackMatchMetadata>>()
     private const val VERIFIED_MATCH_TTL_MS = 10 * 60_000L
+    private fun hasRecentVerifiedMetadata(query:String):Boolean = verifiedMatchMetadata[query]?.let {
+        android.os.SystemClock.elapsedRealtime()-it.first in 0L until VERIFIED_MATCH_TTL_MS &&
+            it.second==trackIdRegistry[query] && it.third==metadataRegistry[query]
+    }==true
     /** Spotify already supplied this exact recording as a Track object.
      * Re-fetching it during the blue Searching stage makes music wait up to
      * 15 seconds for duplicate GQL calls (including unnecessary retries).
@@ -2614,6 +2626,7 @@ object SongPlayer {
         trackIdRegistry[query] = trackId
         durationRegistry[query] = durationMs
         explicitRegistry[query] = explicit
+        onPlayerThread {boundState?.updateContentRating(query,explicit)}
         approxDurationQueries.remove(query)
         verifiedMatchMetadata[query] = Triple(
             android.os.SystemClock.elapsedRealtime(), trackId, proof)
@@ -2636,9 +2649,6 @@ object SongPlayer {
         val hasUsefulMeta = currentMeta?.let {
             it.title.isNotBlank() && it.artist.isNotBlank() && it.album.isNotBlank()
         } ?: false
-        val currentStrongFlags = currentMeta?.let {
-            (versionFlags(it.title) + versionFlags(it.album)).intersect(strongFlags)
-        }.orEmpty()
         val spotifyId = trackIdRegistry[query] ?: spotifyTrackIdForPlayback(query)
         val verification = verifiedMatchMetadata[query]
         val verifiedRecent = currentMeta != null && spotifyId != null &&
@@ -2646,7 +2656,7 @@ object SongPlayer {
             verification.third == currentMeta &&
             android.os.SystemClock.elapsedRealtime() - verification.first in 0L until VERIFIED_MATCH_TTL_MS
         if (hasUsefulMeta && durationRegistry[query] != null &&
-            explicitRegistry.containsKey(query) && (currentStrongFlags.isEmpty() || verifiedRecent)) {
+            explicitRegistry.containsKey(query) && verifiedRecent) {
             if (verifiedRecent) Log.d(TAG, "Spotify exact metadata reused for $spotifyId")
             return currentMeta
         }
@@ -2678,6 +2688,7 @@ object SongPlayer {
         metadataRegistry[query] = repaired
         trackIdRegistry[query] = spotifyId
         explicitRegistry[query] = track.explicit
+        withContext(Dispatchers.Main) {boundState?.updateContentRating(query,track.explicit)}
         if (verifiedMatchMetadata.size > 200) {
             val now = android.os.SystemClock.elapsedRealtime()
             verifiedMatchMetadata.entries.removeIf {
@@ -2725,7 +2736,7 @@ object SongPlayer {
     }
 
     private fun videoCandidateCacheKey(query:String,filter:YouTube.SearchFilter)=
-        "$query|${filter.value}|MATCH_V13:${explicitRegistry[query] ?: "unknown"}"
+        "$query|${filter.value}|MATCH_V14:${explicitRegistry[query] ?: "unknown"}"
 
     private suspend fun resolveVideoCandidates(
         query: String,

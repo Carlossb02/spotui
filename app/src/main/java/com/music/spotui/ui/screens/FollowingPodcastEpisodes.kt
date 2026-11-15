@@ -43,7 +43,7 @@ internal fun FollowingPodcastEpisodesContent(
     val feed by homeViewModel.followedEpisodes.collectAsState()
     LaunchedEffect(Unit) {
         if(!homeViewModel.followedEpisodes.value.loading)
-            homeViewModel.refreshFollowedReleases(force=true,kind=ReleaseKind.PODCASTS)
+            homeViewModel.refreshFollowedReleases(kind=ReleaseKind.PODCASTS)
     }
     var ascending by remember {mutableStateOf(context.getSharedPreferences("app_sort_preferences",0).getBoolean("following_podcasts_ascending",false))}
     val episodes=remember(feed.items,ascending) {
@@ -96,7 +96,7 @@ internal fun FollowingPodcastEpisodesContent(
                 }
                 if(feed.loading)LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal=20.dp),color=PodcastNewsColor)
                 feed.error?.let {Text(uiLocalized(it),color=Color(0xFFB3B3B3),modifier=Modifier.padding(20.dp,8.dp))}
-                if(!feed.loading && episodes.isEmpty())Text(uiLocalized("No episodes published in the last month."),
+                if(!feed.loading && feed.error==null && episodes.isEmpty())Text(uiLocalized("No episodes published in the last month."),
                     color=Color(0xFFB3B3B3),modifier=Modifier.padding(24.dp))
             }
             itemsIndexed(episodes,key={_,item->item.song.url.substringBefore('|')}) { index,item ->

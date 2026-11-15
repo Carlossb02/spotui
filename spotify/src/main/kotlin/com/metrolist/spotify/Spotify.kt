@@ -36,6 +36,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -416,7 +418,7 @@ object Spotify {
      *   reading it from [trackData]. Needed when the URI lives on a wrapper
      *   object (e.g. `track._uri`) rather than inside `track.data`.
      */
-    private fun parseGqlTrack(
+    internal fun parseGqlTrack(
         trackData: JsonObject,
         albumOverride: SpotifySimpleAlbum? = null,
         uriOverride: String? = null,
@@ -451,6 +453,8 @@ object Spotify {
             artists = artists,
             album = album,
             durationMs = parseGqlTrackDurationMs(trackData),
+            explicit = trackData.obj("contentRating")?.str("label")?.equals("EXPLICIT", ignoreCase = true)
+                ?: (trackData["explicit"] as? JsonPrimitive)?.booleanOrNull ?: false,
             uri = uri.ifEmpty { null },
         )
     }

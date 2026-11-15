@@ -17,7 +17,14 @@ data class PlayerResponse(
     val videoDetails: VideoDetails?,
     @SerialName("playbackTracking")
     val playbackTracking: PlaybackTracking?,
+    val microformat: Microformat? = null,
 ) {
+    @Serializable
+    data class Microformat(val playerMicroformatRenderer:PublicationDates?=null,
+        val microformatDataRenderer:PublicationDates?=null)
+    @Serializable
+    data class PublicationDates(val publishDate:String?=null,val uploadDate:String?=null)
+
     @Serializable
     data class PlayabilityStatus(
         val status: String,

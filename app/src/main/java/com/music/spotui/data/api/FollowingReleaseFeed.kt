@@ -26,13 +26,28 @@ internal data class FollowingFeedState<T>(val items: List<T> = emptyList(), val 
 
 /** Cached, bounded background discovery. Only tiny read watermarks enter device sync. */
 internal class FollowingReleaseFeed(private val context: Context, private val scope: CoroutineScope) {
+    companion object {
+        @Volatile private var shared:FollowingReleaseFeed?=null
+        @Synchronized fun get(context:Context):FollowingReleaseFeed = shared ?: FollowingReleaseFeed(
+            context.applicationContext,CoroutineScope(SupervisorJob()+Dispatchers.IO)).also {feed->
+            shared=feed
+            feed.scope.launch {
+                delay(1800)
+                com.music.spotui.data.preferences.SubscribedPodcastPref.revision.collect {
+                    feed.refresh(com.music.spotui.data.preferences.SubscribedPodcastPref.getSubscribedPodcasts(feed.context),
+                        emptyList(),kind=ReleaseKind.PODCASTS)
+                }
+            }
+        }
+    }
     private val podcastState = MutableStateFlow(FollowingFeedState<FollowedEpisode>())
     private val musicState = MutableStateFlow(FollowingFeedState<FollowedMusicRelease>())
     val podcasts = podcastState.asStateFlow()
     val music = musicState.asStateFlow()
-    private val cache = context.getSharedPreferences("followed_release_cache_v1", 0)
+    private val cache = context.getSharedPreferences("followed_release_cache_v2", 0)
     private val dates = context.getSharedPreferences("episode_publication_times_v1", 0)
     private val permits = Semaphore(2)
+    private val datePermits = Semaphore(2)
     private var podcastJob: Job? = null
     private var musicJob: Job? = null
     private var podcastKey = ""
@@ -46,12 +61,16 @@ internal class FollowingReleaseFeed(private val context: Context, private val sc
         val forcePodcasts=force && (kind==null || kind==ReleaseKind.PODCASTS)
         val forceMusic=force && (kind==null || kind==ReleaseKind.MUSIC)
         val nextPodcasts = shows.map { it.id }.sorted().joinToString("|")
-        if (nextPodcasts != podcastKey || forcePodcasts || now-podcastAttempt >= cooldown) {
+        if ((kind==null || kind==ReleaseKind.PODCASTS) &&
+            (nextPodcasts != podcastKey || podcastJob?.isActive!=true) &&
+            (nextPodcasts != podcastKey || forcePodcasts || now-podcastAttempt >= cooldown)) {
             podcastKey = nextPodcasts; podcastAttempt = now; podcastJob?.cancel()
             podcastJob = scope.launch(Dispatchers.IO) { loadPodcasts(shows, now, forcePodcasts) }
         }
         val nextMusic = artists.map { it.id }.sorted().joinToString("|")
-        if (nextMusic != musicKey || forceMusic || now-musicAttempt >= cooldown) {
+        if ((kind==null || kind==ReleaseKind.MUSIC) &&
+            (nextMusic != musicKey || musicJob?.isActive!=true) &&
+            (nextMusic != musicKey || forceMusic || now-musicAttempt >= cooldown)) {
             musicKey = nextMusic; musicAttempt = now; musicJob?.cancel()
             musicJob = scope.launch(Dispatchers.IO) { loadMusic(artists, now, forceMusic) }
         }
@@ -71,7 +90,8 @@ internal class FollowingReleaseFeed(private val context: Context, private val sc
 
     private suspend fun loadPodcasts(shows: List<PodcastModel>, now: Long, force: Boolean) = coroutineScope {
         val ids = shows.map { it.id }.toSet()
-        podcastState.value = FollowingFeedState(shows.flatMap { episodes("podcast:${it.id}",now) }
+        podcastState.value = FollowingFeedState((podcastState.value.items.filter {it.showId in ids && withinLastMonth(it.publishedAt,now)}+
+            shows.flatMap { episodes("podcast:${it.id}",now) })
             .distinctBy {it.song.url.substringBefore('|')}.sortedByDescending {it.publishedAt}, true, now)
         val failures = java.util.concurrent.atomic.AtomicInteger()
         val checkedAt=java.util.concurrent.atomic.AtomicLong(now)
@@ -88,8 +108,29 @@ internal class FollowingReleaseFeed(private val context: Context, private val sc
                     withTimeout(60_000) {
                         var finalRows=emptyList<FollowedEpisode>()
                         var receivedEpisodes=false
+                        val dateAttempts=mutableSetOf<String>()
+                        var missingDates=false
                         PodcastProvider.getShowEpisodesFlow(show.id,show.name,publishedSince=since,forceRefresh=true).collect { songs ->
                             if(songs.isNotEmpty())receivedEpisodes=true
+                            // At most 20 missing dates per show/update; cache actual publication
+                            // dates permanently so pagination and later refreshes do not refetch them.
+                            val pendingDates=songs.filter {song->
+                                val key=com.music.spotui.data.preferences.PodcastResumeStore.episodeKey(song.url)
+                                dates.getLong(key,0)==0L && publicationTime(song.releaseDate,now)==null && key !in dateAttempts
+                            }.take((20-dateAttempts.size).coerceAtLeast(0))
+                            pendingDates.forEach {dateAttempts+=com.music.spotui.data.preferences.PodcastResumeStore.episodeKey(it.url)}
+                            pendingDates.map {song->async {
+                                val key=com.music.spotui.data.preferences.PodcastResumeStore.episodeKey(song.url)
+                                datePermits.withPermit {
+                                    SongPlayer.awaitAudioStartup()
+                                    val label=PodcastProvider.publicationDate(song)
+                                    label?.let {publicationTime(it,now)}?.let {date->dates.edit().putLong(key,date).apply()}
+                                }
+                            }}.awaitAll()
+                            missingDates=songs.any {song->
+                                val key=com.music.spotui.data.preferences.PodcastResumeStore.episodeKey(song.url)
+                                dates.getLong(key,0)==0L && publicationTime(song.releaseDate,now)==null
+                            }
                             val published = songs.mapNotNull { song ->
                                 val identity = com.music.spotui.data.preferences.PodcastResumeStore.episodeKey(song.url)
                                 val known = dates.getLong(identity,0)
@@ -101,9 +142,13 @@ internal class FollowingReleaseFeed(private val context: Context, private val sc
                             }
                             finalRows=published
                             podcastState.update { state -> state.copy(items=(state.items.filterNot {it.showId==show.id}+published)
-                                .filter {it.showId in ids}.distinctBy {it.song.url.substringBefore('|')}.sortedByDescending {it.publishedAt}) }
+                                .plus(if(missingDates)state.items.filter {it.showId==show.id} else emptyList())
+                                .filter {it.showId in ids && withinLastMonth(it.publishedAt,now)}
+                                .distinctBy {it.song.url.substringBefore('|')}.sortedByDescending {it.publishedAt}) }
                         }
                         check(receivedEpisodes){"Podcast discovery was unavailable"}
+                        check(!missingDates || finalRows.isNotEmpty()) {"Episode publication dates were unavailable"}
+                        if(missingDates)failures.incrementAndGet()
                         cache.edit().putString(key,JSONObject().put("at",now).put("rows",JSONArray(finalRows.map(::wire))).toString()).apply()
                     }
                 } catch(c:CancellationException) { if(c is TimeoutCancellationException)failures.incrementAndGet() else throw c }
