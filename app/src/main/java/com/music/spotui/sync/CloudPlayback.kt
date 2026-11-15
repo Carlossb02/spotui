@@ -254,6 +254,8 @@ object CloudPlayback {
             publishJob=scope.launch {
                 do {
                     delay(180)
+                    SongPlayer.awaitAudioStartup()
+                    while (SongPlayer.isResolvingOrPlaying() && !SongPlayer.hasAudioHeadroom()) delay(100)
                     needsPublication=false
                     val force=forcePublication;forcePublication=false
                     operations.withLock {

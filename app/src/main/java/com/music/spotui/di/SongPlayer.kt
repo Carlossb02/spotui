@@ -936,6 +936,10 @@ object SongPlayer {
         purgeLegacyMatchCachesOnce(appContext)
         if (currentRequest != song) foregroundPlaybackJob?.cancel()
         currentRequest = song
+        // Release the outgoing podcast's decoder before any new source lookup.
+        com.music.spotui.ui.screens.PodcastVideoSession.stopIfDifferent(
+            song.takeIf { it.startsWith("yt_ep:") }?.removePrefix("yt_ep:")?.substringBefore('|'))
+        if (song in activeIntroQueries) prefetchJobs[song]?.cancel()
         // Keep the target's in-flight preload so the tap can join it. Stop unrelated
         // speculative work before starting the foreground request.
         prefetchJobs.entries.filter { it.key != song }.forEach { it.value.cancel() }
@@ -1322,9 +1326,13 @@ object SongPlayer {
                     } finally {
                         releaseWakeLock("spotui:prefetch")
                     }
+                }, completeCache = { url ->
+                    if (song != currentRequest && (!listed || song in prefetchTargets) && awaitCurrentPlaybackReady()) {
+                        cacheIntro(url, appContext, song, position = 256 * 1024L)
+                    }
                 }, cache = { url ->
                     if ((!listed || song in prefetchTargets) && awaitCurrentPlaybackReady()) {
-                        cacheIntro(url, appContext, song)
+                        cacheIntro(url, appContext, song, byteLimit = 256 * 1024L)
                     }
                 })
             } finally {
@@ -1451,8 +1459,9 @@ object SongPlayer {
     }
 
     private val introWriters = java.util.concurrent.ConcurrentHashMap.newKeySet<androidx.media3.datasource.cache.CacheWriter>()
+    private val activeIntroQueries = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
-    private suspend fun cacheIntro(url: String, appContext: Context, song: String = "") {
+    private suspend fun cacheIntro(url: String, appContext: Context, song: String = "", position: Long = 0L, byteLimit: Long? = null) {
         if (!url.startsWith("http")) {
             val bytes=runCatching {java.io.File(android.net.Uri.parse(url).path.orEmpty()).length()}.getOrDefault(0)
             preloadStates.value=preloadStates.value+(song to PreloadStatus(bytes,bytes,"Downloaded"));return
@@ -1467,10 +1476,14 @@ object SongPlayer {
             val stableKey = com.music.spotui.audio.LosslessCacheKeyFactory.buildCacheKey(spotifyId, url)
             val bitrate=Regex("(\\d+) kbps").find(qualityCache[query].orEmpty())?.groupValues?.get(1)?.toIntOrNull()?.times(1000) ?: 160_000
             val target=com.music.spotui.audio.QueuePreloadPolicy.targetBytes(resolvedLengths[query],durationRegistry[query] ?: 0,bitrate)
+            val remaining = target - position
+            if (remaining <= 0L) return@runCatching
             val spec = androidx.media3.datasource.DataSpec.Builder()
                 .setUri(android.net.Uri.parse(url))
                 .setKey(stableKey)
-                .setLength(target)
+                .setPosition(position)
+                .setLength(byteLimit?.coerceAtMost(remaining) ?: remaining)
+                .setFlags(androidx.media3.datasource.DataSpec.FLAG_ALLOW_CACHE_FRAGMENTATION)
                 .build()
             var publishedAt=0L
             val writer = androidx.media3.datasource.cache.CacheWriter(ds, spec, null) {_,_,_->
@@ -1481,10 +1494,11 @@ object SongPlayer {
                 }
             }
             introWriters.add(writer)
+            activeIntroQueries.add(query)
             try { if (!clearingPlaybackCache)kotlinx.coroutines.runInterruptible(Dispatchers.IO){writer.cache()}
                 val bytes=mediaCache(appContext).getCachedBytes(stableKey,0,target)
                 preloadStates.value=preloadStates.value+(query to PreloadStatus(bytes,target,if(bytes>=target)"Ready" else "Partial"))
-            } finally { writer.cancel();introWriters.remove(writer); runCatching { ds.close() } }
+            } finally { writer.cancel();introWriters.remove(writer); activeIntroQueries.remove(query); runCatching { ds.close() } }
         }.onFailure {
             if(it is CancellationException)throw it
             val query=song.ifBlank {currentRequest}
@@ -3828,6 +3842,10 @@ object SongPlayer {
     }
 
     fun isPreparingTrack(): Boolean = playbackResolving && playWhenResolved
+    fun isPlaybackStartupBusy(): Boolean = com.music.spotui.audio.PlaybackLoadingPolicy.deferBackgroundWork(
+        playWhenResolved, playbackResolving, boundState?.isBuffering?.value == true)
+    fun isPreparingPodcastEpisode(videoId: String): Boolean = com.music.spotui.audio.PlaybackLoadingPolicy.preparingSameEpisode(
+        currentRequest, videoId, isPreparingTrack())
 
     /** Decorative work yields until resolution and the initial audio buffer settle. */
     suspend fun awaitAudioStartup() {

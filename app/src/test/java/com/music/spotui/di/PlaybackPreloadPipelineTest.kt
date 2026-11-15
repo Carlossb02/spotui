@@ -6,6 +6,26 @@ import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
 
 class PlaybackPreloadPipelineTest {
+    @Test fun aSkipCanCancelTheFullDownloadAfterItsPlayablePrefixWasCommitted() = runBlocking {
+        val pipeline = PlaybackPreloadPipeline()
+        val prefix = CompletableDeferred<Unit>(); var prefixSaved = false; var fullStarted = false
+        val request = launch {
+            pipeline.prepare(resolve = { "chosen stream" }, completeCache = { fullStarted = true; awaitCancellation() },
+                cache = { prefixSaved = true; prefix.complete(Unit) })
+        }
+        prefix.await(); request.cancelAndJoin()
+        assertTrue(prefixSaved); assertFalse(fullStarted)
+    }
+    @Test fun theNextPrefixGetsAChanceBeforeThePreviousFullFileDownload() = runBlocking {
+        val pipeline = PlaybackPreloadPipeline()
+        val firstReady = CompletableDeferred<Unit>(); var nextReady = false
+        val first = launch { pipeline.prepare(resolve = { "first" }, completeCache = { awaitCancellation() }, cache = { firstReady.complete(Unit) }) }
+        firstReady.await()
+        try {
+            withTimeout(1000) { pipeline.prepare(resolve = { "second" }, cache = { nextReady = true }) }
+            assertTrue(nextReady)
+        } finally { first.cancelAndJoin() }
+    }
     @Test fun nextRecordingResolvesBeforePreviousAudioDownloadFinishes() = runBlocking {
         val pipeline = PlaybackPreloadPipeline()
         val writing = CompletableDeferred<Unit>()
