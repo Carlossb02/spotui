@@ -9,6 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -35,9 +36,11 @@ internal val CollectionGreen = Color(0xFF1ED760)
 internal fun collectionCoverSize(): Dp = (LocalConfiguration.current.screenWidthDp.dp * .46f).coerceIn(160.dp, 220.dp)
 
 @Composable
-internal fun CollectionSortButton(onClick: () -> Unit) {
-    IconButton(onClick = onClick, modifier = Modifier.size(44.dp).clip(CircleShape).background(Color.White.copy(alpha = .065f))) {
-        Icon(Icons.Default.Sort, com.music.spotui.util.uiLocalized("Ordenar"), tint = Color.White, modifier = Modifier.size(24.dp))
+internal fun CollectionSortButton(label: String = "Ordenar", onClick: () -> Unit) {
+    Row(Modifier.clip(androidx.compose.foundation.shape.RoundedCornerShape(50)).background(Color.White.copy(alpha = .065f))
+        .clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(com.music.spotui.util.uiLocalized(label), color = Color.White, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 72.dp))
+        Icon(Icons.Default.KeyboardArrowDown, null, tint = Color.White, modifier = Modifier.padding(start = 4.dp).size(18.dp))
     }
 }
 
