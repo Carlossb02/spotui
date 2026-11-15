@@ -43,8 +43,13 @@ fun GoogleDriveConsentButton() {
 @Composable
 fun GoogleDriveConsentAlert() {
     val account by GoogleDeviceSync.status.collectAsState()
-    var dismissed by rememberSaveable(account.uid){mutableStateOf(false)}
-    LaunchedEffect(account.needsDrive){if(!account.needsDrive)dismissed=false}
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prompts = remember(context) { context.getSharedPreferences("google_consent_prompts", 0) }
+    val promptKey = "drive:${account.uid}"
+    var dismissed by rememberSaveable(account.uid){mutableStateOf(prompts.getBoolean(promptKey, false))}
+    LaunchedEffect(account.authorized, account.needsDrive, account.uid) {
+        if (account.authorized && account.needsDrive && !dismissed) prompts.edit().putBoolean(promptKey, true).apply()
+    }
     if(account.authorized && account.needsDrive && !dismissed) {
         AlertDialog(onDismissRequest={dismissed=true},containerColor=Color(0xFF202020),
             title={Text(uiLocalized("Allow device sync"),color=Color.White)},

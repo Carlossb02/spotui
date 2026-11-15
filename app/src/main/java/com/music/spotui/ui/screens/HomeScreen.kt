@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import androidx.compose.foundation.gestures.animateScrollBy
+
 import com.music.spotui.util.uiLocalized
 import androidx.lifecycle.repeatOnLifecycle
 import com.music.spotui.ui.components.releaseNewsBorder
@@ -134,6 +136,7 @@ fun HomeScreen(navController: NavController, initialFilter: String? = null){
     LaunchedEffect(initialFilter) { initialFilter?.let { homeViewModel.setSelectedFilter(it) } }
     val selectedFilter by homeViewModel.selectedFilter.collectAsState()
     val isFollowingOnly by homeViewModel.isFollowingOnly.collectAsState()
+    androidx.activity.compose.BackHandler(enabled = selectedFilter != "All") { homeViewModel.resetFilters() }
     val context = androidx.compose.ui.platform.LocalContext.current
     var menuSong by remember { mutableStateOf<SongsModel?>(null) }
     menuSong?.let { sel ->
@@ -346,6 +349,20 @@ private fun HomeHeaderRow(
     val podcastsSeen by rememberReleaseCheck(ReleaseKind.PODCASTS)
     val musicHasNews=hasUnreadReleases(musicReleases.items.map {it.publishedAt},musicSeen)
     val podcastsHaveNews=hasUnreadReleases(podcastReleases.items.map {it.publishedAt},podcastsSeen)
+    val filterScroll = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(selectedFilter, isFollowingOnly) {
+        val index = listOf("All", "Music", "Podcasts", "Audiobooks").indexOf(selectedFilter).coerceAtLeast(0)
+        if (selectedFilter == "All") filterScroll.animateScrollToItem(0)
+        else {
+            filterScroll.scrollToItem(index)
+            androidx.compose.runtime.withFrameNanos { }
+            val layout = filterScroll.layoutInfo
+            layout.visibleItemsInfo.firstOrNull { it.index == index }?.let { item ->
+                val centerOffset = (layout.viewportStartOffset + layout.viewportEndOffset - item.size) / 2f
+                filterScroll.animateScrollBy(item.offset - centerOffset)
+            }
+        }
+    }
     LaunchedEffect(followingArtists,subscriptions) { homeViewModel.refreshFollowedReleases() }
     LaunchedEffect(artistFollowRevision) {
         if(artistFollowRevision>0) { kotlinx.coroutines.delay(200);homeViewModel.refreshFollowedArtists() }
@@ -413,6 +430,7 @@ private fun HomeHeaderRow(
         }
         LazyRow(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
+            state = filterScroll,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.weight(1f),

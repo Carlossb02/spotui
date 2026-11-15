@@ -1,5 +1,18 @@
 package com.music.spotui.sync
 
+import org.json.JSONObject
+
+internal fun shouldRestorePlayback(frame: DevicePlaybackState, localUpdated: Long) = frame.updated > localUpdated
+internal fun playbackWithCheckpoint(frame: DevicePlaybackState, point: JSONObject?): DevicePlaybackState {
+    if (point == null || point.optString("epoch") != frame.epoch || point.optString("owner") != frame.owner ||
+        point.optLong("at") <= frame.updated) return frame
+    val position = point.optLong("position").coerceAtLeast(0)
+    return frame.copy(position = if (frame.duration > 0) position.coerceAtMost(frame.duration) else position,
+        updated = point.optLong("at"), playing = if (point.has("playing")) point.optBoolean("playing") else frame.playing)
+}
+internal fun playbackResumeFrame(frame: DevicePlaybackState, ownerLive: Boolean, now: Long) =
+    frame.copy(playing = frame.playing && ownerLive, position = if (ownerLive) frame.positionAt(now) else frame.position)
+
 /** A ticking clock alone never causes a transmission. */
 internal fun playbackWireSignature(frame:DevicePlaybackState,queueHash:Int):String =
     "${frame.index}:${frame.playing}:${frame.shuffle}:${frame.repeat}:${frame.source}:${frame.sleepEnd}:${frame.volume}:${frame.duration}:${frame.track.hashCode()}:$queueHash"

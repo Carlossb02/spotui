@@ -108,7 +108,9 @@ object GoogleDeviceSync {
                 request=GetCredentialRequest.Builder().addCredentialOption(option).build())
         }
         val credential=response.credential as? CustomCredential?:error("No se pudo obtener la cuenta de Google.")
-        require(credential.type==GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL)
+        require(credential.type==GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+            "Google no ha devuelto una cuenta compatible. Pulsa Iniciar sesión con Google y selecciona tu cuenta."
+        }
         val id=GoogleIdTokenCredential.createFrom(credential.data).idToken
         val service=auth?:FirebaseAuth.getInstance(cfg.firebase(context)).also { auth=it }
         val user=service.signInWithCredential(GoogleAuthProvider.getCredential(id,null)).await().user?:error("No se pudo vincular Google.")
@@ -288,7 +290,7 @@ object GoogleDeviceSync {
     fun onBackground(){uiForeground=false;SyncRuntime.visible(false)}
     fun onPlaybackActivityChanged(){SyncRuntime.playbackChanged();if(!com.music.spotui.di.SongPlayer.isPreparingTrack())requestSync()}
     @Volatile private var lastScheduleAt=0L
-    internal fun canSyncPlayer(actor:String)=runtimeActive && mutable.value.authorized && SyncOptions.enabled(SyncOptions.Category.PLAYER) && hasSyncPeer(mutable.value.devices,actor)
+    internal fun canSyncPlayer(actor:String)=runtimeActive && mutable.value.authorized && SyncOptions.enabled(SyncOptions.Category.PLAYER) && hasKnownSyncPeer(mutable.value.devices,actor)
     fun hasPendingWork():Boolean=runtimeActive && mutable.value.authorized && !mutable.value.needsDrive && !mutable.value.driveBlocked && session?.hasPendingWork()==true
     fun requestSync(){
         session?.wake?.trySend(Unit)
@@ -368,6 +370,7 @@ object GoogleDeviceSync {
         private val incoming=ConcurrentHashMap<String,SyncTree>()
         private val acknowledgments=ConcurrentHashMap<String,Long>()
         private val listeners=mutableListOf<Pair<DatabaseReference,ValueEventListener>>()
+        private var releaseChecks: ReleaseChecksSync? = null
         @Volatile private var connected=false
         @Volatile private var ready=false
         @Volatile private var closed=false
@@ -493,6 +496,9 @@ object GoogleDeviceSync {
         }
         private fun updatePeerConnection() {
             val peers=runtimeActive && connected && hasSyncPeer(mutable.value.devices,actor)
+            val knownPeers=runtimeActive && connected && hasKnownSyncPeer(mutable.value.devices,actor)
+            if (knownPeers && releaseChecks == null) releaseChecks = ReleaseChecksSync(context, root.child("playback").child("releaseChecks"))
+            if (!knownPeers) { releaseChecks?.close(); releaseChecks = null }
             val enabled=SyncOptions.enabled(SyncOptions.Category.PLAYER)
             if(peers!=hadPeers) {
                 hadPeers=peers;discoveryWake?.cancel()
@@ -501,14 +507,14 @@ object GoogleDeviceSync {
                 discoveryNeeded=wait==0L
                 if(wait>0)discoveryWake=work.launch {delay(wait);post {discoveryNeeded=true}}
             }
-            if(!peers)lastCapability=null
+            if(!knownPeers)lastCapability=null
             else if(lastCapability!=enabled) {
                 lastCapability=enabled
                 work.launch {try {
-                    if(!closed && hasSyncPeer(mutable.value.devices,actor))root.child("playback").child("capabilities").child(actor).setValue(mapOf("enabled" to enabled)).await()
+                    if(!closed && hasKnownSyncPeer(mutable.value.devices,actor))root.child("playback").child("capabilities").child(actor).setValue(mapOf("enabled" to enabled)).await()
                 }catch(c:CancellationException){throw c}catch(t:Exception){if(!closed)fail(t)}}
             }
-            val wanted=peers && enabled
+            val wanted=knownPeers && enabled
             if(wanted!=playerConnected) {
                 playerConnected=wanted
                 if(wanted)CloudPlayback.connect(context,root,actor,assets)else CloudPlayback.disconnect()
@@ -649,6 +655,7 @@ object GoogleDeviceSync {
             wake.trySend(Unit)
         }
         fun close() {
+            releaseChecks?.close(); releaseChecks = null
             CloudPlayback.disconnect()
             closed=true
             presence.disconnect()

@@ -68,7 +68,9 @@ internal class CloudPreferences(private val context:Context,private val assets:D
     private fun applyNative(logical:String,value:Any?,expected:Any?):Boolean {
         if(!SyncOptions.allows(logical))return false
         val name=logical.substringBefore(':');val key=assets.nativeAlias(logical.substringAfter(':'))
-        require(name in names && allowed(name,key))
+        // Old replicas may contain settings removed by a newer app version.
+        // They are not missing permissions and must not break the whole account sync.
+        if (name !in names || !allowed(name,key)) return true
         val prefs=context.getSharedPreferences(name,0)
         val rawNow=prefs.all[key]
         if(rawNow != rawSnapshots[logical] && !(rawNow == null && expected == null))return false

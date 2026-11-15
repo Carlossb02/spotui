@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -26,6 +27,9 @@ import com.music.spotui.di.SongPlayer
 import com.music.spotui.lyrics.currentLyricLine
 import com.music.spotui.ui.viewmodel.LyricsViewModel
 import kotlinx.coroutines.delay
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.ui.unit.Constraints
 
 @Composable
 internal fun CurrentPlayerLyricLine(
@@ -58,11 +62,21 @@ internal fun CurrentPlayerLyricLine(
     }
     // Reserve a stable line area across instrumental gaps, without showing stale words.
     val lyricHeight=56.dp*androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceAtLeast(1f)
-    Box(Modifier.fillMaxWidth().height(lyricHeight).padding(horizontal = 25.dp)
+    val measurer = rememberTextMeasurer()
+    val baseStyle = LocalTextStyle.current
+    BoxWithConstraints(Modifier.fillMaxWidth().height(lyricHeight).padding(horizontal = 25.dp)
         .clickable(onClick = onClick), contentAlignment = Alignment.Center) {
         AnimatedContent(targetState = line.orEmpty(), transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "currentLyric") { text ->
-            Text(text, color = Color.White, fontSize = 17.sp,lineHeight=22.sp, fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            val shown = text.replace('\n', ' ')
+            val width = with(androidx.compose.ui.platform.LocalDensity.current) { maxWidth.roundToPx() }.coerceAtLeast(1)
+            val size = remember(shown, width, baseStyle, measurer) {
+                (17 downTo 4).firstOrNull { font ->
+                    !measurer.measure(shown, baseStyle.copy(fontSize = font.sp, lineHeight = (font * 22f / 17).sp,
+                        fontWeight = FontWeight.Bold), maxLines = 2, constraints = Constraints(maxWidth = width)).hasVisualOverflow
+                } ?: 4
+            }
+            Text(shown, color = Color.White, fontSize = size.sp,lineHeight=(size * 22f / 17).sp, fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Clip)
         }
     }
 }

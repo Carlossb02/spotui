@@ -17,6 +17,25 @@ import com.music.spotui.di.SongPlayer
 import com.music.spotui.ui.viewmodel.PlayerViewModel
 import com.music.spotui.util.uiLocalized
 import kotlinx.coroutines.*
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun AdvancedOptionsScreen(navController: androidx.navigation.NavController) {
+    Scaffold(containerColor = Color(0xFF121212), topBar = {
+        TopAppBar(title = { Text(uiLocalized("Advanced options"), color = Color.White) },
+            navigationIcon = { IconButton(onClick = { navController.popBackStack() }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, uiLocalized("Back"), tint = Color.White)
+            } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF121212)))
+    }) { padding ->
+        androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(bottom = 24.dp)) {
+            item { Column { AdvancedOptionsContent() } }
+        }
+    }
+}
 
 @Composable
 internal fun AdvancedOptionsContent() {
