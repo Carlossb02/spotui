@@ -27,7 +27,7 @@ internal fun VisibleSongPreload(state: LazyListState, rows: List<Pair<String, So
             }
         }.filterNotNull().distinctUntilChanged().debounce(120L).collect { visible ->
             SongPlayer.registerTracksForResolution(visible)
-            SongPlayer.prefetchList(visible.map { it.url }, context, count = 3)
+            SongPlayer.prefetchVisible(visible.map { it.url }, context)
         }
     }
 }
