@@ -138,10 +138,10 @@ fun updateLocalTrackMetadata(
     newArtist: String,
     newAlbum: String,
     newCoverUri: String
-) {
+) : Boolean {
     // Defensive second check. UI controls alone are not a permission boundary.
-    if (!isUserEditableLocalTrack(context, song)) return
-    val cover = newCoverUri.trim().ifBlank { CustomMetadataPref.getOverride(context,song)?.coverUri.orEmpty().ifBlank {song.coverUri} }
+    if (!isUserEditableLocalTrack(context, song)) return false
+    val cover = newCoverUri.trim()
     CustomMetadataPref.markVerifiedLocalEdit(context, song)
     CustomMetadataPref.saveOverride(context, song, newTitle, newArtist, newAlbum, cover)
 
@@ -181,6 +181,10 @@ fun updateLocalTrackMetadata(
     PlaylistAdditionsPref.updateSong(context, song, newTitle, newArtist, newAlbum, cover)
     com.music.spotui.di.SongPlayer.updateTrackInQueue(song, newTitle, newArtist, newAlbum, cover)
     com.music.spotui.data.api.Api.HomeCache.clear()
+    com.music.spotui.data.api.ResolvedSongArtwork.invalidate(context,song)
+    com.music.spotui.di.StreamSelections.clear(context,song.url)
+    if(updatedIdentity.url!=song.url)com.music.spotui.di.StreamSelections.clear(context,updatedIdentity.url)
+    return true
 }
 
 fun clearLocalTracks(context: Context) {

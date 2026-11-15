@@ -43,26 +43,39 @@ import kotlinx.coroutines.sync.withPermit
 private val artistCardCache = ExpiringLruCache<String, SpotifyArtistOverview>(64, 30 * 60_000L)
 private val artistCardWork = SharedWork<String, SpotifyArtistOverview?>(CoroutineScope(SupervisorJob() + Dispatchers.IO))
 private data class PlayingArtist(val id: String, val name: String)
+private val artistCreditsCache=ExpiringLruCache<String,List<PlayingArtist>>(128,6*60*60_000L)
 
 @Composable
 internal fun NowPlayingArtistCards(
     artistNames: String, artistIds: String, trackId: String, navController: NavController,
 ) {
     val context = LocalContext.current
-    var artists by remember(trackId, artistNames, artistIds) { mutableStateOf(emptyList<PlayingArtist>()) }
+    val creditKey="$trackId|$artistNames|$artistIds"
+    var artists by remember(creditKey) { mutableStateOf(artistCreditsCache.get(creditKey) ?: run {
+        val ids=artistIds.split(',').map(String::trim)
+        artistNames.split(',').map(String::trim).filter(String::isNotBlank).mapIndexed {index,name->PlayingArtist(ids.getOrNull(index).orEmpty(),name)}
+    }) }
     val profiles = remember { mutableStateMapOf<String, SpotifyArtistOverview>() }
-    LaunchedEffect(trackId, artistNames, artistIds) {
-        SongPlayer.awaitAudioStartup()
-        val names = artistNames.split(',').map(String::trim).filter(String::isNotBlank)
-        val ids = artistIds.split(',').map(String::trim).filter(String::isNotBlank)
-        artists = names.mapIndexed { i, name -> PlayingArtist(ids.getOrNull(i).orEmpty(), name) }
-        if (!withContext(Dispatchers.IO) { SpotifyTokenProvider.ensureToken(context) }) return@LaunchedEffect
-        // Track credits supply exact identities (including names containing commas).
-        if (trackId.isNotBlank()) {
-            val credits = withContext(Dispatchers.IO) { Spotify.track(trackId).getOrNull()?.artists }
-            if (!credits.isNullOrEmpty()) artists = credits.map { PlayingArtist(it.id.orEmpty(), it.name) }
-                .distinctBy { it.id.ifBlank { it.name } }
+    var creditsRevision by remember(creditKey){mutableIntStateOf(0)}
+    // Optional exact-credit repair must not hold up profiles already known by ID
+    // or the independent name fallback, and never waits for the lyrics resolver.
+    LaunchedEffect(creditKey) {
+        if(trackId.matches(Regex("[A-Za-z0-9]{22}")) && artists.any {it.id.isBlank()}) {
+            SongPlayer.awaitAudioStartup()
+            val credits=withContext(Dispatchers.IO) {withTimeoutOrNull(5000){
+                if(SpotifyTokenProvider.ensureToken(context))Spotify.track(trackId).getOrNull()?.artists else null
+            }}
+            if(!credits.isNullOrEmpty()) {
+                artists=credits.map {PlayingArtist(it.id.orEmpty(),it.name)}.distinctBy {it.id.ifBlank {it.name}}
+                artistCreditsCache.put(creditKey,artists);creditsRevision++
+            }
         }
+    }
+    LaunchedEffect(trackId, artistNames, artistIds,creditsRevision) {
+        SongPlayer.awaitAudioStartup()
+        if(artists.isNotEmpty() && artists.all {it.id.isNotBlank() && artistCardCache.get(it.id)!=null})return@LaunchedEffect
+        if (!withContext(Dispatchers.IO) { SpotifyTokenProvider.ensureToken(context) }) return@LaunchedEffect
+        artistCreditsCache.put(creditKey,artists)
         val permits = Semaphore(2)
         artists.forEach { credited ->
             launch {
@@ -73,6 +86,7 @@ internal fun NowPlayingArtistCards(
                     } ?: return@launch
                     PlayingArtist(exact.id, exact.name).also { resolved ->
                         artists = artists.map { if (it == credited) resolved else it }
+                        artistCreditsCache.put(creditKey,artists)
                     }
                 }
                 val profile = artistCardCache.get(artist.id) ?: permits.withPermit {
@@ -92,7 +106,7 @@ internal fun NowPlayingArtistCards(
         LazyRow(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(artists, key = { it.id.ifBlank { it.name } }) { artist ->
-                val profile = profiles[artist.id]
+                val profile = profiles[artist.id] ?: artistCardCache.get(artist.id)
                 val open = { navController.navigate(artistRoute(artist.name, artist.id)) }
                 Column(Modifier.width(cardWidth).height(cardWidth/1.5f+detailsHeight).clip(RoundedCornerShape(16.dp))
                     .background(Color(0xFF282828)).clickable(onClick = open)) {
@@ -101,7 +115,8 @@ internal fun NowPlayingArtistCards(
                             ?: profile?.avatarImages?.firstOrNull()?.url
                         if (!image.isNullOrBlank()) {
                             GlideImage(model = image, contentDescription = artist.name,
-                                contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                                requestBuilderTransform={it.diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)})
                         } else {
                             Icon(Icons.Default.Person, null, tint = Color(0xFF666666),
                                 modifier = Modifier.size(80.dp).align(Alignment.Center))

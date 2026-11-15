@@ -363,6 +363,8 @@ fun DownloadsScreen(navController: NavController) {
                             Spacer(modifier = Modifier.height(4.dp))
                             if (queued) {
                                 Text(uiLocalized("Waiting to download"), color = Color.Gray, fontSize = 12.sp)
+                            } else if(task.stage==SongPlayer.DownloadStage.LYRICS) {
+                                Text(uiLocalized("Downloading lyrics…"),color=Color.Gray,fontSize=12.sp)
                             } else {
                                 androidx.compose.material3.LinearProgressIndicator(
                                     progress = { pct.coerceIn(0, 100) / 100f },

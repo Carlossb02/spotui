@@ -546,12 +546,7 @@ private fun PopularTrackRow(
                 )
                 .padding(16.dp, 6.dp),
         ) {
-            Text(
-                text = "${index + 1}",
-                color = Color.Gray,
-                fontSize = 15.sp,
-                modifier = Modifier.width(24.dp),
-            )
+            com.music.spotui.ui.components.TrackNumberOrPlaying(song,"${index+1}",Modifier.width(24.dp),15.sp)
             GlideImage(
                 modifier = Modifier
                     .padding(8.dp, 0.dp, 12.dp, 0.dp)

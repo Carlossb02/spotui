@@ -1,6 +1,7 @@
 package com.music.spotui.di
 
 import com.music.spotui.data.entity.SongsModel
+import com.music.spotui.data.entity.libraryIdentity
 
 /** Tracks occurrences, rather than song IDs: a manual request may repeat a context track. */
 internal class PlaybackQueueOrder {
@@ -9,6 +10,7 @@ internal class PlaybackQueueOrder {
     private var entries = emptyList<Entry>()
     private var original = emptyList<Long>()
     val songs get() = entries.map { it.song }
+    val occurrenceTokens get()=entries.map {it.token}
     val manualIndices get() = entries.indices.filter { entries[it].manual }.toSet()
     val originalIndices: List<Int> get() {
         val positions = entries.withIndex().associate { it.value.token to it.index }
@@ -28,14 +30,16 @@ internal class PlaybackQueueOrder {
             }
         }
         original = when {
-            restoredOriginalIndices.size == entries.size && restoredOriginalIndices.toSet() == entries.indices.toSet() ->
+            restoredOriginalIndices.isNotEmpty() &&
+                restoredOriginalIndices.distinct().size == restoredOriginalIndices.size &&
+                restoredOriginalIndices.all { it in entries.indices } ->
                 restoredOriginalIndices.map { entries[it].token }
-            restoredOriginal.isEmpty() -> entries.map { it.token }
+            restoredOriginal.isEmpty() -> entries.filterNot { it.manual }.map { it.token }
             else -> {
-                val pool = entries.groupBy { it.song.id to it.song.url }.mapValues { ArrayDeque(it.value) }
-                val matched = restoredOriginal.mapNotNull { pool[it.id to it.url]?.removeFirstOrNull()?.token }
+                val pool = entries.filterNot { it.manual }.groupBy { it.song.id to it.song.libraryIdentity() }.mapValues { ArrayDeque(it.value) }
+                val matched = restoredOriginal.mapNotNull { pool[it.id to it.libraryIdentity()]?.removeFirstOrNull()?.token }
                 val known = matched.toHashSet()
-                matched + entries.filter { it.token !in known }.map { it.token }
+                matched + entries.filter { !it.manual && it.token !in known }.map { it.token }
             }
         }
         if (shuffled) {
@@ -44,9 +48,9 @@ internal class PlaybackQueueOrder {
         }
     }
     fun reconcile(songs: List<SongsModel>) {
-        val pool = entries.groupBy { it.song.id to it.song.url }.mapValues { ArrayDeque(it.value) }
+        val pool = entries.groupBy { it.song.id to it.song.libraryIdentity() }.mapValues { ArrayDeque(it.value) }
         entries = songs.map { song ->
-            pool[song.id to song.url]?.removeFirstOrNull()?.copy(song = song) ?: Entry(++serial, song)
+            pool[song.id to song.libraryIdentity()]?.removeFirstOrNull()?.copy(song = song) ?: Entry(++serial, song)
         }
         val tokens = entries.map { it.token }.toSet()
         val known = original.toHashSet()
@@ -70,6 +74,10 @@ internal class PlaybackQueueOrder {
     fun remove(at: Int) {
         if (at in entries.indices) entries = entries.filterIndexed { i, _ -> i != at }
     }
+    fun prioritizeManual(current:Int) {
+        val future=entries.drop(current+1)
+        entries=entries.take(current+1)+future.filter {it.manual}+future.filterNot {it.manual}
+    }
     /** Keep played occurrences for Previous; omit consumed requests when the context repeats. */
     fun select(at: Int, previous: Int): Int {
         if (at !in entries.indices) return at
@@ -85,7 +93,6 @@ internal class PlaybackQueueOrder {
         val manual = entries.drop(current + 1).filter { it.manual }
         val base = entries.filterNot { it.manual }
         if (enabled) {
-            original = entries.map { it.token }
             entries = entries.take(current + 1) + manual + entries.drop(current + 1).filterNot { it.manual }.shuffled()
         } else {
             val ranks = original.withIndex().associate { it.value to it.index }

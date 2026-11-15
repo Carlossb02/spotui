@@ -149,6 +149,9 @@ fun MyNavHost(
         composable(Routes.Settings.route){
             SettingsScreen(navHostController)
         }
+        composable("singleAlbum/{singleId}") {entry->
+            entry.arguments?.getString("singleId")?.let {com.music.spotui.ui.screens.SingleSongAlbumScreen(it,navHostController)}
+        }
 
         composable(Routes.DeviceSync.route) { com.music.spotui.ui.screens.DeviceSyncScreen(navHostController) }
 

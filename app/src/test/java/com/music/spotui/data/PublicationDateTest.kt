@@ -6,6 +6,11 @@ import java.time.Instant
 import java.time.ZoneId
 
 class PublicationDateTest {
+    @Test fun resettingChecksSurvivesOlderReadTimestampsAndAllowsANewConsultation() {
+        assertEquals(0L,com.music.spotui.data.preferences.effectiveReleaseCheck(100,200))
+        assertEquals(0L,com.music.spotui.data.preferences.effectiveReleaseCheck(150,200))
+        assertEquals(300L,com.music.spotui.data.preferences.effectiveReleaseCheck(300,200))
+    }
     @Test fun youtubeAbbreviatedAndNoYearDatesAreRecognised() {
         val now=Instant.parse("2026-11-15T12:00:00Z").toEpochMilli()
         assertEquals(now-24*60*60_000L,publicationTime("hace 1 d",now,utc))

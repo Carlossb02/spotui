@@ -24,7 +24,7 @@ internal fun rememberReleaseCheck(kind:ReleaseKind):State<Long> {
     DisposableEffect(context,kind) {
         val prefs=context.getSharedPreferences(RELEASE_NEWS_PREFS,0)
         val listener=android.content.SharedPreferences.OnSharedPreferenceChangeListener {_,key->
-            if(key==kind.key)seen.value=lastReleaseCheck(context,kind)
+            if(key==kind.key || key==kind.key+"_reset")seen.value=lastReleaseCheck(context,kind)
         }
         prefs.registerOnSharedPreferenceChangeListener(listener)
         onDispose {prefs.unregisterOnSharedPreferenceChangeListener(listener)}

@@ -16,7 +16,7 @@ class ResolvedSongArtworkTest {
         assertEquals(song.libraryIdentity(),song.copy(title="Edited title",singer="New artist").libraryIdentity())
     }
     @Test fun onlyTheTextReferenceUsesTheExistingMetadataSyncCategory() {
-        assertTrue("resolved_song_artwork_v1" in CloudPreferences.names)
-        assertEquals(SyncOptions.Category.METADATA,SyncOptions.category("resolved_song_artwork_v1:spotify:local:track"))
+        assertTrue("resolved_song_artwork_v2" in CloudPreferences.names)
+        assertEquals(SyncOptions.Category.METADATA,SyncOptions.category("resolved_song_artwork_v2:spotify:local:track"))
     }
 }

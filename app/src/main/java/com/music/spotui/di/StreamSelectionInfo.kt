@@ -21,6 +21,11 @@ internal object StreamSelections {
     private val selected=java.util.concurrent.ConcurrentHashMap<String,StreamSelectionInfo>()
     private val changes=MutableStateFlow(0L)
     val revision=changes.asStateFlow()
+    fun candidateInfo(query:String,id:String)=candidates["$query|$id"]
+    fun clear(context:Context,query:String) {
+        selected.remove(query);candidates.keys.removeIf {it.startsWith("$query|")}
+        context.getSharedPreferences("stream_selection_info_v1",0).edit().remove(query).apply();changes.update {it+1}
+    }
     fun local(context:Context,query:String) {
         val info=StreamSelectionInfo("",criteria="Local file; no YouTube candidate was selected.",mode="Local file")
         selected[query]=info
@@ -42,6 +47,7 @@ internal object StreamSelections {
         val result=info.copy(mode=mode,selectedAt=System.currentTimeMillis())
         selected[query]=result
         context.getSharedPreferences("stream_selection_info_v1",0).edit().putString(query,result.json().toString()).apply()
+        com.music.spotui.data.api.ResolvedSongArtwork.resolved(context,query,videoId)
         changes.update {it+1}
     }
 }

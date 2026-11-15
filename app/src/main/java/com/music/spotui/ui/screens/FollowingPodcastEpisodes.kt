@@ -118,7 +118,7 @@ private fun FollowingEpisodeRow(item:FollowedEpisode,playing:Boolean,onPlay:()->
         Column(Modifier.fillMaxWidth().clickable(onClick=onPlay).padding(horizontal=20.dp,vertical=16.dp),
             verticalArrangement=Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment=Alignment.CenterVertically) {
-                EpisodeArtwork(episode,Modifier.width(if(wide)180.dp else 108.dp).aspectRatio(16f/9f),radius=5.dp,showProgress=false)
+                EpisodeArtwork(episode,Modifier.width(if(wide)180.dp else 108.dp).aspectRatio(16f/9f),radius=5.dp,showProgress=true)
                 Column(Modifier.weight(1f).padding(start=14.dp),verticalArrangement=Arrangement.spacedBy(5.dp)) {
                     Text(episode.title,color=Color.White,fontSize=if(wide)20.sp else 16.sp,maxLines=2,overflow=TextOverflow.Ellipsis)
                     Text(episode.album.ifBlank {episode.singer},color=Color(0xFFB3B3B3),fontSize=14.sp,maxLines=1,

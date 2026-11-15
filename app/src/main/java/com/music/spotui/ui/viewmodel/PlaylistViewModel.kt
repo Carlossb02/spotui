@@ -40,21 +40,7 @@ class PlaylistViewModel @Inject constructor(
 
     fun addAllToQueue(songs: List<SongsModel>) {
         if (songs.isEmpty()) return
-        val current = currentSongState.queue.value
-        val currentId = currentSongState.songId.value
-        val currentUrl = currentSongState.songUrl.value
-        val idx = current.indexOfFirst { it.id == currentId || it.url == currentUrl }
-        val insertAt = if (idx >= 0) idx + 1 else 0
-        val incoming = songs.distinctBy { it.id }.filterNot {
-            idx >= 0 && current[idx].id == it.id
-        }
-        val incomingIds = incoming.map { it.id }.toSet()
-        // Move matching upcoming tracks to the front rather than duplicating IDs;
-        // duplicates confuse the current-track index during transitions.
-        val future = current.drop(insertAt).filterNot { it.id in incomingIds }
-        currentSongState.updateQueue(
-            current.take(insertAt) + incoming + future, isManualEdit = true
-        )
+        currentSongState.enqueue(songs)
     }
 
     fun startShuffled(songs: List<SongsModel>, sourceName: String? = null) = currentSongState.startShuffled(songs, sourceName)

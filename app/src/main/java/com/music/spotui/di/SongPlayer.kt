@@ -247,6 +247,7 @@ object SongPlayer {
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun clearCaches(context: Context) {
         val appContext = context.applicationContext
+        com.music.spotui.data.api.ResolvedSongArtwork.invalidateAll(appContext)
         val activeQuery = loadedQuery ?: currentRequest
         val activeStream = streamCache[activeQuery]
         val activeCacheKey = activeStream?.let { url ->
@@ -680,6 +681,8 @@ object SongPlayer {
         reloadIfPlaying: Boolean = true,
         clearAltStream: Boolean = true,
     ) {
+        com.music.spotui.data.api.ResolvedSongArtwork.invalidate(context,song)
+        StreamSelections.clear(context,song.url)
         invalidateSongCacheByUrl(
             songUrl = song.url,
             context = context,
@@ -700,6 +703,7 @@ object SongPlayer {
     ) {
         if (songUrl.isBlank()) return
         val appContext = context.applicationContext
+        com.music.spotui.data.api.ResolvedSongArtwork.invalidateQuery(appContext,songUrl)
 
         val activeEdit=!reloadIfPlaying && ((songId!=null && songId!=0 && songId!=-1 && songId==boundState?.songId?.value) || boundState?.songUrl?.value==songUrl)
         invalidateResolvedStream(songUrl,preserveMedia=activeEdit)
@@ -923,10 +927,10 @@ object SongPlayer {
         // player, so they never compete with it for network/CPU while it is being resolved.
         val upcomingSongs: List<String> = if (queue.isNotEmpty()) {
             val cur = boundState?.currentQueueIndex() ?: -1
-            if (cur >= 0) queue.drop(cur + 1).take(2).map { it.url } else emptyList()
+            com.music.spotui.audio.QueuePreloadPolicy.next(queue.map {it.url},cur,com.music.spotui.data.preferences.getPreloadSongCount(appContext))
         } else emptyList()
         val startPrefetch: () -> Unit = {
-            if (upcomingSongs.isNotEmpty()) prefetchList(upcomingSongs, appContext, 2)
+            if (upcomingSongs.isNotEmpty()) prefetchList(upcomingSongs, appContext, com.music.spotui.data.preferences.getPreloadSongCount(appContext))
         }
         val resolvedMediaId = mediaId ?: boundState?.queue?.value?.firstOrNull { it.url == song }?.let { "song/${it.id}" }
         ?: boundState?.songId?.value?.let { if (it != 0) "song/$it" else null }
@@ -1236,6 +1240,21 @@ object SongPlayer {
     private val prefetchSemaphore = Semaphore(1)
     private val prefetchInFlight: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     @Volatile private var prefetchTargets: Set<String> = emptySet()
+    internal data class PreloadStatus(val bytes:Long=0,val target:Long=0,val state:String="Waiting")
+    private val preloadStates=kotlinx.coroutines.flow.MutableStateFlow<Map<String,PreloadStatus>>(emptyMap())
+    internal val preloadStatus=preloadStates.asStateFlow()
+    private val resolvedLengths=java.util.concurrent.ConcurrentHashMap<String,Long>()
+    fun refreshQueuePreload(context:Context) {
+        if(!com.music.spotui.data.preferences.isPreloadEnabled(context) ||
+            com.music.spotui.data.preferences.isPreloadWifiOnly(context) &&
+            (context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).isActiveNetworkMetered) {
+            prefetchTargets=emptySet();prefetchJobs.values.forEach {it.cancel()};preloadStates.value=emptyMap();return
+        }
+        val queue=boundState?.queue?.value.orEmpty()
+        val cursor=boundState?.currentQueueIndex() ?: -1
+        prefetchList(com.music.spotui.audio.QueuePreloadPolicy.next(queue.map {it.url},cursor,
+            com.music.spotui.data.preferences.getPreloadSongCount(context)),context)
+    }
 
     fun registerTracksForResolution(songs: List<com.music.spotui.data.entity.SongsModel>) {
         registerLossless(songs.map { it.url to it.spotifyTrackId })
@@ -1252,6 +1271,8 @@ object SongPlayer {
         val appContext = context.applicationContext
         if (webPlaybackActive()) return
         if (!com.music.spotui.data.preferences.isPreloadEnabled(appContext)) return
+        if(com.music.spotui.data.preferences.isPreloadWifiOnly(appContext) &&
+            (appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).isActiveNetworkMetered)return
         if (!prefetchInFlight.add(song)) return
         val work = scope.launch(start = CoroutineStart.LAZY) {
             try {
@@ -1292,7 +1313,7 @@ object SongPlayer {
     }
 
     /** Don't start heavy preloading while the current song is still buffering its first bytes. */
-    private suspend fun awaitCurrentPlaybackReady(timeoutMs: Long = 8_000L): Boolean =
+    private suspend fun awaitCurrentPlaybackReady(timeoutMs: Long = 60_000L): Boolean =
         withTimeoutOrNull(timeoutMs) {
             while (true) {
                 val ready = withContext(Dispatchers.Main) {
@@ -1302,7 +1323,8 @@ object SongPlayer {
                         state != androidx.media3.common.Player.STATE_IDLE && state != androidx.media3.common.Player.STATE_ENDED
                     com.music.spotui.audio.PlaybackLoadingPolicy.canPreload(
                         playbackResolving, hasActiveMedia, state == androidx.media3.common.Player.STATE_READY
-                    )
+                    ) && (p==null || p.bufferedPosition-p.currentPosition>=15_000L ||
+                        p.duration>0 && p.duration-p.currentPosition<=15_000L)
                 }
                 if (ready) return@withTimeoutOrNull true
                 delay(200L)
@@ -1311,10 +1333,12 @@ object SongPlayer {
             false
         } ?: false
 
-    fun prefetchList(songs: List<String>, context: Context, count: Int = 4) {
-        val targetSongs = songs.take(count).filterNot { it.startsWith("yt_ep:") }
+    fun prefetchList(songs: List<String>, context: Context, count: Int = 5) {
+        val targetSongs = songs.filter {it.isNotBlank() && it!=currentRequest}.distinct()
+            .take(com.music.spotui.data.preferences.getPreloadSongCount(context).coerceAtMost(count))
         val oldTargets = prefetchTargets
         prefetchTargets = targetSongs.toSet()
+        preloadStates.value=preloadStates.value.filterKeys {it in prefetchTargets}
         (oldTargets - prefetchTargets).filter { it != currentRequest }.forEach { prefetchJobs[it]?.cancel() }
         if (targetSongs.isNotEmpty()) {
             Log.d(TAG, "Preloading next ${targetSongs.size} songs in queue: $targetSongs")
@@ -1395,23 +1419,46 @@ object SongPlayer {
 
     private val introWriters = java.util.concurrent.ConcurrentHashMap.newKeySet<androidx.media3.datasource.cache.CacheWriter>()
 
-    private fun cacheIntro(url: String, appContext: Context, song: String = "") {
-        if (!url.startsWith("http")) return
+    private suspend fun cacheIntro(url: String, appContext: Context, song: String = "") {
+        if (!url.startsWith("http")) {
+            val bytes=runCatching {java.io.File(android.net.Uri.parse(url).path.orEmpty()).length()}.getOrDefault(0)
+            preloadStates.value=preloadStates.value+(song to PreloadStatus(bytes,bytes,"Downloaded"));return
+        }
         if (!com.music.spotui.data.preferences.isPreloadEnabled(appContext)) return
         runCatching {
-            val ds = cacheDataSourceFactory(appContext).createDataSource()
+            val ds = cacheDataSourceFactory(appContext).setFlags(
+                androidx.media3.datasource.cache.CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR or
+                    androidx.media3.datasource.cache.CacheDataSource.FLAG_BLOCK_ON_CACHE).createDataSource()
             val query = song.ifBlank { currentRequest }
             val spotifyId = trackIdRegistry[query] ?: spotifyTrackIdForPlayback(query)
             val stableKey = com.music.spotui.audio.LosslessCacheKeyFactory.buildCacheKey(spotifyId, url)
+            val bitrate=Regex("(\\d+) kbps").find(qualityCache[query].orEmpty())?.groupValues?.get(1)?.toIntOrNull()?.times(1000) ?: 160_000
+            val target=com.music.spotui.audio.QueuePreloadPolicy.targetBytes(resolvedLengths[query],durationRegistry[query] ?: 0,bitrate)
             val spec = androidx.media3.datasource.DataSpec.Builder()
                 .setUri(android.net.Uri.parse(url))
                 .setKey(stableKey)
-                .setLength(if (qualityCache[query].orEmpty().contains("FLAC", true)) 512L * 1024L else 256L * 1024L) // Intro only; free the preload slot sooner.
+                .setLength(target)
                 .build()
-            val writer = androidx.media3.datasource.cache.CacheWriter(ds, spec, null, null)
+            var publishedAt=0L
+            val writer = androidx.media3.datasource.cache.CacheWriter(ds, spec, null) {_,_,_->
+                val now=android.os.SystemClock.elapsedRealtime()
+                if(now-publishedAt>500){publishedAt=now
+                    val bytes=mediaCache(appContext).getCachedBytes(stableKey,0,target)
+                    preloadStates.value=preloadStates.value+(query to PreloadStatus(bytes,target,"Loading"))
+                }
+            }
             introWriters.add(writer)
-            try { if (!clearingPlaybackCache) writer.cache() } finally { introWriters.remove(writer); runCatching { ds.close() } }
-        }.onFailure { Log.d(TAG, "intro preload skipped: ${it.message}") }
+            try { if (!clearingPlaybackCache)kotlinx.coroutines.runInterruptible(Dispatchers.IO){writer.cache()}
+                val bytes=mediaCache(appContext).getCachedBytes(stableKey,0,target)
+                preloadStates.value=preloadStates.value+(query to PreloadStatus(bytes,target,if(bytes>=target)"Ready" else "Partial"))
+            } finally { writer.cancel();introWriters.remove(writer); runCatching { ds.close() } }
+        }.onFailure {
+            if(it is CancellationException)throw it
+            val query=song.ifBlank {currentRequest}
+            val old=preloadStates.value[query] ?: PreloadStatus()
+            if(query in prefetchTargets)preloadStates.value=preloadStates.value+(query to old.copy(state=if(old.bytes>0)"Partial" else "Failed"))
+            Log.d(TAG, "audio preload incomplete: ${it.message}")
+        }
     }
 
     @Volatile private var startupTapAtMs = 0L
@@ -1597,6 +1644,7 @@ object SongPlayer {
                         return null
                     }
                     StreamSelections.resolved(appContext,song,alt.value,"Manual")
+                    playback.format.contentLength?.let {resolvedLengths[song]=it}
                     val codec = playback.format.mimeType
                         .substringAfter("codecs=\"", "").substringBefore('"').substringBefore('.')
                         .uppercase()
@@ -1810,7 +1858,22 @@ object SongPlayer {
     private val downloadingSongs =
         java.util.concurrent.ConcurrentHashMap<String, com.music.spotui.data.entity.SongsModel>()
 
-    enum class DownloadStage { QUEUED, DOWNLOADING }
+    enum class DownloadStage { QUEUED, DOWNLOADING, LYRICS }
+    private val downloadLyricsSlots=Semaphore(2)
+    fun completeDownloadedLyrics(context:Context) {
+        scope.launch {com.music.spotui.data.preferences.getDownloadedSongs(context).forEach {song->
+            try {cacheDownloadedLyrics(song)}catch(cancelled:CancellationException){throw cancelled}
+            catch(error:Exception){Log.w(TAG,"Could not cache lyrics for ${song.title}",error)}
+        }}
+    }
+    private suspend fun cacheDownloadedLyrics(song:com.music.spotui.data.entity.SongsModel) {
+        if(com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(song.url))return
+        downloadLyricsSlots.withPermit {
+            withTimeoutOrNull(20_000) {
+                LyricsApi.fetch(song.title,song.singer,song.album,song.durationMs/1000,song.spotifyTrackId,retryMiss=true)
+            }
+        }
+    }
     data class DownloadQueueEntry(
         val song: com.music.spotui.data.entity.SongsModel,
         val progress: Int,
@@ -1967,7 +2030,7 @@ object SongPlayer {
             return
         }
         if (com.music.spotui.data.preferences.isDownloaded(appContext, song.id.toString())) {
-            mainHandler.post { onComplete(true) }
+            scope.launch {runCatching {cacheDownloadedLyrics(song)};withContext(Dispatchers.Main){onComplete(true)}}
             return
         }
         synchronized(downloadLock) {
@@ -2052,6 +2115,11 @@ object SongPlayer {
                 }
                 if (!ok && attempt < 3) delay(1000L)
             }
+            if(ok) {
+                updateDownloadEntry(song.url){it.copy(stage=DownloadStage.LYRICS)}
+                try {cacheDownloadedLyrics(song)} catch(cancelled:CancellationException){throw cancelled}
+                catch(error:Exception){Log.w(TAG,"Audio saved; lyrics unavailable for ${song.title}",error)}
+            }
             return ok
         } finally {
             // A failed or cancelled transfer must not leave a partial download.
@@ -2077,8 +2145,12 @@ object SongPlayer {
     ): Boolean {
         val dlQuality = com.music.spotui.data.preferences.getDownloadQuality(appContext)
         val losslessDownloading = losslessStreaming
+        registerTracksForResolution(listOf(song))
+        val query=song.url
+        val alt=alternativeStreamForPlayback(query,appContext)
+        val chosenVideo=com.music.spotui.audio.DownloadRecordingPolicy.videoId(alt,StreamSelections.get(appContext,query)?.videoId)
 
-        if (dlQuality.lossless || losslessDownloading) {
+        if (alt==null && chosenVideo==null && (dlQuality.lossless || losslessDownloading)) {
             val flacOk = kotlinx.coroutines.withTimeoutOrNull(45_000) {
                 runCatching { downloadLosslessTrackToFile(song, appContext) }.getOrDefault(false)
             } ?: false
@@ -2086,13 +2158,11 @@ object SongPlayer {
             if (flacOk) return true
         }
 
-        if (!youtubeEnabled) {
+        if (!youtubeEnabled && alt?.isLocal!=true) {
             lastDownloadError = "Track not available on configured audio providers"
             return false
         }
 
-        val query = song.url
-        val alt = alternativeStreamForPlayback(query, appContext)
 
         val dir = java.io.File(appContext.filesDir, "downloads").apply { mkdirs() }
         val outFile = java.io.File(dir, "${song.id}.m4a")
@@ -2127,7 +2197,7 @@ object SongPlayer {
             return true
         }
 
-        val targetQuery = if (alt != null && alt.isYouTube) alt.value else query
+        val targetQuery = com.music.spotui.audio.DownloadRecordingPolicy.exactQuery(query,chosenVideo)
         val playback = resolveYtPlayback(targetQuery, dlQuality.audioQuality, appContext) ?: run {
             lastDownloadError = "Couldn't resolve a stream"
             return false
@@ -2144,18 +2214,13 @@ object SongPlayer {
             return false
         }
         com.music.spotui.data.preferences.addDownload(appContext, song, outFile.absolutePath)
+        (chosenVideo ?: StreamSelections.get(appContext,targetQuery)?.videoId)?.let {StreamSelections.resolved(appContext,query,it,"Download")}
         rememberYouTubeGain(
             appContext, song.url, android.net.Uri.fromFile(outFile).toString(),
             playback.audioConfig?.loudnessDb ?: playback.format.loudnessDb,
             playback.audioConfig?.perceptualLoudnessDb,
         )
         downloadCoverImage(song.coverUri, java.io.File(dir, "${song.id}_cover.jpg"))
-        if (com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(song.url)) return true
-        LyricsApi.removeFromCache(song.title, song.singer)
-        val lyricsOk = runCatching {
-            LyricsApi.fetch(song.title, song.singer, song.album, song.durationMs / 1000, song.spotifyTrackId)
-        }.getOrNull() != null
-        if (!lyricsOk) LyricsApi.removeFromCache(song.title, song.singer)
         return true
     }
 
@@ -2762,7 +2827,6 @@ object SongPlayer {
     internal suspend fun artworkVideoId(song:com.music.spotui.data.entity.SongsModel,context:Context):String? {
         registerAlternativeKeys(listOf(song.url to com.music.spotui.data.preferences.alternativeStreamKey(song)))
         alternativeStreamForPlayback(song.url,context)?.let {return if(it.isYouTube)it.value else null}
-        StreamSelections.get(context,song.url)?.videoId?.takeIf {it.isNotBlank()}?.let {return it}
         if(song.url.startsWith("yt_local:"))return song.url.removePrefix("yt_local:")
         videoIdFromYouTubeLink(song.url)?.let {return it}
         if(song.url.startsWith("content://") || song.url.startsWith("file://") || song.url.startsWith("/"))return null
@@ -2771,22 +2835,26 @@ object SongPlayer {
         val rating=com.music.spotui.data.api.ExplicitContentStore.known(context,com.music.spotui.data.api.ratingSpotifyId(song)) ?: song.explicit
         registerExplicit(listOf(song.url to rating))
         registerMetadata(listOf(song.url to TrackMatchMetadata(song.title,song.singer,song.album)))
-        return resolveVideoCandidates(song.url,forPlayback=false).firstOrNull()
+        // Resolve the actual playable result, including edition, source overrides,
+        // quality, candidate failures and ordered fallback. Never use search.first().
+        resolveStreamUrl(song.url,context,forPlayback=false) ?: return null
+        return StreamSelections.get(context,song.url)?.videoId?.takeIf {it.isNotBlank()}
     }
 
     private suspend fun resolveVideoCandidates(
         query: String,
         filter: YouTube.SearchFilter = YouTube.SearchFilter.FILTER_SONG,
         forPlayback: Boolean = false,
+        bypassCache:Boolean=false,
     ): List<String> {
         var cacheKey = videoCandidateCacheKey(query,filter)
         val epoch = synchronized(resolutionCacheLock) { resolutionCacheGeneration }
         val matchStartedAt = android.os.SystemClock.elapsedRealtime()
-        videoCandidatesCache[cacheKey]?.let {
+        if(!bypassCache)videoCandidatesCache[cacheKey]?.let {
             Log.i("SpotuiStartup", "ytCandidates memoryCache hits=${it.size}")
             return it
         }
-        appCtx?.let { ctx ->
+        if(!bypassCache)appCtx?.let { ctx ->
             com.music.spotui.data.preferences.getCachedVideoIds(ctx, cacheKey)?.let { cached ->
                 synchronized(resolutionCacheLock) {
                     if (resolutionCacheGeneration == epoch) videoCandidatesCache[cacheKey] = cached
@@ -3210,6 +3278,7 @@ object SongPlayer {
         }
 
         fun cacheAndReturn(ids: List<String>): List<String> {
+            if(bypassCache)return ids
             synchronized(resolutionCacheLock) {
                 if (resolutionCacheGeneration == epoch) {
                     videoCandidatesCache[cacheKey] = ids
@@ -3336,6 +3405,7 @@ object SongPlayer {
                             null
                         }
             } ?: return null
+            resolved.second.format.contentLength?.let {resolvedLengths[query]=it}
             StreamSelections.resolved(appContext,query,resolved.first,
                 if(skipValidation)"Exact YouTube link / episode" else "Automatic")
             return resolved.second
@@ -3439,7 +3509,7 @@ object SongPlayer {
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setBufferDurationsMs(
                 20_000,
-                90_000,
+                600_000,
                 400,
                 2_500
             )
@@ -3873,6 +3943,7 @@ object SongPlayer {
     // Autofill is service-owned: it continues when there is no PlayerScreen/ViewModel.
     // Exactly one low-priority network job at a time; never contend during stream resolution.
     private var lastStartPrefetchKey: String? = null
+    private var lastQueuePreloadAt=0L
     private var autofillJob: Job? = null
     private var autofillSeed: String? = null
     private var lastAutofillAttemptAt = 0L
@@ -4122,7 +4193,41 @@ object SongPlayer {
     fun bindState(state: CurrentSongState) { boundState = state;com.music.spotui.sync.CloudPlayback.bind(state) }
 
     fun updateTrackInQueue(song: com.music.spotui.data.entity.SongsModel, newTitle: String, newArtist: String, newAlbum: String, newCoverUri: String) {
+        appCtx?.let {context->
+            com.music.spotui.data.api.ResolvedSongArtwork.invalidate(context,song)
+            StreamSelections.clear(context,song.url)
+            invalidateResolvedStream(song.url,preserveMedia=true)
+        }
         boundState?.updateTrackInQueue(song, newTitle, newArtist, newAlbum, newCoverUri)
+    }
+    internal suspend fun preloadReport(context:Context):String {
+        val snapshot=withContext(Dispatchers.Main) {
+            val q=boundState?.queue?.value.orEmpty();val index=boundState?.currentQueueIndex() ?: -1
+            Triple(q.drop(index.coerceAtLeast(0)).take(6),
+                ((player?.bufferedPosition ?: 0)-(player?.currentPosition ?: 0)).coerceAtLeast(0),index)
+        }
+        return buildString {
+            appendLine("$currentSource · $currentQuality")
+            appendLine("Buffered: ${snapshot.second/1000}s · active preloads: ${prefetchInFlight.size}")
+            snapshot.first.forEach {song->
+                val status=preloadStates.value[song.url]
+                val bytes=streamCache[song.url]?.let {url->
+                    val key=com.music.spotui.audio.LosslessCacheKeyFactory.buildCacheKey(trackIdRegistry[song.url],url)
+                    mediaCache(context).getCachedBytes(key,0,com.music.spotui.audio.QueuePreloadPolicy.MAX_TRACK_BYTES)
+                } ?: 0L
+                appendLine("${song.title}: ${bytes/1024} KB · ${status?.state ?: "Current / not queued"} · target=${(status?.target ?: 0)/1024} KB")
+            }
+        }
+    }
+    internal suspend fun debugMatch(song:com.music.spotui.data.entity.SongsModel,context:Context):String {
+        registerTracksForResolution(listOf(song))
+        alternativeStreamForPlayback(song.url,context)?.let {return "Manual selection: ${it.type}\n${it.value}"}
+        awaitAudioStartup()
+        val ids=resolveVideoCandidates(song.url,forPlayback=false,bypassCache=true)
+        return ids.take(8).joinToString("\n\n") {id->
+            val info=StreamSelections.candidateInfo(song.url,id)
+            "https://www.youtube.com/watch?v=$id\nscore=${info?.score} · stage=${info?.stage}\n${info?.criteria.orEmpty()}"
+        }.ifBlank {"No matching recording found."}
     }
 
     fun onNormalizationSettingChanged(context: Context) {
@@ -4314,6 +4419,11 @@ object SongPlayer {
                 } ?: continue
                 val (playing, exoDur, pos, ended) = watch
                 if (!playing && !ended) continue
+                val preloadNow=android.os.SystemClock.elapsedRealtime()
+                if(playing && preloadNow-lastQueuePreloadAt>30_000 && isNetworkAvailable(ctx)) {
+                    lastQueuePreloadAt=preloadNow
+                    refreshQueuePreload(ctx)
+                }
                 // Populate a one-item podcast queue as soon as playback is READY,
                 // including hours-long episodes where duration is unavailable.
                 // The request runs asynchronously; it never blocks the player.
@@ -4363,7 +4473,7 @@ object SongPlayer {
                     val nextUrl = q[cur + 1].url
                     if (lastStartPrefetchKey != nextUrl) {
                         lastStartPrefetchKey = nextUrl
-                        scope.launch { delay(1_500L); if (!playbackResolving) prefetch(nextUrl, ctx) }
+                        scope.launch { delay(1_500L); if (!playbackResolving) refreshQueuePreload(ctx) }
                     }
                 }
 
