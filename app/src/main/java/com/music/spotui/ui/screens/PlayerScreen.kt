@@ -2765,7 +2765,6 @@ private fun CanvasVideo(url: String, modifier: Modifier = Modifier, onError: (()
             setBackgroundColor(android.graphics.Color.TRANSPARENT)
         }
     }
-    SampleLyricVideoContrast(playerView)
     DisposableEffect(exo, lifecycleOwner) {
         var released = false
         val listener = object : androidx.media3.common.Player.Listener {

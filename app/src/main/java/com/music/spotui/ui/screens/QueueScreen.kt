@@ -326,7 +326,7 @@ fun QueueContent(
                     if(index==0 || manual(entry)!=manual(orderedUpcoming[index-1])) {
                     item {
                         Text(
-                            uiLocalized(if(manual(entry))"Added to queue" else "Next from your playlist"),
+                            uiLocalized(if(manual(entry))"Up next" else "Queue"),
                             color = Color.White,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
