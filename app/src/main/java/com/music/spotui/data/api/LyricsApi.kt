@@ -61,14 +61,14 @@ object LyricsApi {
         }
     }
 
-    suspend fun fetch(title: String, artist: String, album: String, durationSec: Int, trackId: String = ""): Lyrics? = withContext(Dispatchers.IO) {
+    suspend fun fetch(title: String, artist: String, album: String, durationSec: Int, trackId: String = "",retryMiss:Boolean=false): Lyrics? = withContext(Dispatchers.IO) {
         if (title.isBlank() || artist.isBlank()) return@withContext null
         val id = exactId(title, artist, album, durationSec, trackId)
         val key = prefix(title, artist) + "${LyricsMatcher.normalize(album)}|${durationSec.coerceAtLeast(0)}|$id"
         locks.getOrPut(key) { Mutex() }.withLock {
             when (val cached = cache[key]) {
                 is Lyrics -> return@withLock cached
-                is Miss -> if (System.currentTimeMillis() - cached.at < MISS_RETRY_MS) return@withLock null
+                is Miss -> if (!retryMiss && System.currentTimeMillis() - cached.at < MISS_RETRY_MS) return@withLock null
             }
             val ctx = MyApplication.instance
             LyricsCachePref.get(ctx, key)?.let { cache[key] = it; return@withLock it }

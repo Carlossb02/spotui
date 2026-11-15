@@ -64,6 +64,8 @@ class CurrentSongState @Inject constructor() {
     val sourceName: State<String> get() = _sourceName
 
     private val queueOrder = PlaybackQueueOrder()
+    val manualQueueIndices:Set<Int> get()=queueOrder.manualIndices
+    val queueOccurrenceTokens:List<Long> get()=queueOrder.occurrenceTokens
 
     /** Repair old persisted metadata without moving the cursor or reordering requests. */
     internal fun updateContentRating(query:String, explicit:Boolean) {
@@ -73,8 +75,10 @@ class CurrentSongState @Inject constructor() {
         persistQueue()
     }
     internal fun updateResolvedArtwork(query:String,url:String) {
-        if(_queue.value.none {it.url==query && it.coverUri.isBlank()})return
-        queueOrder.reconcile(_queue.value.map {if(it.url==query && it.coverUri.isBlank())it.copy(coverUri=url) else it})
+        val context=com.music.spotui.MyApplication.instance
+        fun accepts(song:SongsModel)=song.url==query && com.music.spotui.data.api.ResolvedSongArtwork.isGenerated(context,song)
+        if(_queue.value.none {accepts(it) && it.coverUri!=url})return
+        queueOrder.reconcile(_queue.value.map {if(accepts(it))it.copy(coverUri=url) else it})
         _queue.value=queueOrder.songs
         if(_songUrl.value==query || _queue.value.any {it.url==query && it.id==_songId.value})_coverUri.value=url
         persistQueue()
@@ -101,6 +105,7 @@ class CurrentSongState @Inject constructor() {
             com.music.spotui.data.preferences.saveLastQueue(com.music.spotui.MyApplication.instance,
                 queue, original, manual, cursor, indices)
         }
+        SongPlayer.refreshQueuePreload(com.music.spotui.MyApplication.instance)
     }
     private fun persistCursor() {
         val cursor = _songIndex.value
@@ -122,6 +127,7 @@ class CurrentSongState @Inject constructor() {
             from > cur && to <= cur -> cur + 1
             else -> cur
         }
+        queueOrder.prioritizeManual(_songIndex.value)
         updateQueue(queueOrder.songs, isManualEdit = true)
     }
 
@@ -159,6 +165,7 @@ class CurrentSongState @Inject constructor() {
                 com.music.spotui.MyApplication.instance, songs,
                 com.music.spotui.data.preferences.loadLastPlayback(com.music.spotui.MyApplication.instance)?.first?.id ?: _songId.value)
         } else queueOrder.reconcile(songs)
+        queueOrder.prioritizeManual(_songIndex.value)
         _queue.value = queueOrder.songs
         // Seed the lossless resolver: map each track's play query → its Spotify id so
         // SongPlayer can resolve a FLAC stream from a play site that only has the query.
@@ -379,15 +386,7 @@ class CurrentSongState @Inject constructor() {
                 com.music.spotui.data.preferences.saveLastPlayback(
                     com.music.spotui.MyApplication.instance, track)
             }
-            // Prefetch the next track in the queue to make transitions seamless.
-            val q = _queue.value
-            if (q.isNotEmpty()) {
-                val curIndex = _songIndex.value
-                val nextIdx = if (curIndex + 1 < q.size) curIndex + 1 else if (repeat.value == RepeatMode.ALL) 0 else -1
-                if (nextIdx in q.indices) {
-                    SongPlayer.prefetch(q[nextIdx].url, com.music.spotui.MyApplication.instance)
-                }
-            }
+            // SongPlayer schedules the whole upcoming window after audio is ready.
         }
         // Warm the lyrics cache in the background so they're already loaded by the
         // time the user opens the player / scrolls to the lyrics card.

@@ -146,7 +146,7 @@ fun SongOptionsSheet(
         var editTitle by remember { mutableStateOf(displaySong.title) }
         var editArtist by remember { mutableStateOf(displaySong.singer) }
         var editAlbum by remember { mutableStateOf(displaySong.album) }
-        var editCover by remember { mutableStateOf(displaySong.coverUri) }
+        var editCover by remember { mutableStateOf(if(com.music.spotui.data.api.ResolvedSongArtwork.isGenerated(context,displaySong))"" else displaySong.coverUri) }
 
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showEditDialog = false },
@@ -206,17 +206,21 @@ fun SongOptionsSheet(
             },
             confirmButton = {
                 androidx.compose.material3.TextButton(
-                    onClick = {
+                    onClick = saveMetadata@{
                         val finalTitle = editTitle.ifBlank { displaySong.title }
                         val finalArtist = editArtist.ifBlank { displaySong.singer }
-                        com.music.spotui.data.preferences.updateLocalTrackMetadata(
+                        val saved=runCatching {com.music.spotui.data.preferences.updateLocalTrackMetadata(
                             context,
                             song,
                             finalTitle,
                             finalArtist,
                             editAlbum,
                             editCover
-                        )
+                        )}.getOrDefault(false)
+                        if(!saved) {
+                            android.widget.Toast.makeText(context,text("Could not save metadata"),android.widget.Toast.LENGTH_LONG).show()
+                            return@saveMetadata
+                        }
                         onSongRemovedFromPlaylist?.invoke()
                         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                             com.music.spotui.util.BackupHelper.performAutoBackup(context)

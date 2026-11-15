@@ -36,12 +36,13 @@ object CustomMetadataPref {
         val singer: String,
         val album: String,
         val coverUri: String,
+        val updatedAt:Long=0,
     )
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
-    fun saveOverride(
+    @Synchronized fun saveOverride(
         context: Context,
         song: SongsModel,
         title: String,
@@ -52,18 +53,15 @@ object CustomMetadataPref {
         val keys = getSongKeys(song)
         if (keys.isEmpty()) return
         val current = getAllOverrides(context).toMutableMap()
-        val retainedCover=coverUri.trim().ifBlank { keys.firstNotNullOfOrNull { current[it]?.coverUri?.takeIf(String::isNotBlank) } ?: song.coverUri }
-        val override = TrackMetadataOverride(title, singer, album, retainedCover)
+        val retainedCover=coverUri.trim()
+        val override = TrackMetadataOverride(title, singer, album, retainedCover,System.currentTimeMillis())
         keys.forEach { current[it] = override }
         saveAll(context, current)
     }
 
     fun getOverride(context: Context, song: SongsModel): TrackMetadataOverride? {
         val current = getAllOverrides(context)
-        getSongKeys(song).forEach { key ->
-            current[key]?.let { return it }
-        }
-        return null
+        return preferredMetadataOverride(getSongKeys(song),current)
     }
 
     fun applyOverride(context: Context, song: SongsModel): SongsModel {
@@ -81,7 +79,7 @@ object CustomMetadataPref {
         val overrides = getAllOverrides(context)
         if (overrides.isEmpty()) return songs
         return songs.map { song ->
-            val edit = getSongKeys(song).firstNotNullOfOrNull { overrides[it] } ?: return@map song
+            val edit = preferredMetadataOverride(getSongKeys(song),overrides) ?: return@map song
             val changed = song.copy(title = edit.title.ifBlank { song.title }, singer = edit.singer.ifBlank { song.singer },
                 album = edit.album.ifBlank { song.album }, coverUri = edit.coverUri.ifBlank { song.coverUri })
             if ((changed.title != song.title || changed.singer != song.singer) && song.url.startsWith("spotify:track:"))
@@ -92,11 +90,11 @@ object CustomMetadataPref {
 
     private fun getSongKeys(song: SongsModel): List<String> {
         val keys = mutableListOf<String>()
-        if (song.id != 0 && song.id != -1) keys.add("id:${song.id}")
         if (song.spotifyTrackId.isNotBlank()) {
             val clean = song.spotifyTrackId.removePrefix("spotify:track:").removePrefix("track:").substringBefore("?").trim()
             if (clean.isNotBlank()) keys.add("spotify:$clean")
         }
+        if (song.id != 0 && song.id != -1) keys.add("id:${song.id}")
         if (song.url.isNotBlank()) keys.add("url:${song.url}")
         return keys
     }
@@ -120,6 +118,7 @@ object CustomMetadataPref {
                         singer = item.optString("singer"),
                         album = item.optString("album"),
                         coverUri = item.optString("coverUri"),
+                        updatedAt=item.optLong("updatedAt",0),
                     )
                 }
             }
@@ -129,7 +128,7 @@ object CustomMetadataPref {
         return loaded
     }
 
-    fun restoreOverrides(context: Context, map: Map<String, TrackMetadataOverride>) {
+    @Synchronized fun restoreOverrides(context: Context, map: Map<String, TrackMetadataOverride>) {
         val current = getAllOverrides(context).toMutableMap()
         current.putAll(map)
         saveAll(context, current)
@@ -143,8 +142,13 @@ object CustomMetadataPref {
                 put("singer", v.singer)
                 put("album", v.album)
                 put("coverUri", v.coverUri)
+                put("updatedAt",v.updatedAt)
             })
         }
-        prefs(context).edit().putString(KEY, obj.toString()).apply()
+        check(prefs(context).edit().putString(KEY, obj.toString()).commit()) {"Could not save metadata"}
+        com.music.spotui.sync.OwnLibraryChanges.changed()
     }
 }
+
+internal fun preferredMetadataOverride(keys:List<String>,values:Map<String,CustomMetadataPref.TrackMetadataOverride>)=
+    keys.mapNotNull {values[it]}.maxByOrNull {it.updatedAt}

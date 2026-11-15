@@ -48,6 +48,8 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
 
     fun updateQueue(songs: List<SongsModel>, isManualEdit: Boolean = false, startSongId: Int? = null, sourceName: String? = null) =
         currentSongState.updateQueue(songs, isManualEdit, startSongId, sourceName)
+    val manualQueueIndices:Set<Int> get()=currentSongState.manualQueueIndices
+    val queueOccurrenceTokens:List<Long> get()=currentSongState.queueOccurrenceTokens
 
     /** Insert a track right after the one currently playing ("Play next"). */
     fun playNext(song: SongsModel) {

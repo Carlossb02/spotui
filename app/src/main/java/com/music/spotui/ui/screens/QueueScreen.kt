@@ -151,7 +151,7 @@ fun QueueContent(
     // while scrollBy() runs makes Compose re-anchor on the relocated row,
     // causing the flicker/bounce reported at the top. Preview the drop slot
     // and move the real queue ONCE on pointer-up.
-    data class ReorderEntry(val originalIndex: Int, val song: com.music.spotui.data.entity.SongsModel)
+    data class ReorderEntry(val originalIndex: Int, val song: com.music.spotui.data.entity.SongsModel,val token:Long)
     var dragOriginalIndex by remember { mutableIntStateOf(-1) }
     var pointerViewportY by remember { mutableFloatStateOf(0f) }
     var dragTargetIndex by remember { mutableIntStateOf(-1) }
@@ -167,7 +167,18 @@ fun QueueContent(
         dragTargetIndex = -1
         listState.scrollToItem(0)
     }
-    val orderedUpcoming = upcoming.mapIndexed { index, song -> ReorderEntry(index, song) }
+    val orderedUpcoming = upcoming.mapIndexed { index, song -> ReorderEntry(index, song,
+        playerViewModel.queueOccurrenceTokens.getOrNull(curIdx+1+index) ?: index.toLong()) }
+    val manualIndices=playerViewModel.manualQueueIndices
+    fun manual(entry:ReorderEntry)=curIdx+1+entry.originalIndex in manualIndices
+    val lazyEntries=buildMap<Int,ReorderEntry> {
+        var position=if(current!=null)1 else 0
+        orderedUpcoming.forEachIndexed {index,entry->
+            if(index==0 || manual(entry)!=manual(orderedUpcoming[index-1]))position++
+            put(position++,entry)
+        }
+    }
+    val latestLazyEntries by rememberUpdatedState(lazyEntries)
     val latestUpcoming by rememberUpdatedState(orderedUpcoming)
     val latestHeaderCount by rememberUpdatedState((if (current != null) 1 else 0) + (if (upcoming.isNotEmpty()) 1 else 0))
     val latestCurrentIndex by rememberUpdatedState(curIdx)
@@ -175,11 +186,11 @@ fun QueueContent(
     val reorderAtPointer: () -> Unit = {
         if (dragOriginalIndex >= 0) {
             val visibleTracks = listState.layoutInfo.visibleItemsInfo.filter {
-                it.index in latestHeaderCount until (latestHeaderCount + latestUpcoming.size)
+                it.index in latestLazyEntries
             }
             val destination = visibleTracks.minByOrNull {
                 abs((it.offset + it.size / 2f) - pointerViewportY)
-            }?.let { it.index - latestHeaderCount }
+            }?.let { latestLazyEntries[it.index]?.originalIndex }
             if (destination != null) dragTargetIndex = destination
         }
     }
@@ -251,10 +262,10 @@ fun QueueContent(
                             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                             val initialItem = listState.layoutInfo.visibleItemsInfo.firstOrNull {
                                 down.position.y >= it.offset && down.position.y < it.offset + it.size &&
-                                    it.index in latestHeaderCount until (latestHeaderCount + latestUpcoming.size)
+                                    it.index in latestLazyEntries
                             }
                             val original = if (down.position.x >= size.width - handleAreaPx) {
-                                initialItem?.let { latestUpcoming.getOrNull(it.index - latestHeaderCount)?.originalIndex }
+                                initialItem?.let {latestLazyEntries[it.index]?.originalIndex}
                             } else null
                             if (original != null) {
                                 var dragStarted = false
@@ -311,18 +322,21 @@ fun QueueContent(
                     }
                 }
                 if (upcoming.isNotEmpty()) {
+                    orderedUpcoming.forEachIndexed {index,entry->
+                    if(index==0 || manual(entry)!=manual(orderedUpcoming[index-1])) {
                     item {
                         Text(
-                            uiLocalized("Next up"),
+                            uiLocalized(if(manual(entry))"Added to queue" else "Next from your playlist"),
                             color = Color.White,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(16.dp, 18.dp, 16.dp, 6.dp)
                         )
                     }
+                    }
                     // Keys stay fixed throughout each gesture; repeated songs can
                     // appear multiple times without id collisions.
-                    itemsIndexed(orderedUpcoming, key = { _, entry -> entry.originalIndex }) { _, entry ->
+                    item(key="track:${entry.token}") {
                         val song = entry.song
                         val isDragging = dragOriginalIndex == entry.originalIndex
                         val dismissState = rememberSwipeToDismissBoxState(
@@ -369,6 +383,7 @@ fun QueueContent(
                                     dragTargetIndex == entry.originalIndex && !isDragging,
                             )
                         }
+                    }
                     }
                 }
                 item { Spacer(modifier = Modifier.height(40.dp)) }
@@ -422,18 +437,7 @@ private fun QueueRow(
             )
             .padding(16.dp, 8.dp)
     ) {
-        if (com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(song.url)) {
-            com.music.spotui.ui.components.EpisodeArtwork(
-                episode = song, modifier = Modifier.size(48.dp), radius = 4.dp)
-        } else {
-            GlideImage(
-                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)),
-                model = com.music.spotui.ui.notification.PodcastCover.preferredUri(context, song),
-                contentScale = ContentScale.Crop,
-                loading = placeholder(R.drawable.placeholder),
-                failure = placeholder(R.drawable.placeholder), contentDescription = ""
-            )
-        }
+        com.music.spotui.ui.components.PlayingTrackCover(song)
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

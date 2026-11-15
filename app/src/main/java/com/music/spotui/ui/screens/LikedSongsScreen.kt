@@ -512,15 +512,7 @@ fun LikedSongsScreen(navController: NavController) {
                                         )
                                         .padding(20.dp, 8.dp)
                                 ) {
-                                    GlideImage(
-                                        modifier = Modifier
-                                            .size(48.dp)
-                                            .clip(RoundedCornerShape(4.dp)),
-                                        model = com.music.spotui.ui.components.rememberSongArtwork(song),
-                                        failure = placeholder(R.drawable.placeholder),
-                                        contentScale = ContentScale.Crop,
-                                        contentDescription = ""
-                                    )
+                                    com.music.spotui.ui.components.PlayingTrackCover(song)
                                     Column(modifier = Modifier.padding(start = 12.dp).width(280.dp)) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             Text(

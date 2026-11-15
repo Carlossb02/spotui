@@ -510,6 +510,13 @@ fun PlayerScreen(
     // search results, liked songs) — stored when the song was tapped. Falling back
     // to the global top-tracks feed used to crash / be empty (it's rate-limited).
     val queueSongs by playerViewModel.queue
+    fun openSongAlbum(selected:SongsModel) {
+        if(com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(selected.url))return
+        val route=if(selected.album.isNotBlank() && !com.music.spotui.data.preferences.PlaylistAdditionsPref.isManaged(context,selected))
+            com.music.spotui.ui.navigation.albumRoute(android.net.Uri.encode(selected.album),selected.singer)
+        else singleSongAlbumRoute(context,selected)
+        navController.navigate(route)
+    }
 
     // ── Now-playing swipe pager ──
     // Index of the playing track in the queue (fallback to 0 so the pager is valid
@@ -741,6 +748,9 @@ fun PlayerScreen(
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth()
+                                .clickable(enabled=canvasUrl==null && !showPodcastVideo && currentEpisode==null) {
+                                    queueSongs.firstOrNull {it.id==songId}?.let {openSongAlbum(it)}
+                                }
                         ) {
                             if (showPodcastVideo && podcastVideoId != null) {
                                 PodcastVideoFrame(
@@ -873,6 +883,10 @@ fun PlayerScreen(
                                 isExplicit = queueSongs.firstOrNull { it.id == songId }?.explicit == true,
                                 coverUri = songCoverUri,
                                 artworkReady = artworkReady,
+                                showArtwork=canvasUrl!=null || showPodcastVideo,
+                                onAlbumClick={
+                                    queueSongs.firstOrNull {it.id==songId}?.let {openSongAlbum(it)}
+                                },
                             )
 
                             var isDragging by remember { mutableStateOf(false) }
@@ -1142,6 +1156,8 @@ fun PlayerInfo(
     savedSong: SongsModel? = null,
     coverUri: String = "",
     artworkReady: Boolean = true,
+    showArtwork:Boolean=true,
+    onAlbumClick:()->Unit={},
 ) {
 
     val isSaved = com.music.spotui.ui.components.rememberTrackSaved(
@@ -1267,11 +1283,11 @@ fun PlayerInfo(
                 modifier = Modifier
                     .weight(1f)
             ) {
-                if (coverUri.isNotBlank()) {
+                if (showArtwork && coverUri.isNotBlank()) {
                     GlideImage(
                         model = coverUri.takeIf { artworkReady }, contentDescription = null,
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(56.dp).clip(RoundedCornerShape(5.dp)),
+                        modifier = Modifier.size(56.dp).clip(RoundedCornerShape(5.dp)).clickable(onClick=onAlbumClick),
                     )
                     Spacer(Modifier.width(12.dp))
                 }
@@ -1279,7 +1295,7 @@ fun PlayerInfo(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
-                                .combinedClickable(onClick = {}, onLongClick = { showStreamDetailDialog = true }),
+                                .combinedClickable(onClick = onAlbumClick, onLongClick = { showStreamDetailDialog = true }),
                             text = songTitle,
                             color = Color.White,
                             fontSize = 22.sp,
@@ -2749,6 +2765,7 @@ private fun CanvasVideo(url: String, modifier: Modifier = Modifier, onError: (()
             setBackgroundColor(android.graphics.Color.TRANSPARENT)
         }
     }
+    SampleLyricVideoContrast(playerView)
     DisposableEffect(exo, lifecycleOwner) {
         var released = false
         val listener = object : androidx.media3.common.Player.Listener {

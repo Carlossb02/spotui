@@ -5,6 +5,24 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PlaybackQueueOrderTest {
+    @Test fun shuffleToggleNeverReplacesTheCanonicalPlaylistOrderWithTheVisibleOrder() {
+        val q=queue();q.move(2,1);q.shuffle(true,0);q.shuffle(false,0)
+        assertEquals(listOf(1,2,3),q.ids())
+        q.shuffle(true,0);q.shuffle(false,0)
+        assertEquals(listOf(1,2,3),q.ids())
+    }
+    @Test fun editedPlaybackUrlsKeepTheirOccurrenceAndOriginalRank() {
+        val q=queue();q.shuffle(true,0)
+        q.reconcile(q.songs.map {if(it.id==2)it.copy(url="edited query",title="Edited") else it})
+        q.shuffle(false,0)
+        assertEquals(listOf(1,2,3),q.ids())
+    }
+    @Test fun manualRequestsRemainInTheirPrioritySectionAfterMoving() {
+        val q=queue();q.enqueue(listOf(song(4),song(5)),0,false)
+        q.move(1,3);q.prioritizeManual(0)
+        assertEquals(setOf(1,2),q.manualIndices)
+        assertEquals(listOf(2,3),q.songs.drop(3).map {it.id})
+    }
     private fun song(id: Int) = SongsModel().copy(id = id, title = "Track $id", url = "query:$id")
     private fun queue() = PlaybackQueueOrder().apply { replace(listOf(song(1), song(2), song(3)), false) }
     private fun PlaybackQueueOrder.ids() = songs.map { it.id }
@@ -78,5 +96,16 @@ class PlaybackQueueOrderTest {
         q.replace(listOf(song(7)), false)
         assertEquals(listOf(7), q.ids())
         assertTrue(q.manualIndices.isEmpty())
+    }
+    @Test fun legacyRestorationDoesNotMatchTheManualCopyAsThePlaylistOccurrence() {
+        val q = queue()
+        q.enqueue(listOf(song(2)), 0, false)
+        q.move(3, 2)
+        val restored = PlaybackQueueOrder()
+        restored.replace(q.songs, false, restoredManual = q.manualIndices,
+            restoredOriginal = q.originalSongs)
+        restored.shuffle(false, 0)
+        assertEquals(listOf(1, 2, 2, 3), restored.ids())
+        assertEquals(setOf(1), restored.manualIndices)
     }
 }

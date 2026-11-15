@@ -5,6 +5,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ReleaseNewsSyncTest {
+    @Test fun resetMarkersConvergeAndOlderReadsCannotCancelTheReset() {
+        val reset=PodcastProgressSync.merge("release_news_seen_v1:podcasts_reset",tree(200,10),tree(50,99))
+        assertEquals(200L,checked(reset))
+        assertEquals(0L,com.music.spotui.data.preferences.effectiveReleaseCheck(150,checked(reset)))
+        assertEquals(300L,com.music.spotui.data.preferences.effectiveReleaseCheck(300,checked(reset)))
+        assertEquals(SyncOptions.Category.PODCASTS,SyncOptions.category("release_news_seen_v1:podcasts_reset"))
+        assertTrue(CloudPreferences.allowed("release_news_seen_v1","music_reset"))
+    }
     private fun tree(checked:Long,stamp:Long)=SyncTree.changed(emptyMap(),
         SyncTree.flatten(JSONObject().put("type","long").put("value",checked)),SyncStamp(stamp,0,"d$stamp"))
     private fun checked(tree:SyncTree)=(tree.value() as JSONObject).getLong("value")

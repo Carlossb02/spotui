@@ -71,6 +71,7 @@ fun SettingsScreen(navController: NavController) {
     val cacheClearFailedText = uiLocalized("Could not clear playback cache. Try again.")
     var clearingCache by remember { mutableStateOf(false) }
     var showRepoEditor by remember { mutableStateOf(false) }
+    var showLyricOptions by remember {mutableStateOf(false)}
     var lastCrossfadeMs by remember {
         mutableStateOf(getCrossfadeMs(context).takeIf { it > 0 } ?: 6000)
     }
@@ -276,10 +277,10 @@ fun SettingsScreen(navController: NavController) {
                         videoFallback = it; setVideoFallbackEnabled(context, it)
                     }
                     SettingsDivider()
-                    SettingsSwitchRow(Icons.Default.MusicNote,
+                    SettingsActionRow(Icons.Default.MusicNote,
                         uiLocalized("Current lyric line"),
-                        uiLocalized("Show the current synced lyric above the song title."), playerLyricLine) {
-                        playerLyricLine = it; setPlayerLyricLineEnabled(context, it)
+                        uiLocalized("Position, size, color and animated styles.")) {
+                        showLyricOptions=true
                     }
                 }
             }
@@ -482,6 +483,7 @@ fun SettingsScreen(navController: NavController) {
                     }
                 }
             }
+            item(key="advanced") {SettingsSection(uiLocalized("Advanced options")){AdvancedOptionsContent()}}
         }
         }
     }
@@ -490,6 +492,7 @@ fun SettingsScreen(navController: NavController) {
         isDefaultLinkHandler = DefaultLinkHelper.isAppDefaultLinkHandler(context)
     })
     if (showDevicesSheet) com.music.spotui.ui.components.DevicesSheet(context = context, onDismiss = { showDevicesSheet = false })
+    if(showLyricOptions)LyricLineOptions {showLyricOptions=false}
 }
 
 @Composable
@@ -509,7 +512,7 @@ private fun SettingsLeadingIcon(icon: ImageVector) {
 }
 
 @Composable
-private fun SettingsDivider() { HorizontalDivider(Modifier.padding(start = 68.dp, end = 16.dp), color = Color(0xFF2A2A2A)) }
+internal fun SettingsDivider() { HorizontalDivider(Modifier.padding(start = 68.dp, end = 16.dp), color = Color(0xFF2A2A2A)) }
 
 @Composable
 private fun SettingsRowText(title: String, subtitle: String, modifier: Modifier = Modifier) {
@@ -521,7 +524,7 @@ private fun SettingsRowText(title: String, subtitle: String, modifier: Modifier 
 }
 
 @Composable
-private fun SettingsActionRow(icon: ImageVector, title: String, subtitle: String,
+internal fun SettingsActionRow(icon: ImageVector, title: String, subtitle: String,
     enabled: Boolean = true, busy: Boolean = false, expanded: Boolean? = null, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(enabled = enabled, role = Role.Button, onClick = onClick)
         .padding(horizontal = 16.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -534,7 +537,7 @@ private fun SettingsActionRow(icon: ImageVector, title: String, subtitle: String
 }
 
 @Composable
-private fun SettingsSwitchRow(icon: ImageVector, title: String, subtitle: String, checked: Boolean,
+internal fun SettingsSwitchRow(icon: ImageVector, title: String, subtitle: String, checked: Boolean,
     enabled: Boolean = true, onCheckedChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange)
         .padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -548,7 +551,7 @@ private fun SettingsSwitchRow(icon: ImageVector, title: String, subtitle: String
 }
 
 @Composable
-private fun <T> SettingsChoiceRow(icon: ImageVector, title: String, value: String, selected: T,
+internal fun <T> SettingsChoiceRow(icon: ImageVector, title: String, value: String, selected: T,
     options: List<T>, label: @Composable (T) -> String, description: @Composable (T) -> String, onSelect: (T) -> Unit) {
     var choosing by remember { mutableStateOf(false) }
     SettingsActionRow(icon, title, value, onClick = { choosing = true })

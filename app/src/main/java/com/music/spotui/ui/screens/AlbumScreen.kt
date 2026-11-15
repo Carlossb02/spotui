@@ -652,12 +652,8 @@ fun SumUpAlbumScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.weight(1f).padding(end = 12.dp)
                                 ) {
-                                    Text(
-                                        text = (trackNumbers[targetSong.url] ?: songIdx + 1).toString(),
-                                        color = if (songId == albumViewModel.currentSongId.value) currentPlayingIndicatorColor else Color.Gray,
-                                        fontSize = 13.sp,
-                                        modifier = Modifier.width(28.dp).padding(top = 3.dp),
-                                    )
+                                    com.music.spotui.ui.components.TrackNumberOrPlaying(targetSong,
+                                        (trackNumbers[targetSong.url] ?: songIdx + 1).toString(),Modifier.width(28.dp).padding(top=3.dp))
                                     Column {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             Text(

@@ -85,6 +85,10 @@ fun setLibraryGridView(c: Context, v: Boolean) = prefs(c).edit().putBoolean(KEY_
 
 fun isPreloadEnabled(c: Context): Boolean = prefs(c).getBoolean(KEY_PRELOAD, true)
 fun setPreloadEnabled(c: Context, v: Boolean) = prefs(c).edit().putBoolean(KEY_PRELOAD, v).apply()
+fun getPreloadSongCount(c:Context)=prefs(c).getInt("preload_next_count",3).coerceIn(1,5)
+fun setPreloadSongCount(c:Context,value:Int)=prefs(c).edit().putInt("preload_next_count",value.coerceIn(1,5)).apply()
+fun isPreloadWifiOnly(c:Context)=prefs(c).getBoolean("preload_wifi_only",false)
+fun setPreloadWifiOnly(c:Context,value:Boolean)=prefs(c).edit().putBoolean("preload_wifi_only",value).apply()
 
 /**
  * YouTube account cookie (captured from an in-app WebView login). Passed to the
