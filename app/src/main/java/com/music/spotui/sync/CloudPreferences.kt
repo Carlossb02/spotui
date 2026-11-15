@@ -13,7 +13,7 @@ internal class CloudPreferences(private val context:Context,private val assets:D
         private val settings=setOf("stream_quality_wifi","stream_quality_cellular","download_quality","preload_enabled","crossfade_duration_ms","crossfade_dj_mode","web_playback_enabled","video_fallback_enabled","library_grid_view","auto_play_startup","app_language","audio_provider_order","disabled_audio_providers","custom_equalizer_bands","update_repo_url")
         fun allowed(name:String,key:String):Boolean {
             if(name=="release_news_seen_v1")return key in setOf("music","podcasts","music_reset","podcasts_reset")
-            return name!="settings_prefs" || key in settings || key in setOf("player_current_lyric_line","preload_next_count","preload_wifi_only") || key.startsWith("player_lyric_") || key.startsWith("audio_normalization_") || key.startsWith("equalizer_")
+            return name!="settings_prefs" || key in settings || key in setOf("player_current_lyric_line","preload_next_count","preload_wifi_only") || key.startsWith("audio_normalization_") || key.startsWith("equalizer_")
         }
     }
     val failedKeys=mutableSetOf<String>()

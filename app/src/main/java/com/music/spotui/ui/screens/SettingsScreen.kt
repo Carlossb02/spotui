@@ -71,7 +71,7 @@ fun SettingsScreen(navController: NavController) {
     val cacheClearFailedText = uiLocalized("Could not clear playback cache. Try again.")
     var clearingCache by remember { mutableStateOf(false) }
     var showRepoEditor by remember { mutableStateOf(false) }
-    var showLyricOptions by remember {mutableStateOf(false)}
+    var showAdvancedOptions by remember { mutableStateOf(false) }
     var lastCrossfadeMs by remember {
         mutableStateOf(getCrossfadeMs(context).takeIf { it > 0 } ?: 6000)
     }
@@ -277,10 +277,10 @@ fun SettingsScreen(navController: NavController) {
                         videoFallback = it; setVideoFallbackEnabled(context, it)
                     }
                     SettingsDivider()
-                    SettingsActionRow(Icons.Default.MusicNote,
+                    SettingsSwitchRow(Icons.Default.MusicNote,
                         uiLocalized("Current lyric line"),
-                        uiLocalized("Position, size, color and animated styles.")) {
-                        showLyricOptions=true
+                        uiLocalized("Show the current synced lyric above the song title."), playerLyricLine) {
+                        playerLyricLine = it; setPlayerLyricLineEnabled(context, it)
                     }
                 }
             }
@@ -483,7 +483,10 @@ fun SettingsScreen(navController: NavController) {
                     }
                 }
             }
-            item(key="advanced") {SettingsSection(uiLocalized("Advanced options")){AdvancedOptionsContent()}}
+            item(key = "advanced") {
+                SettingsActionRow(Icons.Default.Build, uiLocalized("Advanced options"),
+                    uiLocalized("Preloading, diagnostics and maintenance.")) { showAdvancedOptions = true }
+            }
         }
         }
     }
@@ -492,7 +495,21 @@ fun SettingsScreen(navController: NavController) {
         isDefaultLinkHandler = DefaultLinkHelper.isAppDefaultLinkHandler(context)
     })
     if (showDevicesSheet) com.music.spotui.ui.components.DevicesSheet(context = context, onDismiss = { showDevicesSheet = false })
-    if(showLyricOptions)LyricLineOptions {showLyricOptions=false}
+    if (showAdvancedOptions) {
+        ModalBottomSheet(onDismissRequest = { showAdvancedOptions = false }, containerColor = Color(0xFF181818)) {
+            Column(Modifier.fillMaxWidth().fillMaxHeight(0.9f)) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { showAdvancedOptions = false }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, uiLocalized("Back"), tint = Color.White)
+                    }
+                    Text(uiLocalized("Advanced options"), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                }
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
+                    AdvancedOptionsContent()
+                }
+            }
+        }
+    }
 }
 
 @Composable
