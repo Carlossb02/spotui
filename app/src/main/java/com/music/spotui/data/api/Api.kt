@@ -105,6 +105,7 @@ class Api @Inject constructor(
     }
 
     private fun SpotifyTrack.toSongModel(): SongsModel = try {
+        if(explicit)ExplicitContentStore.remember(context,id,true)
         val trackId = id.takeIf { it.isNotBlank() } ?: (uri?.takeIf { it.isNotBlank() } ?: "local_${name.hashCode()}")
         val trackName = name.takeIf { it.isNotBlank() } ?: "Unknown Track"
         val singer = artists.joinToString(", ") { it.name }.takeIf { it.isNotBlank() } ?: "Unknown Artist"
@@ -127,7 +128,7 @@ class Api @Inject constructor(
             // reuse each other's stream.
             url = com.music.spotui.di.SongPlayer.buildSpotifyPlayQuery(trackId, trackName, singer),
             spotifyTrackId = trackId,
-            explicit = explicit,
+            explicit = ExplicitContentStore.known(context,trackId) ?: explicit,
             durationMs = durationMs,
             artistIds = artists.joinToString(",") { it.id.orEmpty() },
             isLocalSpotifyTrack = isLocal ||

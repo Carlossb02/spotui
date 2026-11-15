@@ -14,6 +14,16 @@ data class LocalPlaylist(
 )
 
 object LocalPlaylistPref {
+    /** Repair by immutable Spotify ID, preserving membership, edits and order. */
+    internal fun repairContentRating(context:Context,id:String,explicit:Boolean) {
+        val prefs=context.getSharedPreferences(PREF,Context.MODE_PRIVATE)
+        val editor=prefs.edit()
+        var changed=false
+        prefs.all.forEach { (key,value)->
+            if(value is String)repairLocalPlaylistRating(value,id,explicit)?.let {editor.putString(key,it);changed=true}
+        }
+        if(changed){editor.apply();com.music.spotui.data.api.SavedTrackLibrary.localChanged(context)}
+    }
     private const val PREF = "LocalPlaylists"
     private const val KEY_PLAYLIST_IDS = "local_playlist_ids_order"
 
@@ -109,11 +119,16 @@ object LocalPlaylistPref {
     private data class MemoryEntry(val raw: String, val base: LocalPlaylist,
         val overrides: Map<String, CustomMetadataPref.TrackMetadataOverride>, val projected: LocalPlaylist)
     private val memory = java.util.WeakHashMap<android.content.SharedPreferences, MutableMap<String, MemoryEntry>>()
+    private fun withContentRatings(context:Context,playlist:LocalPlaylist)=playlist.copy(songs=playlist.songs.map {song->
+        val rating=com.music.spotui.data.api.ExplicitContentStore.known(context,com.music.spotui.data.api.ratingSpotifyId(song))
+        if(rating!=null && rating!=song.explicit)song.copy(explicit=rating) else song
+    })
     fun getLocalPlaylists(context: Context): List<LocalPlaylist> = getPlaylistIds(context).mapNotNull { getLocalPlaylist(context, it) }
     @Synchronized fun peek(context: Context, playlistId: String): LocalPlaylist? {
         val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         val item = memory[prefs]?.get(playlistId) ?: return null
         return item.projected.takeIf { prefs.getString(playlistId, null) == item.raw && CustomMetadataPref.getAllOverrides(context) === item.overrides }
+            ?.let {withContentRatings(context,it)}
     }
     @Synchronized fun getLocalPlaylist(context: Context, playlistId: String): LocalPlaylist? {
         val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
@@ -121,11 +136,11 @@ object LocalPlaylistPref {
         val raw = prefs.getString(playlistId, null) ?: return null.also { entries.remove(playlistId) }
         val edits = CustomMetadataPref.getAllOverrides(context)
         val old = entries[playlistId]?.takeIf { it.raw == raw }
-        if (old != null && old.overrides === edits) return old.projected
+        if (old != null && old.overrides === edits) return withContentRatings(context,old.projected)
         val base = old?.base ?: parsePlaylist(raw) ?: return null
         val projected = base.copy(songs = CustomMetadataPref.applyOverrides(context, base.songs))
         entries[playlistId] = MemoryEntry(raw, base, edits, projected)
-        return projected
+        return withContentRatings(context,projected)
     }
 
     private fun cleanSpotifyTrackId(id: String): String =
@@ -152,7 +167,8 @@ object LocalPlaylistPref {
         if (playlist.songs.any { isSongMatch(it, song) }) {
             return true
         }
-        val updatedSongs = playlist.songs + song
+        val known=com.music.spotui.data.api.ExplicitContentStore.known(context,com.music.spotui.data.api.ratingSpotifyId(song))
+        val updatedSongs = playlist.songs + if(known!=null)song.copy(explicit=known) else song
         val coverUri = playlist.coverUri.ifBlank { song.coverUri }
         val updatedPlaylist = playlist.copy(songs = updatedSongs, coverUri = coverUri)
         savePlaylist(context, updatedPlaylist)

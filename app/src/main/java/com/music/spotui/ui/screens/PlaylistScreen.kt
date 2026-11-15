@@ -897,7 +897,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                     modifier = Modifier
                                         .size(48.dp)
                                         .clip(RoundedCornerShape(4.dp)),
-                                    model = song.coverUri,
+                                    model = com.music.spotui.ui.components.rememberSongArtwork(song),
                                     failure = placeholder(R.drawable.placeholder),
                                     contentScale = ContentScale.Crop,
                                     contentDescription = ""
@@ -917,7 +917,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                     Row(verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
-                                        if (song.explicit) com.music.spotui.ui.components.ExplicitBadge()
+                                                com.music.spotui.ui.components.SongExplicitBadge(song,resolveMissing=playlistId.startsWith("local_pl_"))
+                                        com.music.spotui.ui.components.EditedMetadataIndicator(song)
                                         Text(
                                             text = song.singer,
                                             color = Color.Gray,

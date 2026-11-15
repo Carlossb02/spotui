@@ -77,7 +77,10 @@ internal fun FollowingPodcastEpisodesContent(
     }
     Column(Modifier.fillMaxSize().background(Color(0xFF121212))) {
         header()
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(),contentPadding=PaddingValues(bottom=140.dp)) {
+        FollowingRefreshContainer(refreshing=feed.loading,
+            onRefresh={homeViewModel.refreshFollowedReleases(force=true,kind=ReleaseKind.PODCASTS)},
+            modifier=Modifier.weight(1f).fillMaxWidth()) {
+        LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(bottom=140.dp)) {
             item {
                 Text(uiLocalized("Latest episodes"),color=Color.White,fontSize=28.sp,fontWeight=FontWeight.Bold,
                     modifier=Modifier.padding(20.dp,18.dp,20.dp,12.dp))
@@ -90,11 +93,7 @@ internal fun FollowingPodcastEpisodesContent(
                         Text(uiLocalized(if(ascending)"Oldest first · Last month" else "Newest first · Last month"),
                             color=Color.White,fontWeight=FontWeight.Bold)
                     }
-                    TextButton(onClick={homeViewModel.refreshFollowedReleases(force=true,kind=ReleaseKind.PODCASTS)},enabled=!feed.loading) {
-                        Text(uiLocalized("Refresh"),color=PodcastNewsColor)
-                    }
                 }
-                if(feed.loading)LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal=20.dp),color=PodcastNewsColor)
                 feed.error?.let {Text(uiLocalized(it),color=Color(0xFFB3B3B3),modifier=Modifier.padding(20.dp,8.dp))}
                 if(!feed.loading && feed.error==null && episodes.isEmpty())Text(uiLocalized("No episodes published in the last month."),
                     color=Color(0xFFB3B3B3),modifier=Modifier.padding(24.dp))
@@ -104,6 +103,7 @@ internal fun FollowingPodcastEpisodesContent(
                     onPlay={play(index)},onMenu={menu=item.song},onSave={savedIn=item.song},
                     onShow={navController.navigate(showRoute(item.showId,item.song.album))})
             }
+        }
         }
     }
 }

@@ -211,6 +211,7 @@ fun MiniPlayer(
         isLiked = isSongLiked(context, songId.toString())
     }
     val currentTrack = miniPlayerViewModel.queue.value.firstOrNull { it.id == songId }
+    val currentArtwork=currentTrack?.let {rememberSongArtwork(it)} ?: songCoverUri
     val isSaved = rememberTrackSaved(currentTrack, isLiked)
     var showSavedIn by remember { mutableStateOf(false) }
     var showDevicesSheet by remember { mutableStateOf(false) }
@@ -282,7 +283,7 @@ fun MiniPlayer(
                         EpisodeArtwork(episode = currentTrack, modifier = coverModifier, radius = 7.dp)
                     } else {
                         GlideImage(
-                            model = songCoverUri,
+                            model = currentArtwork,
                             contentDescription = "Carátula de reproducción",
                             contentScale = ContentScale.Crop,
                             failure = placeholder(R.drawable.placeholder),
@@ -520,7 +521,7 @@ fun MiniPlayer(
                         GlideImage(
                             modifier = Modifier.padding(end = 10.dp).size(42.dp)
                                 .clip(RoundedCornerShape(6.dp)),
-                            model = songCoverUri,
+                            model = currentArtwork,
                             contentScale = ContentScale.Crop,
                             failure = placeholder(R.drawable.placeholder),
                             loading = placeholder(R.drawable.placeholder),

@@ -38,6 +38,7 @@ import androidx.compose.material.icons.outlined.QueueMusic
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.RemoveCircle
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -122,6 +123,8 @@ fun SongOptionsSheet(
     // Spotify-style "Saved in" sheet (Liked Songs + playlists, add/remove/create).
     var showSavedIn by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
+    var showStreamInfo by remember(song.url) {mutableStateOf(false)}
+    if(showStreamInfo)StreamInfoDialog(displaySong){showStreamInfo=false}
 
     if (showSavedIn) {
         SavedInSheet(
@@ -308,7 +311,7 @@ fun SongOptionsSheet(
                     modifier = Modifier
                         .size(58.dp)
                         .clip(RoundedCornerShape(5.dp)),
-                    model = displaySong.coverUri,
+                    model = rememberSongArtwork(displaySong),
                     contentScale = ContentScale.Crop,
                     contentDescription = ""
                 )
@@ -316,12 +319,15 @@ fun SongOptionsSheet(
                 Column {
                     Text(displaySong.title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                        if(displaySong.explicit)ExplicitBadge()
+                        SongExplicitBadge(displaySong)
                         Text(displaySong.singer, color = Color(0xFFB3B3B3), fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
             HorizontalDivider(color = Color(0xFF353535))
+            SongMenuRow(Icons.Outlined.Info,uiLocalized("Stream information"),trailingArrow=true) {
+                showStreamInfo=true
+            }
 
             if (editableLocalTrack) {
                 SongMenuRow(

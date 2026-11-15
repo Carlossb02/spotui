@@ -7,6 +7,16 @@ import com.music.spotui.data.preferences.getAppLanguage
 /** Visible UI copy independent of the translation engine used for lyrics.
  * The lookup is bidirectional because older screens hardcoded both languages. */
 private val uiLanguagePairs: List<Pair<String, String>> = listOf(
+    "Edited metadata" to "Metadatos editados",
+    "Stream information" to "Información del audio",
+    "Selection" to "Selección",
+    "Score" to "Puntuación",
+    "Matching stage" to "Fase de coincidencia",
+    "Selection criteria" to "Criterios de selección",
+    "Unknown" to "Desconocido",
+    "Unavailable" to "No disponible",
+    "Play this track to see its selected stream. Older downloads may not retain this information." to "Reproduce esta canción para ver el audio elegido. Las descargas antiguas pueden no conservar esta información.",
+    "The score compares candidates; it is not a percentage or an analysis of the sung words." to "La puntuación compara candidatos; no es un porcentaje ni un análisis de las palabras cantadas.",
     "Explicit content" to "Contenido explícito",
     "Latest updates" to "Últimas novedades",
     "Latest episodes" to "Últimos episodios",

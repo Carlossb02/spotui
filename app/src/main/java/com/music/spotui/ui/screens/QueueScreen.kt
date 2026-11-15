@@ -449,7 +449,7 @@ private fun QueueRow(
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
-                if (song.explicit) com.music.spotui.ui.components.ExplicitBadge()
+                com.music.spotui.ui.components.SongExplicitBadge(song)
                 Text(
                     text = song.singer,
                     color = Color.Gray,

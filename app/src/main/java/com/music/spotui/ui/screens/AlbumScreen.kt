@@ -672,7 +672,7 @@ fun SumUpAlbumScreen(
                                         Row(verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                             com.music.spotui.ui.components.DownloadedSongIndicator(targetSong.id)
-                                            if (targetSong.explicit) com.music.spotui.ui.components.ExplicitBadge()
+                                            com.music.spotui.ui.components.SongExplicitBadge(targetSong)
                                             Text(
                                                 text = targetSong.singer,
                                                 color = Color.Gray,

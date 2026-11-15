@@ -88,12 +88,13 @@ internal fun NowPlayingArtistCards(
     if (artists.isEmpty()) return
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val cardWidth = (maxWidth - 32.dp) * if (artists.size > 1) 0.92f else 1f
+        val detailsHeight=240.dp*androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceAtLeast(1f)
         LazyRow(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(artists, key = { it.id.ifBlank { it.name } }) { artist ->
                 val profile = profiles[artist.id]
                 val open = { navController.navigate(artistRoute(artist.name, artist.id)) }
-                Column(Modifier.width(cardWidth).clip(RoundedCornerShape(16.dp))
+                Column(Modifier.width(cardWidth).height(cardWidth/1.5f+detailsHeight).clip(RoundedCornerShape(16.dp))
                     .background(Color(0xFF282828)).clickable(onClick = open)) {
                     Box(Modifier.fillMaxWidth().aspectRatio(1.5f).background(Color(0xFF202020))) {
                         val image = profile?.headerImages?.firstOrNull()?.url
@@ -110,7 +111,7 @@ internal fun NowPlayingArtistCards(
                         Text(uiLocalized("About the artist"), color = Color.White, fontSize = 18.sp,
                             fontWeight = FontWeight.Bold, modifier = Modifier.padding(20.dp))
                     }
-                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(Modifier.weight(1f).padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(profile?.name?.ifBlank { artist.name } ?: artist.name, color = Color.White,
                                 fontSize = 23.sp, fontWeight = FontWeight.Bold, maxLines = 2,
@@ -151,10 +152,11 @@ private fun ArtistFollowPill(id: String, name: String) {
         prefs.registerOnSharedPreferenceChangeListener(listener)
         onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
     }
-    Text(if (following) uiLocalized("Following") else uiLocalized("Follow"), color = Color.White,
+    Text(if (following) uiLocalized("Following") else uiLocalized("Follow"), color = if(following)Color.Black else Color.White,
         fontSize = 13.sp, fontWeight = FontWeight.Bold,
         modifier = Modifier.padding(start = 12.dp).clip(RoundedCornerShape(50))
-            .border(1.dp, Color(0xFF888888), RoundedCornerShape(50))
+            .background(if(following)Color(0xFF1ED760) else Color.Transparent)
+            .border(1.dp, if(following)Color(0xFF1ED760) else Color(0xFF888888), RoundedCornerShape(50))
             .clickable(enabled = id.isNotBlank()) {
                 val next = !following
                 if (next) addFollowedArtist(context, id, name) else removeFollowedArtist(context, id)

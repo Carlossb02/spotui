@@ -309,12 +309,7 @@ fun HomeFeedContent(
                 onToggleFollowing = { homeViewModel.toggleFollowing() },
                 onResetFilters = { homeViewModel.resetFilters() }
             )
-        LazyColumn(
-        modifier = Modifier
-            .fillMaxWidth()
-            .weight(1f)
-            .background(Color(AppBackground.toArgb()))
-    ) {
+        LazyColumn(modifier=Modifier.fillMaxWidth().weight(1f).background(Color(AppBackground.toArgb()))) {
         gridSection?.let { section ->
             item {
                 HomeShortcutGrid(navController, section.items.take(8))
@@ -641,13 +636,10 @@ private fun HomeMusicFeedContent(
                 onToggleFollowing = { homeViewModel.toggleFollowing() },
                 onResetFilters = { homeViewModel.resetFilters() }
             )
-        LazyColumn(
-        modifier = Modifier
-            .fillMaxWidth()
-            .weight(1f)
-            .background(Color(AppBackground.toArgb()))
-    ) {
-
+        FollowingRefreshContainer(enabled=isFollowingOnly,refreshing=followingMusic.loading,
+            onRefresh={homeViewModel.refreshFollowedReleases(force=true,kind=ReleaseKind.MUSIC)},
+            modifier=Modifier.fillMaxWidth().weight(1f)) {
+        LazyColumn(modifier=Modifier.fillMaxSize().background(Color(AppBackground.toArgb()))) {
         if (isFollowingOnly) {
             // ── Spotify "Latest releases" Feed ──
             item {
@@ -661,13 +653,6 @@ private fun HomeMusicFeedContent(
             }
 
             item {
-                Row(Modifier.fillMaxWidth().padding(horizontal=16.dp),verticalAlignment=Alignment.CenterVertically) {
-                    if(followingMusic.loading)CircularProgressIndicator(Modifier.size(22.dp),color=MusicNewsColor,strokeWidth=2.dp)
-                    Spacer(Modifier.weight(1f))
-                    androidx.compose.material3.TextButton(onClick={homeViewModel.refreshFollowedReleases(force=true,kind=ReleaseKind.MUSIC)},enabled=!followingMusic.loading) {
-                        Text(uiLocalized("Refresh"),color=MusicNewsColor)
-                    }
-                }
                 followingMusic.error?.let {Text(uiLocalized(it),color=Color.Gray,modifier=Modifier.padding(16.dp))}
                 if(!followingMusic.loading && followingAlbums.isEmpty())Text(uiLocalized("No recent releases from followed artists."),
                     color=Color.Gray,modifier=Modifier.padding(16.dp))
@@ -739,6 +724,7 @@ private fun HomeMusicFeedContent(
         }
 
         item { Spacer(modifier = Modifier.height(160.dp)) }
+    }
     }
     } // fixed Home header
 
@@ -986,7 +972,7 @@ private fun HomeSongRow(
             .padding(8.dp)
     ) {
         GlideImage(
-            model = song.coverUri,
+            model = com.music.spotui.ui.components.rememberSongArtwork(song),
             contentDescription = song.title,
             contentScale = ContentScale.Crop,
             loading = placeholder(R.drawable.placeholder),
@@ -1008,7 +994,7 @@ private fun HomeSongRow(
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
-                if (song.explicit) com.music.spotui.ui.components.ExplicitBadge()
+                com.music.spotui.ui.components.SongExplicitBadge(song)
                 Text(
                     text = song.singer,
                     color = Color(0xFFB3B3B3),
