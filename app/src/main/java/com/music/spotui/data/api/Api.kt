@@ -938,7 +938,7 @@ class Api @Inject constructor(
             )
         }
         val shortcuts = listOf(
-            com.music.spotui.data.entity.LibraryEntry(LIKED_SONGS_ID, "Liked Songs", "Playlist • Liked songs", "https://misc.scdn.co/liked-songs/liked-songs-640.png", true),
+            com.music.spotui.data.entity.LibraryEntry(LIKED_SONGS_ID, "Canciones que te gustan", "Playlist • Canciones que te gustan", "https://misc.scdn.co/liked-songs/liked-songs-640.png", true),
             com.music.spotui.data.entity.LibraryEntry(DOWNLOADS_ID, "Downloaded", "Available offline", "", true),
         )
         val preferred = shortcuts + localEntries + favoriteEntries + podcastEntries + remote

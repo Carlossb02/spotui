@@ -1,5 +1,6 @@
 package com.music.spotui.ui.screens
 
+import androidx.compose.ui.draw.shadow
 import com.music.spotui.ui.components.scrollingCollectionBackground
 import com.music.spotui.util.uiLocalized
 
@@ -336,7 +337,7 @@ fun SumUpAlbumScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize().scrollingCollectionBackground(
                 topColor = dominentColor, baseColor = Color(AppBackground.toArgb()),
-                listState = listState, headerKey = "album_header"),
+                listState = listState, headerKey = "album_header", coverUri = album[0].coverUri),
         containerColor = Color.Transparent,
         topBar = {
             CenterAlignedTopAppBar(
@@ -405,8 +406,8 @@ fun SumUpAlbumScreen(
                     Spacer(modifier = Modifier.height(if (tabletCollectionLayout) 14.dp else 24.dp))
                     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                         GlideImage(
-                            modifier = Modifier.size(if (tabletCollectionLayout) 212.dp else 230.dp)
-                                .clip(RoundedCornerShape(5.dp)),
+                            modifier = Modifier.size(com.music.spotui.ui.components.collectionCoverSize())
+                                .shadow(16.dp, RoundedCornerShape(18.dp)).clip(RoundedCornerShape(18.dp)),
                             model = album[0].coverUri,
                             contentScale = ContentScale.Crop,
                             failure = placeholder(R.drawable.placeholder),
@@ -415,7 +416,7 @@ fun SumUpAlbumScreen(
                     }
                     Spacer(modifier = Modifier.height(17.dp))
                     Text(
-                        text = albumName, color = Color.White, fontSize = 30.sp,
+                        text = albumName, color = Color.White, fontSize = 32.sp,
                         fontWeight = FontWeight.Bold, maxLines = 2,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         modifier = Modifier.padding(horizontal = 20.dp).then(collapsedTitle.titleModifier)
@@ -448,7 +449,7 @@ fun SumUpAlbumScreen(
                     Row(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().height(52.dp)
+                        modifier = Modifier.fillMaxWidth().height(64.dp)
                             .padding(horizontal = 20.dp)
                     ) {
                         if (snackbarVisible) {
@@ -457,7 +458,7 @@ fun SumUpAlbumScreen(
                             }
                         } else {
                             Row(
-                                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.weight(1f)
                             ) {
@@ -484,61 +485,62 @@ fun SumUpAlbumScreen(
                                     },
                                 )
                                 if (albumSongs.isNotEmpty()) {
-                                    Icon(
-                                        painter = painterResource(R.drawable.ic_queue_add),
-                                        tint = Color.White,
-                                        modifier = Modifier.size(24.dp).clickable {
-                                            playerViewModel.addAllToQueue(albumSongs)
-                                            android.widget.Toast.makeText(context,
-                                                "${albumSongs.size} track(s) added to queue",
-                                                android.widget.Toast.LENGTH_SHORT).show()
-                                        },
-                                        contentDescription = uiLocalized("Add to queue")
-                                    )
-                                    var albumDownloaded by remember(albumSongs) {
-                                        mutableStateOf(SongPlayer.allDownloaded(albumSongs, context))
+                                    com.music.spotui.ui.components.CollectionActionSurface(onClick = {
+                                        playerViewModel.addAllToQueue(albumSongs)
+                                        android.widget.Toast.makeText(context,
+                                            "${albumSongs.size} track(s) added to queue",
+                                            android.widget.Toast.LENGTH_SHORT).show()
+                                    }) {
+                                        Icon(
+                                            painter = painterResource(R.drawable.ic_queue_add),
+                                            tint = Color.White,
+                                            modifier = Modifier.size(24.dp),
+                                            contentDescription = uiLocalized("Add to queue")
+                                        )
                                     }
-                                    Icon(
-                                        imageVector = if (albumDownloaded) Icons.Default.CheckCircle
-                                            else ImageVector.vectorResource(R.drawable.ic_download),
-                                        tint = if (albumDownloaded) Color(AppPalette.toArgb()) else Color.White,
-                                        modifier = Modifier.size(24.dp).clickable {
-                                            com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollection(
-                                                context = context, id = "album:$albumName|$artist",
-                                                name = albumName, coverUri = album[0].coverUri,
-                                                artists = album[0].artists, isPlaylist = false,
-                                                songs = albumSongs
-                                            )
-                                            if (!albumDownloaded) {
-                                                SongPlayer.downloadAll(albumSongs, context)
-                                                snackbarMessage = "Downloading ${albumSongs.size} tracks…"
-                                            } else snackbarMessage = "Album added to offline library"
-                                            snackbarVisible = true
-                                        },
-                                        contentDescription = uiLocalized("Download album")
-                                    )
-                                    Icon(
-                                        painter = painterResource(R.drawable.ic_player_shuffle),
-                                        tint = Color.White,
-                                        modifier = Modifier.size(24.dp).clickable {
-                                            albumViewModel.startShuffled(albumSongs, sourceName = albumName)?.let { first ->
-                                                albumViewModel.updateSongState(
-                                                    first.coverUri, first.title, first.singer, true,
-                                                    first.id, 0, albumName)
-                                                SongPlayer.playSong(first.url, context, "song/${first.id}")
-                                            }
-                                        },
-                                        contentDescription = uiLocalized("Shuffle play")
-                                    )
+
+                                    com.music.spotui.ui.components.CollectionDownloadButton(albumSongs, uiLocalized("Download album")) { complete ->
+                                        com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollection(
+                                            context = context, id = "album:$albumName|$artist",
+                                            name = albumName, coverUri = album[0].coverUri,
+                                            artists = album[0].artists, isPlaylist = false,
+                                            songs = albumSongs
+                                        )
+                                        if (!complete) {
+                                            SongPlayer.downloadAll(albumSongs, context)
+                                            snackbarMessage = "Downloading ${albumSongs.size} tracks…"
+                                        } else snackbarMessage = "Album added to offline library"
+                                        snackbarVisible = true
+                                    }
+                                    com.music.spotui.ui.components.CollectionSortButton { showSortSheet = true }
+
                                 }
                             }
+                        }
+                        if (albumSongs.isNotEmpty()) {
+                            com.music.spotui.ui.components.CollectionActionSurface(onClick = {
+                                albumViewModel.startShuffled(albumSongs, sourceName = albumName)?.let { first ->
+                                    albumViewModel.updateSongState(
+                                        first.coverUri, first.title, first.singer, true,
+                                        first.id, 0, albumName)
+                                    SongPlayer.playSong(first.url, context, "song/${first.id}")
+                                }
+                            }) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_player_shuffle),
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp),
+                                    contentDescription = uiLocalized("Shuffle play")
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
                         }
                         if (albumSongs.isNotEmpty()) {
                             val playing = albumViewModel.currentSongPlayingState.value
                             val currentInList = albumSongs.any { it.id == albumViewModel.currentSongId.value }
                             Box(
                                 contentAlignment = Alignment.Center,
-                                modifier = Modifier.size(52.dp).clip(RoundedCornerShape(100.dp))
+                                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(100.dp))
                                     .background(Color(0xFF1ED760)).clickable {
                                         if (currentInList) albumViewModel.setPlaying(!playing)
                                         else {
@@ -568,7 +570,7 @@ fun SumUpAlbumScreen(
                 } // album header item
             if (albumSongs.isNotEmpty()) {
                 item(key = "album_sort") {
-                    CollectionSortRow(
+                    if (searchReveal.expanded || searchQuery.isNotBlank()) CollectionSortRow(
                         label = currentSort.getDescriptiveLabel(isDescending),
                         onClick = { showSortSheet = true }
                     )

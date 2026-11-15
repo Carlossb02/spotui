@@ -1,6 +1,8 @@
 package com.music.spotui.ui.screens
 
 import com.music.spotui.ui.components.scrollingCollectionBackground
+import androidx.compose.ui.draw.shadow
+import androidx.compose.material.icons.filled.Pause
 import com.music.spotui.util.uiLocalized
 
 import androidx.activity.compose.BackHandler
@@ -173,7 +175,8 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
     }
 
     com.music.spotui.ui.components.CollectionContentViewport(modifier = Modifier.fillMaxSize()
-        .scrollingCollectionBackground(Color(0xFF1E2A38), Color(AppBackground.toArgb()), listState, "podcast_header")) {
+        .scrollingCollectionBackground(Color(0xFF1E2A38), Color(AppBackground.toArgb()), listState, "podcast_header",
+            coverUri = show?.coverUri?.takeIf { it.isNotBlank() } ?: episodes.firstOrNull()?.coverUri.orEmpty())) {
         LazyColumn(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(
                 start = com.music.spotui.ui.components.LocalCollectionInset.current,
@@ -242,8 +245,8 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         contentScale = ContentScale.Crop,
                         failure = placeholder(R.drawable.placeholder),
                         modifier = Modifier
-                            .size(180.dp)
-                            .clip(RoundedCornerShape(12.dp)),
+                            .size(com.music.spotui.ui.components.collectionCoverSize())
+                            .shadow(16.dp, RoundedCornerShape(18.dp)).clip(RoundedCornerShape(18.dp)),
                         contentDescription = null,
                     )
                     Spacer(Modifier.height(16.dp))
@@ -251,9 +254,9 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                     // Show Title
                     Text(
                         text = resolvedTitle,
-                        modifier = collapsedTitle.titleModifier,
+                        modifier = Modifier.fillMaxWidth().then(collapsedTitle.titleModifier),
                         color = Color.White,
-                        fontSize = 22.sp,
+                        fontSize = 32.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
@@ -262,6 +265,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         Spacer(Modifier.height(4.dp))
                         Text(
                             text = "${uiLocalized("By")} $resolvedPublisher",
+                            modifier = Modifier.fillMaxWidth(),
                             color = Color(0xFFB3B3B3),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium
@@ -342,6 +346,12 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         // Right action buttons: Add to queue & Big Green Play Button
                         if (episodes.isNotEmpty()) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                com.music.spotui.ui.components.CollectionDownloadButton(episodes, uiLocalized("Descargar episodios")) { complete ->
+                                    com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollection(context, "show:$showId",
+                                        displayShowTitle, resolvedCover.orEmpty(), resolvedPublisher, false, episodes)
+                                    if (!complete) SongPlayer.downloadAll(episodes, context)
+                                }
+                                Spacer(Modifier.width(8.dp))
                                 Icon(
                                     painter = painterResource(id = R.drawable.ic_queue_add),
                                     tint = Color.White,
@@ -366,10 +376,14 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                 // Spotify Big Play Button
                                 Box(
                                     modifier = Modifier
-                                        .size(48.dp)
+                                        .size(56.dp)
                                         .clip(CircleShape)
                                         .background(Color(0xFF1ED760))
                                         .clickable {
+                                            if (episodes.any { it.id == playerViewModel.currentSongId.value }) {
+                                                playerViewModel.setPlaying(!playerViewModel.currentSongPlayingState.value)
+                                                return@clickable
+                                            }
                                             val firstEp = filteredEpisodes.firstOrNull() ?: return@clickable
                                             vm.updateQueue(filteredEpisodes)
                                             vm.updateSongState(firstEp.coverUri, firstEp.title, firstEp.singer, true, firstEp.id, 0, firstEp.album)
@@ -379,7 +393,8 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.PlayArrow,
+                                        imageVector = if (episodes.any { it.id == playerViewModel.currentSongId.value } &&
+                                            playerViewModel.currentSongPlayingState.value) Icons.Default.Pause else Icons.Default.PlayArrow,
                                         contentDescription = uiLocalized("Reproducir"),
                                         tint = Color.Black,
                                         modifier = Modifier.size(28.dp)

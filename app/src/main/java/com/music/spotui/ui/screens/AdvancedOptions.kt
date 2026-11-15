@@ -31,7 +31,7 @@ internal fun AdvancedOptionsScreen(navController: androidx.navigation.NavControl
             } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF121212)))
     }) { padding ->
         androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(bottom = 24.dp)) {
+            contentPadding = PaddingValues(bottom = 168.dp)) {
             item { Column { AdvancedOptionsContent() } }
         }
     }
