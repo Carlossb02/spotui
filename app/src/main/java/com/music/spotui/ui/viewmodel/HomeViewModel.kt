@@ -24,7 +24,7 @@ import javax.inject.Inject
 class HomeViewModel @Inject constructor(private val repository: AppRepository,
     @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context) : ViewModel() {
 
-    private val followingReleases = com.music.spotui.data.api.FollowingReleaseFeed(appContext, viewModelScope)
+    private val followingReleases = com.music.spotui.data.api.FollowingReleaseFeed.get(appContext)
     internal val followedEpisodes = followingReleases.podcasts
     internal val followedMusicReleases = followingReleases.music
     internal fun refreshFollowedReleases(force:Boolean=false,kind:com.music.spotui.data.preferences.ReleaseKind?=null) {
@@ -75,6 +75,13 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository,
         // compete with playback and podcast resolution for Spotify sockets.
         fetchHome()
         fetchFollowedArtists()
+        viewModelScope.launch {
+            refreshFollowedReleases()
+            while(true) {
+                kotlinx.coroutines.delay(10*60_000L)
+                refreshFollowedReleases()
+            }
+        }
         viewModelScope.launch {
             kotlinx.coroutines.delay(1_800L)
             var checks = 0

@@ -65,6 +65,14 @@ class CurrentSongState @Inject constructor() {
 
     private val queueOrder = PlaybackQueueOrder()
 
+    /** Repair old persisted metadata without moving the cursor or reordering requests. */
+    internal fun updateContentRating(query:String, explicit:Boolean) {
+        if(_queue.value.none {it.url==query && it.explicit!=explicit})return
+        queueOrder.reconcile(_queue.value.map {if(it.url==query)it.copy(explicit=explicit) else it})
+        _queue.value=queueOrder.songs
+        persistQueue()
+    }
+
     fun currentQueueIndex(): Int {
         val q = _queue.value
         val stored = _songIndex.value

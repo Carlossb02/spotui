@@ -49,6 +49,18 @@ object PodcastProvider {
     private val knownEpisodeShows = java.util.concurrent.ConcurrentHashMap<String, Pair<String, String>>()
     private val episodeMemoryCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<SongsModel>>>()
     private const val EPISODE_CACHE_TTL_MS = 15 * 60_000L
+    /** Metadata fallback for playlist cards whose subtitle omits the publication date. */
+    internal suspend fun publicationDate(song:SongsModel):String? {
+        val videoId=song.url.removePrefix(YOUTUBE_EPISODE_PREFIX).substringBefore('|')
+        if(videoId.length!=11)return null
+        return withTimeoutOrNull(6000) {
+            val response=YouTube.player(videoId,client=com.metrolist.innertube.models.YouTubeClient.WEB).getOrNull()
+            val dates=response?.microformat
+            listOfNotNull(dates?.playerMicroformatRenderer?.publishDate,dates?.microformatDataRenderer?.publishDate,
+                dates?.playerMicroformatRenderer?.uploadDate,dates?.microformatDataRenderer?.uploadDate)
+                .firstOrNull {com.music.spotui.data.publicationTime(it,System.currentTimeMillis())!=null}
+        }
+    }
 
     private const val SHOW_MAP_PREFS = "spotui_episode_show_map_v1"
     private const val SHOW_MAP_TTL_MS = 30L * 24 * 60 * 60 * 1000
@@ -208,7 +220,7 @@ object PodcastProvider {
         return null
     }
 
-    private fun episodeToSong(
+    internal fun episodeToSong(
         episode: EpisodeItem,
         showName: String = ""
     ): SongsModel {
@@ -240,7 +252,9 @@ object PodcastProvider {
             coverUri = episode.thumbnail,
             url = "$YOUTUBE_EPISODE_PREFIX$videoId|$queryText",
             description = episode.title,
-            durationMs = (episode.duration ?: 0) * 1000
+            durationMs = (episode.duration ?: 0) * 1000,
+            releaseDate = episode.publishDateText.orEmpty(),
+            explicit = episode.explicit,
         )
     }
 
@@ -489,18 +503,11 @@ object PodcastProvider {
     // Match the COMPLETE publication-date label, never substrings inside episode descriptions.
     // In particular, `hoy`, `ago`, month names or four-digit years found in an entire
     // video description must never turn that description into releaseDate.
-    private val relativePublicationDate = Regex(
-        """(?i)^(?:(?:publicad[oa]\s+)?hace\s+\d+\s+(?:segundos?|minutos?|horas?|d[ií]as?|semanas?|meses?|a[nñ]os?)|(?:\d+\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago)|hoy|ayer|today|yesterday)$"""
-    )
-    private val calendarPublicationDate = Regex(
-        """(?i)^(?:(?:\d{1,2}\s+(?:de\s+)?(?:ene(?:ro)?|feb(?:rero)?|mar(?:zo)?|abr(?:il)?|may(?:o)?|jun(?:io)?|jul(?:io)?|ago(?:sto)?|sep(?:tiembre)?|set(?:iembre)?|oct(?:ubre)?|nov(?:iembre)?|dic(?:iembre)?|jan(?:uary)?|apr(?:il)?|aug(?:ust)?|dec(?:ember)?)\s+(?:de\s+)?\d{4})|(?:\d{4}[-/]\d{1,2}[-/]\d{1,2})|(?:(?:ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic|jan|apr|aug|dec)[a-z]*\s+\d{1,2},?\s+\d{4}))$"""
-    )
-
     fun validatedReleaseDate(value: String): String? {
         val date = value.trim().trimStart('•', '·', '-').trim()
         if (date.length !in 2..48 || date.any { it == '\n' || it == '\r' || it == '\t' } ||
             date.contains("http", ignoreCase = true) || date.contains("www.", ignoreCase = true)) return null
-        return date.takeIf { relativePublicationDate.matches(it) || calendarPublicationDate.matches(it) }
+        return date.takeIf { com.music.spotui.data.publicationTime(it,System.currentTimeMillis())!=null }
     }
 
     private fun isDateText(text: String): Boolean = validatedReleaseDate(text) != null
@@ -558,7 +565,7 @@ object PodcastProvider {
         )
     }
 
-    private fun parseEpisodesFromBrowse(
+    internal fun parseEpisodesFromBrowse(
         root: JSONObject,
         showName: String,
         defaultCover: String = ""
@@ -607,7 +614,9 @@ object PodcastProvider {
                 }
             }
             obj.optJSONObject("subtitle")?.let { collectTexts(it, allTexts) }
-            obj.optJSONObject("description")?.let { collectTexts(it, allTexts) }
+            for(field in listOf("secondSubtitle","publishedTimeText","dateText")) {
+                obj.optJSONObject(field)?.let { collectTexts(it,allTexts) }
+            }
 
             var durationMs = 0
             var releaseDate = ""
@@ -626,6 +635,13 @@ object PodcastProvider {
             for (txt in allTexts) {
                 val clean = txt.trim()
                 if (clean.isBlank()) continue
+                // Dates such as "hace 2 horas" also contain a duration token.
+                // Recognise publication first, and split joined metadata labels only.
+                val publication=clean.split('•','·').firstNotNullOfOrNull { validatedReleaseDate(it) }
+                if(publication!=null) {
+                    if(releaseDate.isBlank())releaseDate=publication
+                    continue
+                }
                 if (durationMs == 0) {
                     val dur = parseDurationFromText(clean)
                     if (dur > 0) {

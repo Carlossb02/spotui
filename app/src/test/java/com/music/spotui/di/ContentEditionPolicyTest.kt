@@ -4,6 +4,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ContentEditionPolicyTest {
+    @Test fun dontLeaveExplicitRecordingWinsAgainstTheIdenticalUnmarkedEdition() {
+        // Public YouTube Music song search: same title, artist, album and 3:35 duration.
+        data class Recording(val id:String,val explicit:Boolean)
+        val unmarked=Recording("23-YmTPGSMo",false)
+        val explicit=Recording("BufrmkPmi2g",true)
+        assertEquals(listOf(explicit),ContentEditionPolicy.preferred(listOf(unmarked,explicit)) {
+            ContentEditionPolicy.rank(true,it.explicit,"Don't Leave","Don't Leave","Don't Leave","Don't Leave")
+        })
+    }
     private fun rank(title:String,badge:Boolean=false,album:String?="Don't Leave")=
         ContentEditionPolicy.rank(true,badge,title,album,"Don't Leave","Don't Leave")
     @Test fun explicitSpotifyRecordingRejectsDeclaredCleanEditions() {
