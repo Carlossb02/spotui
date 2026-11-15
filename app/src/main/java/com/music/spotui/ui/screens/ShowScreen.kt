@@ -7,6 +7,8 @@ import com.music.spotui.util.uiLocalized
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -346,11 +348,13 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         // Shared playlist controls: downloads and queue left, Play right.
                         if (episodes.isNotEmpty()) {
                             Row(modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
                                 com.music.spotui.ui.components.CollectionDownloadButton(episodes, uiLocalized("Descargar episodios")) { complete ->
                                     com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollection(context, "show:$showId",
                                         displayShowTitle, resolvedCover.orEmpty(), resolvedPublisher, false, episodes)
                                     if (!complete) SongPlayer.downloadAll(episodes, context)
                                 }
+                                com.music.spotui.ui.components.CollectionSortButton(currentSort.getDescriptiveLabel(isDescending)) { showSortSheet = true }
                                 Spacer(Modifier.width(8.dp))
                                 com.music.spotui.ui.components.CollectionActionSurface(onClick = {
                                     playerViewModel.addAllToQueue(episodes)
@@ -360,8 +364,18 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                     Icon(painter = painterResource(id = R.drawable.ic_queue_add), tint = Color.White,
                                         modifier = Modifier.size(24.dp), contentDescription = uiLocalized("Añadir episodios a la cola"))
                                 }
-                                Spacer(modifier = Modifier.weight(1f))
+                                }
 
+                                com.music.spotui.ui.components.CollectionActionSurface(onClick = {
+                                    vm.startShuffled(filteredEpisodes, displayShowTitle)?.let { first ->
+                                        vm.updateSongState(first.coverUri, first.title, first.singer, true, first.id, 0, first.album)
+                                        com.music.spotui.ui.notification.PodcastCover.preserve(context, first)
+                                        SongPlayer.playSong(first.url, context, "song/" + first.id)
+                                    }
+                                }) {
+                                    Icon(painterResource(R.drawable.ic_player_shuffle), uiLocalized("Shuffle play"), tint = Color.White, modifier = Modifier.size(24.dp))
+                                }
+                                Spacer(Modifier.width(12.dp))
                                 // Spotify Big Play Button
                                 Box(
                                     modifier = Modifier
@@ -439,29 +453,6 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                             fontWeight = FontWeight.Bold
                         )
 
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .background(Color(0xFF2A2A30))
-                                .clickable { showSortSheet = true }
-                                .padding(horizontal = 14.dp, vertical = 6.dp)
-                        ) {
-                            Text(
-                                text = uiLocalized(currentSort.getDescriptiveLabel(isDescending)),
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Icon(
-                                imageVector = Icons.Default.KeyboardArrowDown,
-                                contentDescription = uiLocalized("Opciones de orden"),
-                                tint = Color.White,
-                                modifier = Modifier
-                                    .size(16.dp)
-                                    .padding(start = 2.dp)
-                            )
-                        }
                     }
                 }
             }

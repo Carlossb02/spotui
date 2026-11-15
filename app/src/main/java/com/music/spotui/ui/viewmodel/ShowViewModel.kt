@@ -26,6 +26,8 @@ class ShowViewModel @Inject constructor(
     private val currentSongState: CurrentSongState,
 ) : ViewModel() {
 
+    fun startShuffled(songs: List<SongsModel>, sourceName: String? = null) = currentSongState.startShuffled(songs, sourceName)
+
     val currentSongPlayingState: State<Boolean> get() = currentSongState.playingState
     val currentSongId: State<Int> get() = currentSongState.songId
 
