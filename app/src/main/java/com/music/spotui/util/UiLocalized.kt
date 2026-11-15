@@ -7,6 +7,7 @@ import com.music.spotui.data.preferences.getAppLanguage
 /** Visible UI copy independent of the translation engine used for lyrics.
  * The lookup is bidirectional because older screens hardcoded both languages. */
 private val uiLanguagePairs: List<Pair<String, String>> = listOf(
+    "Explicit content" to "Contenido explícito",
     "Latest updates" to "Últimas novedades",
     "Latest episodes" to "Últimos episodios",
     "Change order" to "Cambiar orden",

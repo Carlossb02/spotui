@@ -88,10 +88,14 @@ internal fun FollowingMusicReleaseCard(album:AlbumsModel,saved:Boolean,loading:B
                             Icon(Icons.Default.MoreVert,uiLocalized("Options"),tint=Color(0xFFCCCCCC),modifier=Modifier.size(20.dp))
                         }
                     }
-                    if(wide || count>0)Text(if(count>0)"$count ${uiLocalized(if(count==1)"song" else "songs")}"+
+                    if(wide || count>0)Row(verticalAlignment=Alignment.CenterVertically,
+                        horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                    if(songs.any {it.explicit})com.music.spotui.ui.components.ExplicitBadge()
+                    Text(if(count>0)"$count ${uiLocalized(if(count==1)"song" else "songs")}"+
                         songs.take(12).joinToString(" · ",prefix=if(songs.isEmpty())"" else " · "){it.name}
                         else uiLocalized(if(album.type=="single")"Single" else "Album"),color=Color(0xFFCCCCCC),
                         fontSize=if(wide)15.sp else 11.sp,maxLines=if(wide)2 else 1,overflow=TextOverflow.Ellipsis)
+                    }
                     Spacer(Modifier.weight(1f))
                     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
                         val sampleLabel=uiLocalized(if(previewing)"Stop preview" else if(album.type=="single")"Preview single" else "Preview album")

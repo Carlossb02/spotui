@@ -315,7 +315,10 @@ fun SongOptionsSheet(
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
                     Text(displaySong.title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(displaySong.singer, color = Color(0xFFB3B3B3), fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        if(displaySong.explicit)ExplicitBadge()
+                        Text(displaySong.singer, color = Color(0xFFB3B3B3), fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
             HorizontalDivider(color = Color(0xFF353535))

@@ -523,10 +523,6 @@ fun LikedSongsScreen(navController: NavController) {
                                     )
                                     Column(modifier = Modifier.padding(start = 12.dp).width(280.dp)) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                            if (song.explicit) {
-                                                com.music.spotui.ui.components.ExplicitBadge()
-                                                Spacer(Modifier.width(4.dp))
-                                            }
                                             Text(
                                                 text = song.title,
                                                 color = currentColor,
@@ -538,6 +534,7 @@ fun LikedSongsScreen(navController: NavController) {
                                         Row(verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                             com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
+                                            if (song.explicit) com.music.spotui.ui.components.ExplicitBadge()
                                             Text(
                                                 text = song.singer,
                                                 color = Color.Gray,

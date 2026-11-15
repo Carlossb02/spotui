@@ -56,6 +56,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -120,17 +122,20 @@ fun Loader(modifier: Modifier = Modifier) {
 @Composable
 fun ExplicitBadge(
     modifier: Modifier = Modifier,
-    size: androidx.compose.ui.unit.TextUnit = 9.sp,
+    size: androidx.compose.ui.unit.TextUnit = 10.sp,
 ) {
+    val label=com.music.spotui.util.uiLocalized("Explicit content")
+    Box(modifier=modifier.size(14.dp).background(Color(0xFFB3B3B3),RoundedCornerShape(2.dp))
+        .semantics {contentDescription=label},contentAlignment=Alignment.Center) {
     Text(
         text = "E",
-        color = Color(0xFFB3B3B3),
+        color = Color(0xFF121212),
         fontSize = size,
+        lineHeight = size,
         fontWeight = FontWeight.Bold,
-        modifier = modifier
-            .background(Color(0xFF333333), RoundedCornerShape(3.dp))
-            .padding(horizontal = 4.dp, vertical = 1.dp),
+        style=androidx.compose.ui.text.TextStyle(platformStyle=androidx.compose.ui.text.PlatformTextStyle(includeFontPadding=false)),
     )
+    }
 }
 
 @Composable
@@ -158,9 +163,7 @@ fun MiniPlayer(
     val songId by miniPlayerViewModel.currentSongId
     val songIndex by miniPlayerViewModel.currentSongIndex
     val songAlbum by miniPlayerViewModel.currentSongAlbum
-    val isCurrentSongExplicit by remember(songId) {
-        mutableStateOf(miniPlayerViewModel.queue.value.firstOrNull { it.id == songId }?.explicit == true)
-    }
+    val isCurrentSongExplicit = miniPlayerViewModel.queue.value.firstOrNull { it.id == songId }?.explicit == true
 
     // Keep MiniPlayer playing state in sync with physical SongPlayer audio engine
     LaunchedEffect(Unit) {
@@ -292,8 +295,11 @@ fun MiniPlayer(
                     Text(songTitle, modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE),
                         fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1,
                         color = Color.White)
-                    Text(songSinger, modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE),
-                        fontSize = 12.sp, color = Color.LightGray, maxLines = 1)
+                    Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)) {
+                        if(isCurrentSongExplicit)ExplicitBadge()
+                        Text(songSinger, modifier = Modifier.weight(1f).basicMarquee(iterations = Int.MAX_VALUE),
+                            fontSize = 12.sp, color = Color.LightGray, maxLines = 1)
+                    }
                 }
                 MiniOutputRouteButton(onClick = { showDevicesSheet = true })
                 // Separate, bounded hit targets: never overlap the title or play.
@@ -524,17 +530,16 @@ fun MiniPlayer(
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (isCurrentSongExplicit) {
-                            ExplicitBadge()
-                            Spacer(Modifier.width(4.dp))
-                        }
                         Text(text = songTitle, color = Color.White, fontSize = 13.sp,
                             fontWeight = FontWeight.Bold, maxLines = 1,
                             modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE))
                     }
+                    Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)) {
+                    if(isCurrentSongExplicit)ExplicitBadge()
                     Text(text = songSinger, color = Color.LightGray, fontSize = 12.sp,
                         fontWeight = FontWeight.Medium, maxLines = 1,
-                        modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE))
+                        modifier = Modifier.weight(1f).basicMarquee(iterations = Int.MAX_VALUE))
+                    }
                 }
             }
 

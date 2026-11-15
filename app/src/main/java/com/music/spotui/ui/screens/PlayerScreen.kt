@@ -1274,10 +1274,6 @@ fun PlayerInfo(
                 }
                 Column(Modifier.weight(1f).padding(end = 12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (isExplicit) {
-                            com.music.spotui.ui.components.ExplicitBadge(size = 11.sp)
-                            Spacer(Modifier.width(6.dp))
-                        }
                         Text(
                             modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
                                 .combinedClickable(onClick = {}, onLongClick = { showStreamDetailDialog = true }),
@@ -1289,6 +1285,8 @@ fun PlayerInfo(
                             softWrap = false,
                         )
                     }
+                    Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                    if(isExplicit)com.music.spotui.ui.components.ExplicitBadge()
                     Text(
                         text = songSinger,
                         color = Color(0xFFB3B3B3),
@@ -1301,6 +1299,7 @@ fun PlayerInfo(
                             indication = null,
                         ) { onArtistClick() } else Modifier,
                     )
+                    }
                     val isResolvingState = isResolving && resolveStatus.isNotBlank()
                     val hasError = !resolveError.isNullOrBlank()
                     val displaySource =

@@ -437,10 +437,6 @@ private fun QueueRow(
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (song.explicit) {
-                    com.music.spotui.ui.components.ExplicitBadge()
-                    Spacer(Modifier.width(4.dp))
-                }
                 Text(
                     text = song.title,
                     color = if (highlight) Color(0xFF1ED760) else Color.White,
@@ -453,6 +449,7 @@ private fun QueueRow(
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
+                if (song.explicit) com.music.spotui.ui.components.ExplicitBadge()
                 Text(
                     text = song.singer,
                     color = Color.Gray,

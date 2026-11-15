@@ -904,10 +904,6 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 )
                                 Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        if (song.explicit) {
-                                            com.music.spotui.ui.components.ExplicitBadge()
-                                            Spacer(Modifier.width(4.dp))
-                                        }
                                         Text(
                                             text = song.title,
                                             color = currentColor,
@@ -921,6 +917,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                     Row(verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
+                                        if (song.explicit) com.music.spotui.ui.components.ExplicitBadge()
                                         Text(
                                             text = song.singer,
                                             color = Color.Gray,

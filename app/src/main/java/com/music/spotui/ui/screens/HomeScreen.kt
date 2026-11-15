@@ -1008,6 +1008,7 @@ private fun HomeSongRow(
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
+                if (song.explicit) com.music.spotui.ui.components.ExplicitBadge()
                 Text(
                     text = song.singer,
                     color = Color(0xFFB3B3B3),

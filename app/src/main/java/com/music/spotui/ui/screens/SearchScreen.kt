@@ -728,10 +728,6 @@ fun SearchSongRow(
                 }
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (song.explicit) {
-                            com.music.spotui.ui.components.ExplicitBadge()
-                            Spacer(Modifier.width(4.dp))
-                        }
                         Text(
                             text = song.title,
                             color = currentPlayingIndicatorColor,
@@ -743,6 +739,7 @@ fun SearchSongRow(
                     Row(verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
+                        if (song.explicit) com.music.spotui.ui.components.ExplicitBadge()
                         Text(
                             text = "Song • ${song.singer}",
                             color = Color.Gray,

@@ -1495,7 +1495,7 @@ object SongPlayer {
             }
             return playback.streamUrl
         }
-        val expectedTier = "${quality.name}:audio-v2"
+        val expectedTier = "${quality.name}:audio-v3-explicit:${explicitRegistry[song] ?: "unknown"}"
 
         val meta = metadataRegistry[song]
         val matchSong = boundState?.queue?.value?.firstOrNull { it.url == song }
@@ -1721,7 +1721,7 @@ object SongPlayer {
         val playback = resolveYtPlayback(song, quality.audioQuality, appContext, forPlayback = forPlayback)
         if (playback == null) {
             if (forPlayback) {
-                val cacheKey = "$song|${com.metrolist.innertube.YouTube.SearchFilter.FILTER_SONG.value}|MATCH_V12"
+                val cacheKey = videoCandidateCacheKey(song,YouTube.SearchFilter.FILTER_SONG)
                 val cachedCandidates = videoCandidatesCache[cacheKey]
                 val reason = when {
                     cachedCandidates == null -> "YouTube search failed"
@@ -2387,7 +2387,7 @@ object SongPlayer {
     private const val OFFICIAL_SOURCE_BONUS = 8
     private const val OFFICIAL_TITLE_BONUS = 2
 
-    private class MatchCandidate(val item: SongItem, val stage: Int, val score: Int, val index: Int)
+    private class MatchCandidate(val item: SongItem, val stage: Int, val score: Int, val index: Int, val editionRank:Int)
 
     private class VideoSearchPlan(
         val album: String?,
@@ -2724,12 +2724,15 @@ object SongPlayer {
         }
     }
 
+    private fun videoCandidateCacheKey(query:String,filter:YouTube.SearchFilter)=
+        "$query|${filter.value}|MATCH_V13:${explicitRegistry[query] ?: "unknown"}"
+
     private suspend fun resolveVideoCandidates(
         query: String,
         filter: YouTube.SearchFilter = YouTube.SearchFilter.FILTER_SONG,
         forPlayback: Boolean = false,
     ): List<String> {
-        val cacheKey = "$query|${filter.value}|MATCH_V12"
+        var cacheKey = videoCandidateCacheKey(query,filter)
         val epoch = synchronized(resolutionCacheLock) { resolutionCacheGeneration }
         val matchStartedAt = android.os.SystemClock.elapsedRealtime()
         videoCandidatesCache[cacheKey]?.let {
@@ -2748,9 +2751,9 @@ object SongPlayer {
             updateResolveStatus(true, "Searching YouTube videos...")
         }
 
-        val wantExplicit = explicitRegistry[query]
+        var wantExplicit = explicitRegistry[query]
         val baseSearchText = searchTextForPlayback(query)
-        val searchText = if (wantExplicit == true) "$baseSearchText explicit" else baseSearchText
+        var searchText = if (wantExplicit == true) "$baseSearchText explicit" else baseSearchText
 
         if (searchText.length == 11 && !searchText.contains(' ')) return listOf(searchText)
 
@@ -2776,6 +2779,7 @@ object SongPlayer {
             val queries = linkedSetOf<String>().apply {
                 add(searchText)
                 if (titleForSearch.isNotBlank() && artistForSearch.isNotBlank()) {
+                    if(wantExplicit==true)add("$titleForSearch $artistForSearch uncensored")
                     add("$titleForSearch $artistForSearch")
                     if (albumForSearch.isNotBlank() && !albumForSearch.equals(titleForSearch, ignoreCase = true)) {
                         add("$titleForSearch $artistForSearch $albumForSearch")
@@ -2794,7 +2798,7 @@ object SongPlayer {
             return VideoSearchPlan(album, artist, title, queries, videoQueries)
         }
 
-        // Keep exactly the same queries, scoring and candidate priority. Video-filter
+        // Preserve identity scoring and ordering within the requested content edition. Video-filter
         // fallbacks are LAZY: launching 7+ competing fallback requests while the
         // song catalogue is still being searched slows the common path and can
         // trigger rate limits. Start them concurrently only if the first stage fails.
@@ -2828,6 +2832,9 @@ object SongPlayer {
 
             val metadataWaitStarted = android.os.SystemClock.elapsedRealtime()
             val exactMeta = metadataDeferred.await()
+            wantExplicit=explicitRegistry[query] ?: wantExplicit
+            searchText=if(wantExplicit==true)"$baseSearchText explicit" else baseSearchText
+            cacheKey=videoCandidateCacheKey(query,filter)
             if (forPlayback) Log.i("SpotuiStartup", "ytSearch metadataGate=${android.os.SystemClock.elapsedRealtime() - metadataWaitStarted}ms")
             val finalPlan = buildPlan(exactMeta)
             launchPlan(finalPlan)
@@ -2859,7 +2866,8 @@ object SongPlayer {
         Log.w(TAG, "MATCH '$query': ${hits.size} raw hits; ${searchQueries.size} available queries (+${videoSearches.size} video-filter queries)")
         logResolution("MATCH '$query': ${hits.size} raw hits")
 
-        class Evaluation(val ids: List<String>, val loose: SongItem?, val exactFastPath: Boolean = false)
+        class Evaluation(val ids: List<String>, val loose: SongItem?, val exactFastPath: Boolean = false,
+            val editionRank:Int=ContentEditionPolicy.UNKNOWN)
 
         val expectedArtistsList = (targetArtist ?: "").split(artistSplitRegex)
             .map { artistKey(it) }
@@ -2933,6 +2941,11 @@ object SongPlayer {
             // Same artist + same title but failing flags/duration: only usable as a last resort on video search.
             val looseMatches = ArrayList<SongItem>()
             hits.forEachIndexed { index, item ->
+                val editionRank=ContentEditionPolicy.rank(wantExplicit,item.explicit,item.title,item.album?.name,targetTitle,targetAlbum)
+                if(editionRank==ContentEditionPolicy.REJECT_CLEAN) {
+                    if(forPlayback)logResolution("Skipping clean/censored edition: '${item.title}'")
+                    return@forEachIndexed
+                }
                 val facts = candidateFacts.getOrPut(item) { CandidateFacts(item) }
                 val cleanCandidateTitleForMatch = facts.cleanTitle
                 val cand = facts.title
@@ -3012,7 +3025,7 @@ object SongPlayer {
                 val durDiff: Int? = if (wantSec != null && itemDur != null) abs(wantSec - itemDur) else null
                 val tightOk = durDiff == null || durDiff <= tightTol
                 val wideOk = durDiff == null || durDiff <= wideTol
-                val explicitOk = true
+                val explicitOk = editionRank!=ContentEditionPolicy.REJECT_CLEAN
                 val explicitMatch = wantExplicit == null || item.explicit == wantExplicit
                 val lastResortOk = durDiff == null || durDiff <= maxOf(15, (wantSec ?: 0) / 10)
 
@@ -3118,7 +3131,7 @@ object SongPlayer {
                             candRecordingFlags == targetRecordingFlags && editSubtypeEq,
                             albumEq, strongAlbumEq, explicitMatch && wantExplicit != null, durDiff,
                             isOfficialMusicType, isUgcUpload)) exactCandidates.add(item.id)
-                    scored.add(MatchCandidate(item, stage, score, index))
+                    scored.add(MatchCandidate(item, stage, score, index,editionRank))
                     if (VERBOSE_MATCH_DIAGNOSTICS) logResolution("  -> '${item.title}' (${itemDur}s) -> stage $stage, score $score")
                 }
                 else if (artistExact && titleEq) looseMatches.add(item)
@@ -3126,16 +3139,17 @@ object SongPlayer {
 
             if (VERBOSE_MATCH_DIAGNOSTICS) Log.d(TAG, "--------------------------------------------------")
 
-            val bestStage = scored.minOfOrNull { it.stage }
+            val editionCandidates=ContentEditionPolicy.preferred(scored) {it.editionRank}
+            val bestStage = editionCandidates.minOfOrNull { it.stage }
             if (bestStage != null) {
-                val chosen = scored.filter { it.stage == bestStage }
+                val chosen = editionCandidates.filter { it.stage == bestStage }
                     .sortedWith(compareByDescending<MatchCandidate> { it.score }.thenBy { it.index })
                 val best = chosen.first()
                 if (forPlayback) logResolution("YouTube match: '${best.item.title}' | ${best.item.artists.joinToString { it.name }} | album='${best.item.album?.name ?: ""}' | ${best.item.duration}s vs ${wantSec}s | stage $bestStage")
                 Log.w(TAG, "✅ WINNER: '${best.item.title}' (stage $bestStage, score ${best.score}, ID: ${best.item.id})")
                 if (VERBOSE_MATCH_DIAGNOSTICS) Log.d(TAG, "==================================================")
 
-                return Evaluation(chosen.map { it.item.id }.distinct(), null, best.item.id in exactCandidates)
+                return Evaluation(chosen.map { it.item.id }.distinct(), null, best.item.id in exactCandidates,best.editionRank)
             }
 
             if (forPlayback) logResolution("YouTube: no candidate matched (${hits.size} hits, want ${wantSec}s, album '${targetAlbum ?: ""}')")
@@ -3178,10 +3192,12 @@ object SongPlayer {
             remainingQueries.forEach { primarySearches.getValue(it).start() }
             hits = remainingQueries.flatMap { primarySearches.getValue(it).await() }.distinctBy { it.id }
             val primary = if (hits.isNotEmpty()) evaluate(hits, filter) else Evaluation(emptyList(), null)
-            if (primary.ids.isNotEmpty()) return cacheAndReturn(primary.ids)
+            val checkExplicitVideo=combined && wantExplicit==true && primary.editionRank==ContentEditionPolicy.UNKNOWN &&
+                appCtx?.let {com.music.spotui.data.preferences.isVideoFallbackEnabled(it)}!=false
+            if (primary.ids.isNotEmpty() && !checkExplicitVideo) return cacheAndReturn(primary.ids)
 
             val videoHits = if (combined) {
-                // Launch all fallbacks together, but only when primary matching failed.
+                // Search video alternatives after a miss or ambiguous explicit-edition metadata.
                 plan.videoQueries.forEach { q -> videoSearches.getValue(q).start() }
                 plan.videoQueries
                     .flatMap { q -> runCatching { videoSearches.getValue(q).await() }.getOrDefault(emptyList()) }
@@ -3189,6 +3205,7 @@ object SongPlayer {
             } else emptyList()
             Log.w(TAG, "MATCH '$query': no song-catalogue match, ${videoHits.size} video-filter hits")
             val video = if (videoHits.isNotEmpty()) evaluate(videoHits, YouTube.SearchFilter.FILTER_VIDEO) else Evaluation(emptyList(), null)
+            if(primary.ids.isNotEmpty() && (video.ids.isEmpty() || video.editionRank>=primary.editionRank))return cacheAndReturn(primary.ids)
             if (video.ids.isNotEmpty()) {
                 if (forPlayback) logResolution("YouTube: matched through video search (official upload)")
                 return cacheAndReturn(video.ids)
@@ -3205,7 +3222,9 @@ object SongPlayer {
             if (relaxed.ids.isNotEmpty()) return cacheAndReturn(relaxed.ids)
 
             val last = video.loose ?: primary.loose
-            ?: if (ALLOW_BLIND_LAST_RESORT) hits.firstOrNull() ?: videoHits.firstOrNull() else null
+            ?: if (ALLOW_BLIND_LAST_RESORT) (hits+videoHits).firstOrNull {
+                ContentEditionPolicy.rank(wantExplicit,it.explicit,it.title,it.album?.name,targetTitle,targetAlbum)!=ContentEditionPolicy.REJECT_CLEAN
+            } else null
             if (last != null) {
                 if (forPlayback) logResolution("YouTube last-resort match: '${last.title}' | ${last.artists.joinToString { it.name }}")
                 Log.w(TAG, "⚠️ LAST RESORT WINNER: '${last.title}' (ID: ${last.id})")
@@ -3238,7 +3257,7 @@ object SongPlayer {
         lastYtFailureReason = null
         val connectivityManager =
             appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val cacheKey = "$query|${com.metrolist.innertube.YouTube.SearchFilter.FILTER_SONG.value}|MATCH_V12"
+        val cacheKey = videoCandidateCacheKey(query,YouTube.SearchFilter.FILTER_SONG)
         val candidatesCached = videoCandidatesCache.containsKey(cacheKey)
         val tried = mutableSetOf<String>()
         suspend fun tryIds(ids: List<String>, skipValidation: Boolean = false): YTPlayerUtils.PlaybackData? {
