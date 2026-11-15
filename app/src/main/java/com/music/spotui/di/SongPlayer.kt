@@ -256,6 +256,7 @@ object SongPlayer {
         synchronized(resolutionCacheLock) {
             resolutionCacheGeneration++
             streamCache.clear()
+            preparedPlayback.clear()
             sourceCache.clear()
             qualityCache.clear()
             qualityTierCache.clear()
@@ -456,6 +457,12 @@ object SongPlayer {
     }
     private val qualityCache = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val qualityTierCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private data class PreparedMatchInput(val spotifyId: String?, val metadata: TrackMatchMetadata?,
+        val duration: Int?, val tier: String)
+    private val preparedPlayback = PreparedPlaybackCache<String, PreparedMatchInput, String>()
+    private fun preparedMatchInput(query: String, tier: String) = PreparedMatchInput(
+        trackIdRegistry[query] ?: spotifyTrackIdForPlayback(query),
+        registeredMetadataInputs[query]?.second ?: metadataRegistry[query], durationRegistry[query], tier)
     private val trackIdRegistry = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val isrcRegistry = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val alternativeKeyRegistry = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -507,10 +514,18 @@ object SongPlayer {
 
     private val metadataRegistry =
         java.util.concurrent.ConcurrentHashMap<String, TrackMatchMetadata>()
+    private val registeredMetadataInputs =
+        java.util.concurrent.ConcurrentHashMap<String, Pair<String?, TrackMatchMetadata>>()
 
     fun registerMetadata(pairs: List<Pair<String, TrackMatchMetadata>>) {
         pairs.forEach { (query, meta) ->
-            if (query.isNotBlank() && meta.title.isNotBlank()) metadataRegistry[query] = meta
+            if (query.isNotBlank() && meta.title.isNotBlank()) {
+                val input = trackIdRegistry[query] to meta
+                val previous = registeredMetadataInputs.put(query, input)
+                // Registering unchanged local rows must not undo an exact-ID
+                // repair and trigger another network lookup on every skip.
+                if (previous != input || !hasRecentVerifiedMetadata(query)) metadataRegistry[query] = meta
+            }
         }
     }
 
@@ -662,6 +677,7 @@ object SongPlayer {
         // A rejected CDN URL must not be served again by the exact-video warmup cache.
         YTPlayerUtils.clearExtractionCache()
         streamCache.remove(song)
+        preparedPlayback.remove(song)
         sourceCache.remove(song)
         qualityCache.remove(song)
         qualityTierCache.remove(song)
@@ -1237,7 +1253,7 @@ object SongPlayer {
     }
 
     private val prefetchJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
-    private val prefetchSemaphore = Semaphore(1)
+    private val preloadPipeline = PlaybackPreloadPipeline()
     private val prefetchInFlight: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     @Volatile private var prefetchTargets: Set<String> = emptySet()
     internal data class PreloadStatus(val bytes:Long=0,val target:Long=0,val state:String="Waiting")
@@ -1276,33 +1292,36 @@ object SongPlayer {
         if (!prefetchInFlight.add(song)) return
         val work = scope.launch(start = CoroutineStart.LAZY) {
             try {
-                prefetchSemaphore.withPermit {
-                    if (listed && song !in prefetchTargets) return@withPermit
+                preloadPipeline.prepare(resolve = {
+                    if (listed && song !in prefetchTargets) return@prepare null
                     // Prioritize the current track. Prefetch is never allowed to
                     // compete with stream resolution during a cold start/transition.
                     if (playbackResolving) kotlinx.coroutines.delay(200L)
                     withTimeoutOrNull(10_000L) {
                         while (playbackResolving) kotlinx.coroutines.delay(200L)
                     }
-                    if (playbackResolving) return@withPermit
+                    if (playbackResolving) return@prepare null
                     // The queue may have moved on while we waited for a slot.
-                    if (listed && song !in prefetchTargets) return@withPermit
+                    if (listed && song !in prefetchTargets) return@prepare null
                     // Source resolution can consume the same scarce YouTube connections
                     // as the first audio bytes. Do not even start it until the
                     // foreground track is genuinely READY (not merely queued).
-                    if (!awaitCurrentPlaybackReady()) return@withPermit
+                    if (!awaitCurrentPlaybackReady()) return@prepare null
                     acquireWakeLock(appContext, "spotui:prefetch", 30_000L)
                     try {
-                        val url = withTimeoutOrNull(45_000L) {
-                            runCatching { resolveStreamUrl(song, appContext, forPlayback = false) }.getOrNull()
-                        }
-                        if (url != null && !(listed && song !in prefetchTargets)) {
-                            cacheIntro(url, appContext, song)
+                        withTimeoutOrNull(45_000L) {
+                            try { resolveStreamUrl(song, appContext, forPlayback = false) }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (failure: Exception) { Log.d(TAG, "Preload resolution failed", failure); null }
                         }
                     } finally {
                         releaseWakeLock("spotui:prefetch")
                     }
-                }
+                }, cache = { url ->
+                    if ((!listed || song in prefetchTargets) && awaitCurrentPlaybackReady()) {
+                        cacheIntro(url, appContext, song)
+                    }
+                })
             } finally {
                 prefetchInFlight.remove(song)
                 prefetchJobs.remove(song, currentCoroutineContext()[Job])
@@ -1346,6 +1365,13 @@ object SongPlayer {
                 prefetchInternal(songUrl, context, listed = true)
             }
         }
+    }
+
+    /** Browsing a list must not replace the active queue's preload window. */
+    fun prefetchVisible(songs: List<String>, context: Context) {
+        if (currentRequest.isNotBlank() && boundState?.queue?.value?.isNotEmpty() == true) {
+            refreshQueuePreload(context)
+        } else prefetchList(songs, context, count = 3)
     }
 
 
@@ -1489,7 +1515,21 @@ object SongPlayer {
             return song
         }
         val startedAtMs = android.os.SystemClock.elapsedRealtime()
-        suspend fun resolve(): String? {
+        suspend fun resolve(): String? = withResolutionPreparation(
+            prepare = { ensureSpotifyMatchMetadata(song, appContext) },
+            warmup = {
+                // Fetch only the initial raw query while exact-ID metadata is
+                // being checked. The final matcher consumes it ONLY if its
+                // unchanged search plan asks for this identical query/filter.
+                if (streamCache[song] == null &&
+                    !videoCandidatesCache.containsKey(videoCandidateCacheKey(song, YouTube.SearchFilter.FILTER_SONG)) &&
+                    com.music.spotui.data.preferences.getCachedStream(appContext, song) == null) {
+                    val text = searchTextForPlayback(song)
+                    val search = if (explicitRegistry[song] == true) "$text explicit" else text
+                    sharedYouTubeSearch(search, YouTube.SearchFilter.FILTER_SONG)
+                }
+            },
+        ) { metadata ->
             var attempt = 0
             val maxAttempts = if (forPlayback) 3 else 1
             while (attempt < maxAttempts) {
@@ -1498,17 +1538,17 @@ object SongPlayer {
                 if (retry) acquireWakeLock(appContext, "spotui:retry_resolve", 15_000L)
                 val value = try {
                     if (retry) delay(1000L * attempt)
-                    doResolveStreamUrl(song, appContext, forPlayback)
+                    doResolveStreamUrl(song, appContext, forPlayback, metadata)
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
                 } catch (failure: Exception) {
                     Log.w(TAG, "Stream resolution attempt failed", failure)
                     null
                 } finally { if (retry) releaseWakeLock("spotui:retry_resolve") }
-                if (value != null) return value
+                if (value != null) return@withResolutionPreparation value
                 attempt++
             }
-            return null
+            null
         }
         try {
             val shared = streamResolutions.result(song) { resolve() }
@@ -1528,7 +1568,8 @@ object SongPlayer {
         }
     }
 
-    private suspend fun doResolveStreamUrl(song: String, appContext: Context, forPlayback: Boolean): String? {
+    private suspend fun doResolveStreamUrl(song: String, appContext: Context, forPlayback: Boolean,
+        metadataLookup: suspend () -> TrackMatchMetadata?): String? {
 
         val quality = com.music.spotui.data.preferences.currentStreamingQuality(appContext)
         if (song.startsWith("yt_local:")) {
@@ -1634,6 +1675,19 @@ object SongPlayer {
                     alt.value
                 }
                 alt.isYouTube -> {
+                    if (sourceCache[song] == "Alternative YouTube" && qualityTierCache[song] == expectedTier &&
+                        (streamExpiresAt[song] ?: 0L) > System.currentTimeMillis() + 30_000L &&
+                        StreamSelections.get(appContext, song)?.videoId == alt.value) {
+                        streamCache[song]?.let { cached ->
+                            if (forPlayback) {
+                                currentSource = "Alternative YouTube"
+                                currentQuality = qualityCache[song].orEmpty()
+                                boundState?.updateResolveDetailNote("Source: $currentSource • Format: $currentQuality (Loaded from memory cache)")
+                                updateResolveStatus(false)
+                            }
+                            return cached
+                        }
+                    }
                     if (forPlayback) {
                         currentSource = "Alternative YouTube"
                         currentQuality = ""
@@ -1659,6 +1713,9 @@ object SongPlayer {
                     }
 
                     streamCache[song] = playback.streamUrl
+                    streamExpiresAt[song] = System.currentTimeMillis() +
+                        ((playback.streamExpiresInSeconds.toLong() - 90L).coerceIn(60L, 21_600L) * 1000L)
+                    qualityTierCache[song] = expectedTier
                     streamValidatedAt[song] = System.currentTimeMillis()
                     sourceCache[song] = if (forPlayback) currentSource else "Alternative YouTube"
                     qualityCache[song] = if (forPlayback) currentQuality else ytQuality
@@ -1680,23 +1737,32 @@ object SongPlayer {
             updateResolveStatus(true, "Checking cache...")
         }
         val networkAvailable = isNetworkAvailable(appContext)
-        if(networkAvailable && flacSpotifyId!=null) {
-            val known=com.music.spotui.data.api.ExplicitContentStore.known(appContext,flacSpotifyId)
-            val rating=when {
-                explicitRegistry[song]==true -> true
-                known!=null -> known
-                !hasRecentVerifiedMetadata(song) -> com.music.spotui.data.api.ExplicitContentStore.ensure(appContext,flacSpotifyId)
-                else -> null
+        // A previously selected recording needs no new Spotify round trip just
+        // because its metadata verification TTL elapsed. Edits, quality/content
+        // changes, invalidation or an expiring URL all reject this fast path.
+        flacSpotifyId?.let { id -> com.music.spotui.data.api.ExplicitContentStore.known(appContext, id)?.let { rating ->
+            if (explicitRegistry[song] != true && explicitRegistry[song] != rating) {
+                explicitRegistry[song] = rating
+                withContext(Dispatchers.Main) { boundState?.updateContentRating(song, rating) }
             }
-            if(rating!=null) {
-                explicitRegistry[song]=rating
-                withContext(Dispatchers.Main) {boundState?.updateContentRating(song,rating)}
+        } }
+        expectedTier = "${quality.name}:audio-v5-uncensored:${explicitRegistry[song] ?: "unknown"}"
+        preparedPlayback.get(song, preparedMatchInput(song, expectedTier), System.currentTimeMillis())?.let { url ->
+            if (streamCache[song] == url && sourceCache[song] == "YouTube") {
+                if (forPlayback) {
+                    currentSource = "YouTube"
+                    currentQuality = qualityCache[song].orEmpty()
+                    boundState?.updateResolveDetailNote("Source: YouTube • Format: $currentQuality (Prepared queue audio)")
+                    updateResolveStatus(false)
+                }
+                return url
             }
         }
         // Older stored SongsModel records defaulted every GQL track to false.
         // Verify those snapshots before reusing either URL or candidate caches.
-        if(networkAvailable && flacSpotifyId!=null && !hasRecentVerifiedMetadata(song)) {
-            ensureSpotifyMatchMetadata(song)
+        if(networkAvailable && flacSpotifyId!=null) {
+            if (!hasRecentVerifiedMetadata(song)) metadataLookup()
+            else ensureMatchingContentRating(song, flacSpotifyId, appContext)
             expectedTier="${quality.name}:audio-v5-uncensored:${explicitRegistry[song] ?: "unknown"}"
         }
         expectedTier="${quality.name}:audio-v5-uncensored:${explicitRegistry[song] ?: "unknown"}"
@@ -1791,7 +1857,8 @@ object SongPlayer {
             logResolution("Resolving audio via YouTube Music.")
         }
 
-        val playback = resolveYtPlayback(song, quality.audioQuality, appContext, forPlayback = forPlayback)
+        val playback = resolveYtPlayback(song, quality.audioQuality, appContext, forPlayback = forPlayback,
+            metadataLookup = metadataLookup)
         if (playback == null) {
             if (forPlayback) {
                 val cacheKey = videoCandidateCacheKey(song,YouTube.SearchFilter.FILTER_SONG)
@@ -1825,6 +1892,8 @@ object SongPlayer {
         sourceCache[song] = "YouTube"
         qualityCache[song] = ytQuality
         qualityTierCache[song] = expectedTier
+        preparedPlayback.put(song, preparedMatchInput(song, expectedTier), playback.streamUrl,
+            streamExpiresAt[song] ?: 0L)
         val ytLoudness = playback.audioConfig?.loudnessDb ?: playback.format.loudnessDb
         rememberYouTubeGain(appContext, song, playback.streamUrl, ytLoudness, playback.audioConfig?.perceptualLoudnessDb)
         if (ytLoudness != null) loudnessCache[song] = ytLoudness else loudnessCache.remove(song)
@@ -2721,11 +2790,11 @@ object SongPlayer {
     }
 
 
-    private suspend fun ensureSpotifyMatchMetadata(query: String): TrackMatchMetadata? {
-        return metadataWork.await(query) { ensureSpotifyMatchMetadataUnshared(query) }
+    private suspend fun ensureSpotifyMatchMetadata(query: String, context: Context? = appCtx): TrackMatchMetadata? {
+        return metadataWork.await(query) { ensureSpotifyMatchMetadataUnshared(query, context) }
     }
 
-    private suspend fun ensureSpotifyMatchMetadataUnshared(query: String): TrackMatchMetadata? {
+    private suspend fun ensureSpotifyMatchMetadataUnshared(query: String, context: Context?): TrackMatchMetadata? {
         val metadataStartedAt = android.os.SystemClock.elapsedRealtime()
         val currentMeta = metadataRegistry[query]
         val hasUsefulMeta = currentMeta?.let {
@@ -2747,13 +2816,22 @@ object SongPlayer {
             resolveDurationFallbacks(query, null, null, currentMeta?.title, currentMeta?.artist, currentMeta?.album)
             return currentMeta
         }
-        val track = (0 until 3).firstNotNullOfOrNull { attempt ->
-            if (attempt > 0) delay(250L * attempt)
-            runCatching {
-                withTimeoutOrNull(5000L) { com.metrolist.spotify.Spotify.track(spotifyId).getOrNull() }
+        val track = coroutineScope {
+            // Both exact-ID sources retain their original precedence, but their
+            // network waits overlap. Never rank candidates until both finish.
+            val rating = async { ensureMatchingContentRating(query, spotifyId, context) }
+            val result = (0 until 3).firstNotNullOfOrNull { attempt ->
+                if (attempt > 0) delay(250L * attempt)
+                try {
+                    withTimeoutOrNull(5000L) { com.metrolist.spotify.Spotify.track(spotifyId).getOrNull() }
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) {
+                    Log.w(TAG, "Spotify metadata repair failed for $spotifyId (attempt ${attempt + 1})", failure)
+                    null
+                }
             }
-                .onFailure { Log.w(TAG, "Spotify metadata repair failed for $spotifyId (attempt ${attempt + 1})", it) }
-                .getOrNull()
+            rating.await()
+            result
         }
         Log.i("SpotuiStartup", "spotifyMetadata lookup=${android.os.SystemClock.elapsedRealtime() - metadataStartedAt}ms success=${track != null}")
         if (track == null) {
@@ -2769,7 +2847,7 @@ object SongPlayer {
         )
         metadataRegistry[query] = repaired
         trackIdRegistry[query] = spotifyId
-        val repairedRating=appCtx?.let {com.music.spotui.data.api.ExplicitContentStore.known(it,spotifyId)} ?: track.explicit
+        val repairedRating=context?.let {com.music.spotui.data.api.ExplicitContentStore.known(it,spotifyId)} ?: track.explicit
         explicitRegistry[query] = repairedRating
         withContext(Dispatchers.Main) {boundState?.updateContentRating(query,repairedRating)}
         if (verifiedMatchMetadata.size > 200) {
@@ -2792,6 +2870,22 @@ object SongPlayer {
             resolveDurationFallbacks(query, spotifyId, track.isrc, track.name, repaired.artist, repaired.album)
         }
         return repaired
+    }
+
+    private suspend fun ensureMatchingContentRating(query: String, spotifyId: String, suppliedContext: Context?) {
+        val context = suppliedContext ?: return
+        if (!isNetworkAvailable(context)) return
+        val known = com.music.spotui.data.api.ExplicitContentStore.known(context, spotifyId)
+        val rating = when {
+            explicitRegistry[query] == true -> true
+            known != null -> known
+            !hasRecentVerifiedMetadata(query) -> com.music.spotui.data.api.ExplicitContentStore.ensure(context, spotifyId)
+            else -> null
+        }
+        if (rating != null) {
+            explicitRegistry[query] = rating
+            withContext(Dispatchers.Main) { boundState?.updateContentRating(query, rating) }
+        }
     }
 
     // Reusing identical raw YouTube searches does not change the matcher:
@@ -2846,6 +2940,7 @@ object SongPlayer {
         filter: YouTube.SearchFilter = YouTube.SearchFilter.FILTER_SONG,
         forPlayback: Boolean = false,
         bypassCache:Boolean=false,
+        metadataLookup: (suspend () -> TrackMatchMetadata?)? = null,
     ): List<String> {
         var cacheKey = videoCandidateCacheKey(query,filter)
         val epoch = synchronized(resolutionCacheLock) { resolutionCacheGeneration }
@@ -2937,7 +3032,9 @@ object SongPlayer {
             }
 
             val metadataDeferred = async {
-                runCatching { ensureSpotifyMatchMetadata(query) }.getOrNull()
+                try { if (metadataLookup != null) metadataLookup() else ensureSpotifyMatchMetadata(query) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) { Log.w(TAG, "Metadata preparation failed", failure); null }
             }
             searches[searchText] = scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) { searchHits(searchText, filter) }
             searches.getValue(searchText).start()
@@ -3373,6 +3470,7 @@ object SongPlayer {
         audioQuality: com.metrolist.music.constants.AudioQuality,
         appContext: Context,
         forPlayback: Boolean = false,
+        metadataLookup: (suspend () -> TrackMatchMetadata?)? = null,
     ): YTPlayerUtils.PlaybackData? {
         lastYtFailureReason = null
         val connectivityManager =
@@ -3451,13 +3549,15 @@ object SongPlayer {
             return null
         }
 
-        tryIds(resolveVideoCandidates(query, forPlayback = forPlayback).take(3), skipValidation = isPodcast)?.let { return it }
+        val metadata = metadataLookup ?: { ensureSpotifyMatchMetadata(query, appContext) }
+        tryIds(resolveVideoCandidates(query, forPlayback = forPlayback, metadataLookup = metadata).take(3), skipValidation = isPodcast)?.let { return it }
         if (!com.music.spotui.data.preferences.isVideoFallbackEnabled(appContext)) {
             Log.w(TAG, "song candidates exhausted and video fallback disabled for: ${searchTextForPlayback(query)}")
             return null
         }
         Log.w(TAG, "song candidates exhausted, trying video search for: ${searchTextForPlayback(query)}")
-        tryIds(resolveVideoCandidates(query, YouTube.SearchFilter.FILTER_VIDEO, forPlayback = forPlayback).take(3), skipValidation = isPodcast)?.let { return it }
+        tryIds(resolveVideoCandidates(query, YouTube.SearchFilter.FILTER_VIDEO, forPlayback = forPlayback,
+            metadataLookup = metadata).take(3), skipValidation = isPodcast)?.let { return it }
         Log.e(TAG, "All YouTube candidates failed for: ${searchTextForPlayback(query)}")
         return null
     }
