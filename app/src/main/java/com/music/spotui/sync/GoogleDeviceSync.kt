@@ -139,11 +139,25 @@ object GoogleDeviceSync {
         accessToken?.takeIf {System.currentTimeMillis()-tokenAt<40*60_000}?.let {return@withLock it}
         if(status.value.needsDrive)throw DriveConsentRequired()
         val expectedUid=status.value.uid
-        val result=try {requestDriveAuthorization()}catch(c:CancellationException){throw c}catch(_:Exception){null}
-        if(result==null || result.hasResolution()) {
+        // Network/service failures are retryable, not evidence of revoked consent.
+        val result=requestDriveAuthorization()
+        if(result.hasResolution()) {
             mutable.update {it.copy(needsDrive=true)};throw DriveConsentRequired()
         }
         acceptDriveAuthorization(result,expectedUid);checkNotNull(accessToken)
+    }
+    internal suspend fun refreshRejectedDriveToken(rejected:String,expectedUid:String):String {
+        tokenMutex.withLock {
+            check(status.value.uid==expectedUid && auth?.currentUser?.uid==expectedUid){"La cuenta de Google ha cambiado."}
+            if(accessToken==rejected) {
+                // Finish evicting the expired token before asking Play Services for another.
+                Identity.getAuthorizationClient(context).clearToken(ClearTokenRequest.builder().setToken(rejected).build()).await()
+                accessToken=null;tokenAt=0L
+            }
+        }
+        return driveToken().also {
+            check(status.value.uid==expectedUid && auth?.currentUser?.uid==expectedUid){"La cuenta de Google ha cambiado."}
+        }
     }
     internal fun invalidateDriveToken(expired:String?=null) {
         if(expired!=null && accessToken!=expired)return
@@ -458,8 +472,8 @@ object GoogleDeviceSync {
             work.launch {
                 for(unit in wake) {
                     // Batch local edits, but apply received data/acknowledgments promptly.
-                    // Network discovery retains its existing foreground/background cadence.
-                    delay(if(events.isEmpty() && incoming.isEmpty() && acknowledgments.isEmpty())750L else 50L)
+                    // Discovery is throttled separately and never polls Firebase.
+                    delay(if(events.isEmpty() && incoming.isEmpty() && acknowledgments.isEmpty())250L else 25L)
                     try {
                         while(true){val event=events.poll()?:break;event()}
                         cycle()
@@ -469,8 +483,8 @@ object GoogleDeviceSync {
 
             discoveryJob=work.launch {
                 while(isActive) {
-                    delay(5_000)
-                    val interval=if(uiForeground && visibleLibraries.isNotEmpty())5_000L else 30_000L
+                    delay(2_000)
+                    val interval=driveDiscoveryInterval(uiForeground,visibleLibraries.isNotEmpty())
                     if(dataSyncEnabled() && hasSyncPeer(mutable.value.devices,actor) && System.currentTimeMillis()-discoveryAt>=interval)
                         post {discoveryNeeded=true}
                 }
@@ -482,7 +496,7 @@ object GoogleDeviceSync {
             val enabled=SyncOptions.enabled(SyncOptions.Category.PLAYER)
             if(peers!=hadPeers) {
                 hadPeers=peers;discoveryWake?.cancel()
-                val remaining=(15_000-(System.currentTimeMillis()-discoveryAt)).coerceAtLeast(0)
+                val remaining=(driveDiscoveryInterval(uiForeground,visibleLibraries.isNotEmpty())-(System.currentTimeMillis()-discoveryAt)).coerceAtLeast(0)
                 val wait=if(peers)remaining else maxOf(15_000,remaining)
                 discoveryNeeded=wait==0L
                 if(wait>0)discoveryWake=work.launch {delay(wait);post {discoveryNeeded=true}}
@@ -553,7 +567,7 @@ object GoogleDeviceSync {
             if(rulesBlocked || driveJob?.isActive==true || status.value.needsDrive || status.value.driveBlocked || System.currentTimeMillis()<nextSendAt)return
             val wanted=if(dataSyncEnabled())remoteReplicas.filter {it.key!=actor && consumedReplicas[it.key]!=it.value.optString("rev")}.mapValues {JSONObject(it.value.toString())}else emptyMap()
             val outgoing=pending.filterKeys(SyncOptions::allows).toMap()
-            val discover=dataSyncEnabled() && (discoveryNeeded || outgoing.isNotEmpty()) && !discoveryRunning && System.currentTimeMillis()-discoveryAt>=if(uiForeground && visibleLibraries.isNotEmpty())5_000 else 15_000
+            val discover=dataSyncEnabled() && (discoveryNeeded || outgoing.isNotEmpty()) && !discoveryRunning && System.currentTimeMillis()-discoveryAt>=driveDiscoveryInterval(uiForeground,visibleLibraries.isNotEmpty())
             if(wanted.isEmpty() && outgoing.isEmpty() && !(catalogueNeeded && dataSyncEnabled()) && !discover)return
             val trees=docs.filterKeys(SyncOptions::allows).toMap()
             driveJob=work.launch {
@@ -614,7 +628,7 @@ object GoogleDeviceSync {
             post {
                 if(!dataSyncEnabled())return@post
                 discoveryNeeded=true
-                val wait=((if(uiForeground && visibleLibraries.isNotEmpty())5_000L else 15_000L)-(System.currentTimeMillis()-discoveryAt)).coerceAtLeast(0)
+                val wait=(driveDiscoveryInterval(uiForeground,visibleLibraries.isNotEmpty())-(System.currentTimeMillis()-discoveryAt)).coerceAtLeast(0)
                 if(wait>0) {
                     discoveryWake?.cancel()
                     discoveryWake=work.launch {delay(wait);wake.trySend(Unit)}

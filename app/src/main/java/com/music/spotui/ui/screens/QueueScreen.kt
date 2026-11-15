@@ -45,6 +45,8 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -158,6 +160,13 @@ fun QueueContent(
     val edgeDistancePx = with(density) { 82.dp.toPx() }
     val handleAreaPx = with(density) { 58.dp.toPx() }
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val queueScope = rememberCoroutineScope()
+    // Queue selection consumes earlier entries. Do not retain the old viewport anchor.
+    LaunchedEffect(currentId, curIdx) {
+        dragOriginalIndex = -1
+        dragTargetIndex = -1
+        listState.scrollToItem(0)
+    }
     val orderedUpcoming = upcoming.mapIndexed { index, song -> ReorderEntry(index, song) }
     val latestUpcoming by rememberUpdatedState(orderedUpcoming)
     val latestHeaderCount by rememberUpdatedState((if (current != null) 1 else 0) + (if (upcoming.isNotEmpty()) 1 else 0))
@@ -235,6 +244,7 @@ fun QueueContent(
                 state = listState,
                 modifier = Modifier
                     .fillMaxSize()
+                    .padding(start = 32.dp)
                     .navigationBarsPadding()
                     .pointerInput(Unit) {
                         awaitEachGesture {
@@ -352,6 +362,7 @@ fun QueueContent(
                                         song.id, idx.coerceAtLeast(0), song.album
                                     )
                                     SongPlayer.playSong(song.url, context, "song/${song.id}")
+                                    queueScope.launch { listState.scrollToItem(0) }
                                 },
                                 dragHandle = Modifier,
                                 dropTarget = dragOriginalIndex >= 0 &&
@@ -367,7 +378,7 @@ fun QueueContent(
                 val ghost = orderedUpcoming.firstOrNull { it.originalIndex == dragOriginalIndex }?.song
                 if (ghost != null) {
                     Box(
-                        modifier = Modifier.fillMaxWidth().offset {
+                        modifier = Modifier.padding(start = 32.dp).fillMaxWidth().offset {
                             IntOffset(0, (pointerViewportY - rowHeightPx / 2f).roundToInt())
                         }.graphicsLayer { shadowElevation = 12f * density.density }
                     ) {
@@ -378,6 +389,7 @@ fun QueueContent(
             if (dragOriginalIndex == -1) {
                 com.music.spotui.ui.components.FastScrollbarForLazyList(
                     state = listState,
+                    showBadge = false,
                     modifier = Modifier.align(Alignment.CenterStart)
                 )
             }

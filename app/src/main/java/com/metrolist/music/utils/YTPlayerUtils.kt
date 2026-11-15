@@ -995,9 +995,13 @@ object YTPlayerUtils {
                 }
             }
 
-            score + com.music.spotui.audio.AudioFormatPreference.score(
-                f.averageBitrate ?: f.bitrate, f.mimeType, audioQuality == AudioQuality.LOW
+            val bitrate = com.music.spotui.audio.AudioFormatPreference.bitrate(
+                f.averageBitrate, f.bitrate, f.contentLength, f.approxDurationMs?.toLongOrNull()
             )
+            // Language/track identity dominates fidelity; stereo breaks quality ties only.
+            score + com.music.spotui.audio.AudioFormatPreference.score(
+                bitrate, f.mimeType, audioQuality == AudioQuality.LOW
+            ) + if (audioQuality != AudioQuality.LOW && (f.audioChannels ?: 0) >= 2) 1 else 0
         }
 
         if (selected != null) {

@@ -59,20 +59,30 @@ internal class DriveSyncStore(context:Context,private val uid:String,private val
         result
     }
     private fun request(url:String,token:String)=Request.Builder().url(url).header("Authorization","Bearer $token")
-    private fun execute(request:Request):ByteArray=http.newCall(request).execute().use {response->
-        if(!response.isSuccessful) {
-            val raw=runCatching {response.body?.byteStream()?.use {readLimited(it,64*1024)}?.toString(Charsets.UTF_8)}.getOrNull().orEmpty()
-            val failure=DriveRequestFailure.parse(response.code,raw)
-            val token=request.header("Authorization")?.removePrefix("Bearer ")
-            if(failure.requiresConsent) {
-                GoogleDeviceSync.invalidateDriveToken(token)
-                throw DriveConsentRequired(failure.message ?: "Autoriza Google Drive para sincronizar tus datos.")
+    private suspend fun execute(request:Request):ByteArray {
+        var active=request
+        repeat(2) {attempt->
+            var rejectedToken:String?=null
+            val bytes=http.newCall(active).execute().use {response->
+                if(!response.isSuccessful) {
+                    val raw=runCatching {response.body?.byteStream()?.use {readLimited(it,64*1024)}?.toString(Charsets.UTF_8)}.getOrNull().orEmpty()
+                    val failure=DriveRequestFailure.parse(response.code,raw)
+                    val token=active.header("Authorization")?.removePrefix("Bearer ")
+                    if(failure.requiresConsent && attempt==0 && token!=null) {
+                        rejectedToken=token
+                        return@use null
+                    }
+                    if(failure.stopsRetries)GoogleDeviceSync.blockDrive(token,failure.message.orEmpty())
+                    throw failure
+                }
+                val body=response.body?:error("Drive devolvió una respuesta vacía.")
+                body.byteStream().use {readLimited(it)}
             }
-            if(failure.stopsRetries)GoogleDeviceSync.blockDrive(token,failure.message.orEmpty())
-            throw failure
+            if(bytes!=null)return bytes
+            val renewed=GoogleDeviceSync.refreshRejectedDriveToken(checkNotNull(rejectedToken),uid)
+            active=request.newBuilder().header("Authorization","Bearer $renewed").build()
         }
-        val body=response.body?:error("Drive devolvió una respuesta vacía.")
-        body.byteStream().use {readLimited(it)}
+        error("No se pudo renovar la conexión con Drive.")
     }
     private fun readLimited(input:java.io.InputStream,limit:Int=64*1024*1024):ByteArray {
         val output=ByteArrayOutputStream();val buffer=ByteArray(16*1024);var size=0
@@ -126,7 +136,7 @@ internal class DriveSyncStore(context:Context,private val uid:String,private val
         File(directory,"$id.json").writeText(raw)
         pointer
     }
-    private fun readRemote(id:String,token:String):String {
+    private suspend fun readRemote(id:String,token:String):String {
         val bytes=execute(request("https://www.googleapis.com/drive/v3/files/$id?alt=media",token).get().build())
         val input=if(bytes.size>1 && bytes[0]==0x1f.toByte() && bytes[1]==0x8b.toByte())GZIPInputStream(bytes.inputStream())else bytes.inputStream()
         return input.use {String(readLimited(it),Charsets.UTF_8)}
