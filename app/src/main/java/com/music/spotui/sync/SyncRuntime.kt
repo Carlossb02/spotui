@@ -56,3 +56,5 @@ internal object SyncRuntime {
 
 internal fun syncRuntimeAvailable(visible:Boolean,playing:Boolean,perceptibleService:Boolean)=visible || playing || perceptibleService
 internal fun hasSyncPeer(devices:List<GoogleDeviceSync.Device>,actor:String)=devices.any {it.id!=actor && it.online}
+internal fun hasKnownSyncPeer(devices: List<GoogleDeviceSync.Device>, actor: String) =
+    devices.any { it.id.isNotBlank() && it.id != actor }

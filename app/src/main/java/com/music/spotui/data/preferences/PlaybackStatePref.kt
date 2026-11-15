@@ -66,10 +66,22 @@ fun saveLastPlayback(context: Context, song: SongsModel) {
 }
 
 /** Updates just the position of the stored track (called periodically). */
-fun saveLastPosition(context: Context, positionMs: Long) {
-    if (positionMs <= 0) return
-    context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-        .edit().putLong(KEY_POSITION, positionMs).apply()
+fun saveLastPosition(context: Context, positionMs: Long, updatedAt: Long? = null, owner: String? = null) {
+    if (positionMs < 0) return
+    val editor = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putLong(KEY_POSITION, positionMs)
+    if (updatedAt != null) editor.putLong("activity_at", updatedAt).putString("activity_owner", owner.orEmpty())
+    else if (!com.music.spotui.sync.CloudPlayback.applyingRemote()) {
+        editor.putLong("activity_at", com.music.spotui.sync.CloudPlayback.checkpointNow())
+            .putString("activity_owner", com.music.spotui.sync.GoogleDeviceSync.localDeviceId())
+    }
+    editor.apply()
+}
+
+internal fun lastPlaybackActivity(context: Context) = context.getSharedPreferences(PREF, 0).getLong("activity_at", 0)
+internal fun lastPlaybackOwner(context: Context) = context.getSharedPreferences(PREF, 0).getString("activity_owner", "").orEmpty()
+internal fun markPlaybackActivity(context: Context) {
+    context.getSharedPreferences(PREF, 0).edit().putLong("activity_at", com.music.spotui.sync.CloudPlayback.checkpointNow())
+        .putString("activity_owner", com.music.spotui.sync.GoogleDeviceSync.localDeviceId()).apply()
 }
 
 /** The last track and position, or null if nothing was ever played. */

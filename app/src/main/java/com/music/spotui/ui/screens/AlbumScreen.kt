@@ -117,14 +117,15 @@ import kotlinx.coroutines.launch
 
 
 @Composable
-fun AlbumScreen(navController: NavController, albumName: String, artist: String = "") {
+fun AlbumScreen(navController: NavController, albumName: String, artist: String = "", syntheticId: String? = null) {
     val albumViewModel : AlbumViewModel = hiltViewModel()
     val songs by albumViewModel.songs.collectAsState()
     val albums by albumViewModel.albums.collectAsState()
 
     // Load this album's actual tracks from Spotify (by name, disambiguated by artist).
-    LaunchedEffect(albumName, artist) {
-        albumViewModel.loadAlbumSongs(albumName, artist)
+    LaunchedEffect(albumName, artist, syntheticId) {
+        if (syntheticId != null) albumViewModel.loadSyntheticAlbum(syntheticId)
+        else albumViewModel.loadAlbumSongs(albumName, artist)
     }
 
     val context = LocalContext.current

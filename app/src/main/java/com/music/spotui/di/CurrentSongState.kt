@@ -423,9 +423,10 @@ class CurrentSongState @Inject constructor() {
         val song=q.songs.getOrNull(frame.index)?:return
         playbackWrites.submit {
             val context=com.music.spotui.MyApplication.instance
+            if (frame.updated < com.music.spotui.data.preferences.lastPlaybackActivity(context)) return@submit
             com.music.spotui.data.preferences.saveLastQueue(context,q.songs,q.original.mapNotNull(q.songs::getOrNull),q.manual,frame.index,q.original)
             com.music.spotui.data.preferences.saveLastPlayback(context,song)
-            com.music.spotui.data.preferences.saveLastPosition(context,frame.position)
+            com.music.spotui.data.preferences.saveLastPosition(context,frame.position,frame.updated,frame.owner)
             com.music.spotui.data.preferences.saveShuffleEnabled(context,frame.shuffle)
             com.music.spotui.data.preferences.saveRepeatMode(context,runCatching {RepeatMode.valueOf(frame.repeat)}.getOrDefault(RepeatMode.OFF))
             com.music.spotui.data.preferences.savePlaybackSource(context,frame.source)

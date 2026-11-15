@@ -903,6 +903,7 @@ object SongPlayer {
         }
         if(isRecovery && com.music.spotui.sync.CloudPlayback.remotePlaying()!=null)return
         if(!isRecovery && com.music.spotui.sync.CloudPlayback.route("select",if(restoreQuery==song)restorePositionMs else 0L))return
+        if (!isRecovery) com.music.spotui.data.preferences.markPlaybackActivity(context)
         startupTapAtMs = android.os.SystemClock.elapsedRealtime()
         com.music.spotui.data.preferences.PodcastResumeStore.flush(context)
         // Mark-as-seen suppresses the CURRENT listening session only. Explicit
@@ -1260,6 +1261,10 @@ object SongPlayer {
     private val preloadStates=kotlinx.coroutines.flow.MutableStateFlow<Map<String,PreloadStatus>>(emptyMap())
     internal val preloadStatus=preloadStates.asStateFlow()
     private val resolvedLengths=java.util.concurrent.ConcurrentHashMap<String,Long>()
+    fun prioritizePodcastVideo() {
+        if (!currentRequest.startsWith("yt_ep:")) return
+        prefetchJobs.values.forEach { it.cancel() }
+    }
     fun refreshQueuePreload(context:Context) {
         if(!com.music.spotui.data.preferences.isPreloadEnabled(context) ||
             com.music.spotui.data.preferences.isPreloadWifiOnly(context) &&
@@ -1336,6 +1341,8 @@ object SongPlayer {
         withTimeoutOrNull(timeoutMs) {
             while (true) {
                 val ready = withContext(Dispatchers.Main) {
+                    if (currentRequest.startsWith("yt_ep:") && com.music.spotui.ui.screens.PodcastVideoSession.videoVisible)
+                        return@withContext false
                     val p = player
                     val state = p?.playbackState
                     val hasActiveMedia = p?.currentMediaItem != null &&
@@ -1734,7 +1741,7 @@ object SongPlayer {
         }
 
         if (forPlayback) {
-            updateResolveStatus(true, "Checking cache...")
+            updateResolveStatus(true)
         }
         val networkAvailable = isNetworkAvailable(appContext)
         // A previously selected recording needs no new Spotify round trip just
@@ -1810,7 +1817,7 @@ object SongPlayer {
             }
         }
         if (forPlayback) {
-            updateResolveStatus(true, "Checking saved cache...")
+            updateResolveStatus(true)
         }
         com.music.spotui.data.preferences.getCachedStream(appContext, song, expectedTier = if (networkAvailable) expectedTier else null)?.let { (url, source, cachedQuality) ->
             val cacheKey = com.music.spotui.audio.LosslessCacheKeyFactory.buildCacheKey(flacSpotifyId, url)
@@ -4177,6 +4184,7 @@ object SongPlayer {
         cancelCrossfade()
         if (webPlaybackActive()) { SpotifyWebPlayer.seekTo(position); return }
         val target = position.coerceAtLeast(0L)
+        appCtx?.let { com.music.spotui.data.preferences.saveLastPosition(it, target) }
         com.music.spotui.ui.screens.PodcastVideoSession.seekToAudioPosition(target)
         if (!canSeekLoadedTrack(playbackResolving,player?.currentMediaItem!=null,loadedQuery,currentRequest,
                 player?.currentMediaItem?.mediaId,currentMediaId)) {

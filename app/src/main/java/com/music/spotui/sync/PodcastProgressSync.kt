@@ -4,6 +4,12 @@ package com.music.spotui.sync
  * Importing an older device must never combine its position with a newer timestamp. */
 internal object PodcastProgressSync {
     fun merge(key:String,left:SyncTree,right:SyncTree):SyncTree {
+        if (key == "CustomMetadata:overrides_json") {
+            // User edits, including an intentionally empty cover, are revisions.
+            // Catalogue "fill missing fields" rules must never resurrect an old URL.
+            fun revisions(tree: SyncTree) = SyncTree(tree.fields.mapValues { (_, value) -> value.copy(mode = "latest") })
+            return revisions(left).merge(revisions(right))
+        }
         val merged=left.merge(right)
         if(key.startsWith("release_news_seen_v1:")) {
             val values=listOfNotNull(left.fields["/value"],right.fields["/value"]).filter { !it.deleted && it.json.toLongOrNull()!=null }

@@ -481,7 +481,7 @@ internal object PodcastVideoStreams {
         // audio resolver. No extra requests or speculative video decoder.
         run {
             com.metrolist.music.utils.YTPlayerUtils.recentVideoResponse(videoId)?.let { response ->
-                val fromAudio = videoOnlyFormats(response, videoId)
+                val fromAudio = primeFromAudio(videoId)
                 if (fromAudio.isNotEmpty()) {
                     val marked = fromAudio.mapIndexed { idx, q -> if (idx == 0) q.copy(verifiedForStartup = true) else q }
                     videoOptionsCache[videoId] = now to marked
@@ -717,6 +717,7 @@ object PodcastVideoSession {
     }
 
     private fun ensurePrepared(context: Context, videoId: String, show: Boolean) {
+        if (show) SongPlayer.prioritizePodcastVideo()
         if (activeVideoId == videoId) {
             if (show && error != null && resolveJob?.isActive != true &&
                 player?.playbackState != Player.STATE_READY) {
@@ -1076,19 +1077,14 @@ object PodcastVideoSession {
         }
 
         // Hard seek only for explicit user seeks or massive position drift (>5s)
-        val mayRecover = shouldPlay && now - lastSyncSeekAt > 20_000L &&
-            now - lastReadyTime > 3_000L && abs(drift) > 5_000L &&
+        val mayRecover = shouldPlay && PodcastVideoClockPolicy.recover(drift, now - lastSyncSeekAt, now - lastReadyTime) &&
             p.playbackState == Player.STATE_READY
         if (shouldPlay && (initialCatchUp || explicitAudioSeek || mayRecover)) {
             lastSyncSeekAt = now
             p.seekTo(audioAt)
         } else if (shouldPlay && p.playbackState == Player.STATE_READY) {
             // Smooth micro-adjustments via playback speed avoid decoder resets and keyframe stalls
-            val targetSpeed = when {
-                drift > 300L -> 1.05f  // Video is behind audio: speed up slightly
-                drift < -300L -> 0.95f // Video is ahead of audio: slow down slightly
-                else -> 1.0f           // In sync
-            }
+            val targetSpeed = PodcastVideoClockPolicy.speed(drift)
             if (p.playbackParameters.speed != targetSpeed) {
                 p.playbackParameters = androidx.media3.common.PlaybackParameters(targetSpeed)
             }

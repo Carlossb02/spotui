@@ -66,12 +66,7 @@ object CustomMetadataPref {
 
     fun applyOverride(context: Context, song: SongsModel): SongsModel {
         val override = getOverride(context, song) ?: return song
-        return song.copy(
-            title = override.title.ifBlank { song.title },
-            singer = override.singer.ifBlank { song.singer },
-            album = override.album.ifBlank { song.album },
-            coverUri = override.coverUri.ifBlank { song.coverUri }
-        )
+        return applyMetadataEdit(song, override)
     }
 
     /** Apply the current edits to a whole memory snapshot with one preferences parse. */
@@ -80,8 +75,7 @@ object CustomMetadataPref {
         if (overrides.isEmpty()) return songs
         return songs.map { song ->
             val edit = preferredMetadataOverride(getSongKeys(song),overrides) ?: return@map song
-            val changed = song.copy(title = edit.title.ifBlank { song.title }, singer = edit.singer.ifBlank { song.singer },
-                album = edit.album.ifBlank { song.album }, coverUri = edit.coverUri.ifBlank { song.coverUri })
+            val changed = applyMetadataEdit(song, edit)
             if ((changed.title != song.title || changed.singer != song.singer) && song.url.startsWith("spotify:track:"))
                 changed.copy(url = com.music.spotui.di.SongPlayer.buildSpotifyPlayQuery(song.spotifyTrackId, changed.title, changed.singer))
             else changed
@@ -130,7 +124,9 @@ object CustomMetadataPref {
 
     @Synchronized fun restoreOverrides(context: Context, map: Map<String, TrackMetadataOverride>) {
         val current = getAllOverrides(context).toMutableMap()
-        current.putAll(map)
+        map.forEach { (key, value) ->
+            if (value.updatedAt >= (current[key]?.updatedAt ?: Long.MIN_VALUE)) current[key] = value
+        }
         saveAll(context, current)
     }
 
@@ -152,3 +148,7 @@ object CustomMetadataPref {
 
 internal fun preferredMetadataOverride(keys:List<String>,values:Map<String,CustomMetadataPref.TrackMetadataOverride>)=
     keys.mapNotNull {values[it]}.maxByOrNull {it.updatedAt}
+
+internal fun applyMetadataEdit(song: SongsModel, edit: CustomMetadataPref.TrackMetadataOverride) = song.copy(
+    title = edit.title.ifBlank { song.title }, singer = edit.singer.ifBlank { song.singer },
+    album = edit.album, coverUri = edit.coverUri)

@@ -60,6 +60,17 @@ class AlbumViewModel @Inject constructor(private val repository: AppRepository, 
     private var albumKey: String? = null
     private var albumLoadJob: kotlinx.coroutines.Job? = null
 
+    fun loadSyntheticAlbum(id: String) {
+        if (albumKey == id) return
+        albumKey = id; albumLoadJob?.cancel()
+        val context = com.music.spotui.MyApplication.instance
+        val collection = com.music.spotui.data.preferences.OfflineCollectionsPref.getCollection(context, id) ?: return
+        val tracks = com.music.spotui.data.preferences.CustomMetadataPref.applyOverrides(context, collection.songs)
+        _albumDetail.value = AlbumsModel(id.hashCode() and Int.MAX_VALUE, tracks.firstOrNull()?.singer.orEmpty(),
+            tracks.firstOrNull()?.coverUri.orEmpty(), collection.name, "", type = "single")
+        _songs.value = Response.Success(tracks)
+    }
+
     /** Loads the tracks for a specific album (resolved via Spotify search). */
     fun loadAlbumSongs(name: String, artist: String = "") {
         val key = "$name|$artist"

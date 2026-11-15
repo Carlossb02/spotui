@@ -149,8 +149,12 @@ fun MyNavHost(
         composable(Routes.Settings.route){
             SettingsScreen(navHostController)
         }
+        composable("advancedSettings") { com.music.spotui.ui.screens.AdvancedOptionsScreen(navHostController) }
         composable("singleAlbum/{singleId}") {entry->
-            entry.arguments?.getString("singleId")?.let {com.music.spotui.ui.screens.SingleSongAlbumScreen(it,navHostController)}
+            entry.arguments?.getString("singleId")?.let { id ->
+                val collection = com.music.spotui.data.preferences.OfflineCollectionsPref.getCollection(androidx.compose.ui.platform.LocalContext.current, id)
+                AlbumScreen(navHostController, collection?.name.orEmpty(), syntheticId = id)
+            }
         }
 
         composable(Routes.DeviceSync.route) { com.music.spotui.ui.screens.DeviceSyncScreen(navHostController) }

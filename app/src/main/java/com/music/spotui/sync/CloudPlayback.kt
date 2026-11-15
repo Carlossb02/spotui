@@ -60,6 +60,8 @@ object CloudPlayback {
     }
     fun optionsChanged(){connection?.onOptionsChanged()}
     fun playbackChanged(){connection?.playbackChanged()}
+    fun applyingRemote() = connection?.isApplying() == true
+    fun checkpointNow() = connection?.now() ?: System.currentTimeMillis()
     internal fun driveAvailable(){connection?.onDriveAvailable()}
     fun setRemoteVolume(value:Float){if(value.isFinite())connection?.changeVolume(value.coerceIn(0f,1f))}
     fun transferTo(device:String) { connection?.requestTransfer(device) }
@@ -100,11 +102,16 @@ object CloudPlayback {
         private var queueEdit:Job?=null
         private var queueLoadJob:Job?=null
         private var queuePointer:JSONObject?=null
+        private val queuePointers = mutableMapOf<String, JSONObject>()
+        private fun pointerFor(id: String) = queuePointers[id]?.toString().orEmpty()
         private var queueLoadingId=""
         private var held:Pair<String,DevicePlaybackState>?=null
+        private var checkpoint: JSONObject? = null
+        private var mirroredAt = 0L
         private val controls=PlaybackControlCoalescer()
         fun now()=System.currentTimeMillis()+offset
-        fun remote()=current?.takeIf { GoogleDeviceSync.canSyncPlayer(actor) && connected && !rulesBlocked && SyncOptions.enabled(SyncOptions.Category.PLAYER) && it.owner !in mutable.value.disabledDevices && !applying && it.owner!=actor }
+        fun isApplying() = applying
+        fun remote()=current?.takeIf { GoogleDeviceSync.canSyncPlayer(actor) && connected && !rulesBlocked && SyncOptions.enabled(SyncOptions.Category.PLAYER) && it.owner !in mutable.value.disabledDevices && !applying && it.owner!=actor && playbackOwnerLive(it, GoogleDeviceSync.status.value.devices) }
         private fun report(t:Throwable) {
             if(t is CancellationException)throw t
             if(t is DriveConsentRequired)return
@@ -126,7 +133,7 @@ object CloudPlayback {
             listen(root.database.getReference(".info/connected")){
                 connected=it.getValue(Boolean::class.java)==true
                 if(connected) {
-                    if(current?.owner?.let {it!=actor}==true && SongPlayer.isResolvingOrPlaying())locally {SongPlayer.pause()}
+                    if(current?.let {it.owner!=actor && shouldRestorePlayback(it, com.music.spotui.data.preferences.lastPlaybackActivity(context))}==true && SongPlayer.isResolvingOrPlaying())locally {SongPlayer.pause()}
                     mirror();queuePointer?.let(::loadQueue)
                 }
                 publishStatus();drainCommand()
@@ -134,14 +141,36 @@ object CloudPlayback {
             listen(ref("queue")){snapshot->decode(snapshot.getValue(String::class.java))?.let(::loadQueue)}
             listen(ref("session")){snapshot->
                 val decoded=withContext(Dispatchers.IO){decode(snapshot.getValue(String::class.java))?.let(DevicePlaybackState::parse)}
-                val next=decoded?.takeIf {it.owner==actor || playbackOwnerLive(it,GoogleDeviceSync.status.value.devices)}
+                val next=decoded?.let(::withCheckpoint)
                 ready=true
                 val was=current
-                if(next!=null && was?.epoch==next.epoch && next.updated<was.updated)return@listen
+                if(next!=null && was!=null && next.updated<was.updated)return@listen
                 current=next
-                if(connected && SyncOptions.enabled(SyncOptions.Category.PLAYER) && next!=null && next.owner!=actor && (was?.owner==actor || SongPlayer.isResolvingOrPlaying()))locally {SongPlayer.pause()}
+                if (next?.queuePointer?.isNotBlank() == true) loadQueue(JSONObject(next.queuePointer))
+                else queuePointer?.let(::loadQueue)
+                if(connected && SyncOptions.enabled(SyncOptions.Category.PLAYER) && next!=null && next.owner!=actor &&
+                    shouldRestorePlayback(next, com.music.spotui.data.preferences.lastPlaybackActivity(context)) &&
+                    (was?.owner==actor || SongPlayer.isResolvingOrPlaying()))locally {SongPlayer.pause()}
                 publishStatus();mirror();acceptTransfer();drainCommand()
-                if(next==null || next.owner==actor)playbackChanged()
+                playbackChanged()
+            }
+            listen(ref("checkpoint")) { snapshot ->
+                checkpoint = decode(snapshot.getValue(String::class.java))
+                current = current?.let(::withCheckpoint)
+                mirror()
+            }
+            scope.launch {
+                while (isActive) {
+                    delay(30_000)
+                    val owner = current ?: continue
+                    if (!connected || !GoogleDeviceSync.canSyncPlayer(actor) || owner.owner != actor ||
+                        !SongPlayer.isPlaying() || !SongPlayer.isPrepared()) continue
+                    val value = JSONObject().put("epoch", owner.epoch).put("owner", actor)
+                        .put("position", SongPlayer.getCurrentPosition().coerceAtLeast(0)).put("at", now()).put("playing", true)
+                    try { ref("checkpoint").setValue(value.toString()).await() }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) { report(failure) }
+                }
             }
             commandListener=object:ChildEventListener {
                 private fun receive(snapshot:DataSnapshot) {
@@ -165,9 +194,20 @@ object CloudPlayback {
         }
         private fun loadQueue(pointer:JSONObject) {
             queuePointer=pointer
+            queuePointers[pointer.getString("id")] = pointer
             if(!connected || !SyncOptions.enabled(SyncOptions.Category.PLAYER))return
+            val frame = current ?: return
             val id=pointer.getString("id")
+            if (id != frame.queueId) return
             if(queueId==id && queue!=null)return
+            val local = state?.devicePlaybackQueue()
+            if (frame.owner == actor && local != null && local.songs.isNotEmpty() &&
+                com.music.spotui.data.preferences.lastPlaybackActivity(context) >= frame.updated &&
+                pointer.optString("hash").isNotBlank() && pointer.optString("hash") == SyncTree.digest(local.textJson().toString())) {
+                queueLoadJob?.cancel(); queueLoadingId = ""
+                queueId = id; queue = local; lastQueue = local; lastQueueId = id
+                return
+            }
             if(queueLoadingId==id && queueLoadJob?.isActive==true)return
             queueLoadingId=id;queueLoadJob?.cancel()
             queueLoadJob=scope.launch {runCatching {
@@ -183,7 +223,9 @@ object CloudPlayback {
         fun onDriveAvailable() {
             if(!SyncOptions.enabled(SyncOptions.Category.PLAYER))return
             scope.launch {runCatching {
-                decode(ref("queue").get().await().getValue(String::class.java))?.let(::loadQueue)
+                val saved = current?.queuePointer.orEmpty()
+                if (saved.isNotBlank()) loadQueue(JSONObject(saved))
+                else decode(ref("queue").get().await().getValue(String::class.java))?.let(::loadQueue)
                 mirror();acceptTransfer();drainCommand();playbackChanged()
                 waitingQueueCommand?.let {(action,position,edit)->waitingQueueCommand=null;send(action,position,edit=edit)}
             }.onFailure(::report)}
@@ -192,7 +234,7 @@ object CloudPlayback {
         fun onOptionsChanged() {scope.launch {
             publishJob?.cancel();queueEdit?.cancel();if(!SyncOptions.enabled(SyncOptions.Category.PLAYER))queueLoadJob?.cancel()
             if(SyncOptions.enabled(SyncOptions.Category.PLAYER)) {
-                if(current?.owner!=actor && SongPlayer.isResolvingOrPlaying())locally {SongPlayer.pause()}
+                if(current?.let {it.owner!=actor && shouldRestorePlayback(it, com.music.spotui.data.preferences.lastPlaybackActivity(context))}==true && SongPlayer.isResolvingOrPlaying())locally {SongPlayer.pause()}
                 mirror();acceptTransfer();drainCommand();onDriveAvailable()
             } else {
                 commands.clear()
@@ -219,7 +261,10 @@ object CloudPlayback {
                         runCatching {
                             val owner=current
                             if(owner?.owner==actor && owner.startToken.isBlank())publishLocal(owner,force)
-                            else if(owner==null && state!=null && SongPlayer.isResolvingOrPlaying())claim()
+                            else if(state!=null && (owner==null || !playbackOwnerLive(owner, GoogleDeviceSync.status.value.devices)) &&
+                                (SongPlayer.isResolvingOrPlaying() ||
+                                    com.music.spotui.data.preferences.lastPlaybackOwner(context)==actor &&
+                                    com.music.spotui.data.preferences.lastPlaybackActivity(context)>(owner?.updated ?: 0L))) claim()
                         }.onFailure(::report)
                     }
                 }while(needsPublication)
@@ -256,18 +301,35 @@ object CloudPlayback {
                 transferring=if(current?.owner==it.transferring && current?.startToken.isNullOrBlank())""else it.transferring) }
         }
         private inline fun locally(block:()->Unit) {val before=applying;applying=true;try{block()}finally{applying=before}}
+        private fun withCheckpoint(frame: DevicePlaybackState): DevicePlaybackState {
+            return playbackWithCheckpoint(frame, checkpoint)
+        }
         fun mirror() {
             if(!connected || !SyncOptions.enabled(SyncOptions.Category.PLAYER))return
             val frame=current?:return
+            val localAt = com.music.spotui.data.preferences.lastPlaybackActivity(context)
+            val newer = shouldRestorePlayback(frame, localAt)
             val songs=queue?.takeIf {queueId==frame.queueId}
             if(frame.owner!=actor) {
-                if(songs!=null)locally {state?.applyDevicePlayback(playbackMirrorQueue(songs,frame),frame)}
-                else frame.track?.let {song->locally {state?.applyDevicePlayback(DevicePlaybackQueue(listOf(song)),frame.copy(index=0))}}
-            } else if(restoreOwner && frame.startToken.isBlank() && !SongPlayer.isResolvingOrPlaying() && state?.devicePlaybackQueue()?.songs.isNullOrEmpty() && songs!=null) {
+                if (frame.updated < localAt || !newer && frame.updated != mirroredAt) return
+                val live = playbackOwnerLive(frame, GoogleDeviceSync.status.value.devices)
+                val visible = playbackResumeFrame(frame, live, now())
+                if(songs!=null)locally {
+                    state?.applyDevicePlayback(playbackMirrorQueue(songs,frame),visible)
+                    if (newer || frame.updated == mirroredAt) {
+                        state?.retainDevicePlayback(visible)
+                        songs.songs.getOrNull(frame.index)?.let { SongPlayer.setRestorePoint(it.url, visible.position) }
+                    }
+                    mirroredAt = frame.updated
+                }
+                else if (newer) frame.track?.let {song->locally {state?.applyDevicePlayback(DevicePlaybackQueue(listOf(song)),visible.copy(index=0))}}
+            } else if(restoreOwner && newer && frame.startToken.isBlank() && !SongPlayer.isResolvingOrPlaying() && songs!=null) {
                 restoreOwner=false
                 val song=songs.songs.getOrNull(frame.index)?:return
                 held=song.url to frame.copy(playing=false)
                 locally {state?.applyDevicePlayback(songs,frame.copy(playing=false))}
+                state?.retainDevicePlayback(frame.copy(playing=false))
+                SongPlayer.setRestorePoint(song.url, frame.position)
             }
         }
         private fun capture():Pair<DevicePlaybackQueue,DevicePlaybackState>? {
@@ -276,6 +338,7 @@ object CloudPlayback {
             if(q.songs.isEmpty())return null
             val index=player.currentQueueIndex().coerceIn(q.songs.indices)
             val selected=q.songs[index].url
+            val persisted = com.music.spotui.data.preferences.loadLastPlayback(context)?.takeIf { it.first.url == selected }
             val prepared=SongPlayer.hasPreparedTrack(q.songs[index])
             val released=current?.takeIf {frame->frame.owner==actor && frame.queueId==queueId &&
                 queue?.songs?.getOrNull(frame.index)?.url==selected && !SongPlayer.isResolvingOrPlaying() && !prepared}
@@ -283,7 +346,8 @@ object CloudPlayback {
             if(checkpoint==null)held=null
             val changing=current?.track?.url?.let {it!=selected}==true
             return q to DevicePlaybackState(actor,android.os.Build.MODEL,current?.epoch?:UUID.randomUUID().toString(),"",index,
-                checkpoint?.position?:if(changing && !prepared)0L else SongPlayer.getCurrentPosition().coerceAtLeast(0),
+                checkpoint?.position?:if (!prepared && persisted != null) persisted.second
+                    else if(changing && !prepared)0L else SongPlayer.getCurrentPosition().coerceAtLeast(0),
                 checkpoint?.duration?:if(!prepared)q.songs[index].durationMs.toLong().coerceAtLeast(0) else SongPlayer.getDuration().coerceAtLeast(0),SongPlayer.isResolvingOrPlaying(),now(),
                 player.shuffle.value,player.repeat.value.name,player.sourceName.value,
                 sleepEnd=SongPlayer.sleepTimerEndAt.takeIf {it>System.currentTimeMillis()}?.plus(offset)?:0L,
@@ -292,12 +356,15 @@ object CloudPlayback {
         private suspend fun uploadQueue(q:DevicePlaybackQueue):String {
             check(!closed && GoogleDeviceSync.canSyncPlayer(actor)){"No hay otro dispositivo disponible."}
             if(lastQueue==q && queueId==lastQueueId && queueId.isNotBlank())return queueId
-            val id=UUID.randomUUID().toString()
-            val blob=withContext(Dispatchers.IO){val value=q.json();assets.discover(value)
-                drive.put("queue:$actor",JSONObject().put("id",id).put("queue",assets.portable(value)),GoogleDeviceSync.driveToken())}
+            val id=SyncTree.digest(q.textJson().toString())
+            if (id == queueId && id in queuePointers) { lastQueue = q; lastQueueId = id; return id }
+            val blob=withContext(Dispatchers.IO){val value=q.textJson();assets.discover(value)
+                drive.put("queue:$actor:$id",JSONObject().put("id",id).put("queue",assets.portable(value)),GoogleDeviceSync.driveToken())}
             currentCoroutineContext().ensureActive()
             check(!closed && GoogleDeviceSync.canSyncPlayer(actor)){"No hay otro dispositivo disponible."}
-            ref("queue").setValue(JSONObject().put("id",id).put("blob",blob).toString()).await()
+            val pointer = JSONObject().put("id",id).put("blob",blob).put("hash", SyncTree.digest(q.textJson().toString()))
+            queuePointers[id] = pointer
+            ref("queue").setValue(pointer.toString()).await()
             lastQueue=q;lastQueueId=id;queue=q;queueId=id
             return id
         }
@@ -321,14 +388,20 @@ object CloudPlayback {
         }
         private suspend fun claim() {
             val (q,frame)=capture()?:return
-            val next=frame.copy(epoch=UUID.randomUUID().toString(),queueId=uploadQueue(q),updated=now())
+            val timestamp = if (SongPlayer.isResolvingOrPlaying()) now() else com.music.spotui.data.preferences.lastPlaybackActivity(context)
+            val id = uploadQueue(q)
+            val next=frame.copy(epoch=UUID.randomUUID().toString(),queueId=id,queuePointer=pointerFor(id),updated=timestamp)
             if(update(current?.epoch,next,claim=true)){lastSignature=playbackWireSignature(next,q.hashCode());if(current==null || current?.owner==actor)current=next;publishStatus();GoogleDeviceSync.requestSync()}
         }
         private suspend fun publishLocal(owner:DevicePlaybackState,force:Boolean=false) {
+            if (!force && !SongPlayer.isResolvingOrPlaying() &&
+                com.music.spotui.data.preferences.lastPlaybackActivity(context) <= owner.updated) return
             val (q,frame)=capture()?:return
             val signature=playbackWireSignature(frame,q.hashCode())
             if(!shouldSendPlayback(owner,frame,lastSignature,signature,force))return
-            val next=frame.copy(epoch=owner.epoch,queueId=uploadQueue(q),updated=now())
+            val timestamp = if (frame.playing || force) now() else com.music.spotui.data.preferences.lastPlaybackActivity(context)
+            val id = uploadQueue(q)
+            val next=frame.copy(epoch=owner.epoch,queueId=id,queuePointer=pointerFor(id),updated=timestamp)
             if(update(owner.epoch,next)){if(current?.epoch==owner.epoch)current=next;lastSignature=signature;publishStatus();GoogleDeviceSync.requestSync()}
         }
         fun route(action:String,position:Long):Boolean {
@@ -355,7 +428,7 @@ object CloudPlayback {
         private fun queueEdit():QueueEdit?=state?.let {QueueEdit(it.devicePlaybackQueue(),it.currentQueueIndex(),it.shuffle.value,it.repeat.value.name,it.sourceName.value)}
         fun queueEdited() {
             if(applying || !GoogleDeviceSync.canSyncPlayer(actor))return
-            if(current?.owner==actor){playbackChanged();return}
+            if(current?.owner==actor){playbackChanged(force=true);return}
             if(remote()==null)return
             queueEdit?.cancel()
             val edit=queueEdit()?:return
@@ -377,7 +450,7 @@ object CloudPlayback {
                     if(!SyncOptions.enabled(SyncOptions.Category.PLAYER))return@runCatching
                     val payload=JSONObject().put("id",UUID.randomUUID().toString()).put("target",owner.owner).put("epoch",owner.epoch)
                         .put("action",action).put("position",position).put("device",target).put("at",now())
-                    if(capture!=null)payload.put("queueBlob",withContext(Dispatchers.IO){val value=capture.json();assets.discover(value);drive.put("command-queue:$actor",JSONObject().put("queue",assets.portable(value)),GoogleDeviceSync.driveToken())})
+                    if(capture!=null)payload.put("queueBlob",withContext(Dispatchers.IO){val value=capture.textJson();assets.discover(value);drive.put("command-queue:$actor",JSONObject().put("queue",assets.portable(value)),GoogleDeviceSync.driveToken())})
                         .put("index",selected).put("shuffle",shuffle).put("repeat",repeat).put("source",source)
                     ref("commands").child(owner.owner).push().setValue(payload.toString()).await()
                 }.onFailure {error->
@@ -462,7 +535,7 @@ object CloudPlayback {
             val id=uploadQueue(q)
             // Pause BEFORE committing ownership; the receiver cannot start until this write arrives.
             locally {SongPlayer.pause();SongPlayer.cancelSleepTimer()}
-            val next=frame.copy(owner=target,name=name,epoch=UUID.randomUUID().toString(),queueId=id,
+            val next=frame.copy(owner=target,name=name,epoch=UUID.randomUUID().toString(),queueId=id,queuePointer=pointerFor(id),
                 updated=now(),startToken=UUID.randomUUID().toString(),from=actor)
             try {
                 check(update(owner.epoch,next)){"La reproducción ha cambiado. Vuelve a seleccionar el dispositivo."}
@@ -518,6 +591,14 @@ object CloudPlayback {
             }
         }
         fun close() {
+            val owner = current
+            val localAt = com.music.spotui.data.preferences.lastPlaybackActivity(context)
+            if (!rulesBlocked && connected && owner?.owner == actor && localAt > owner.updated &&
+                GoogleDeviceSync.status.value.authorized && SyncOptions.enabled(SyncOptions.Category.PLAYER)) {
+                val position = com.music.spotui.data.preferences.loadLastPlayback(context)?.second ?: owner.position
+                ref("checkpoint").setValue(JSONObject().put("epoch", owner.epoch).put("owner", actor)
+                    .put("position", position.coerceAtLeast(0)).put("at", localAt).put("playing", false).toString())
+            }
             closed=true
             listeners.forEach { (reference,listener)->reference.removeEventListener(listener) }
             commandListener?.let {ref("commands").child(actor).removeEventListener(it)}
