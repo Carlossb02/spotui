@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -279,11 +280,10 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                     val msgNotifOn = uiLocalized("Notificaciones activadas")
                     val msgNotifOff = uiLocalized("Notificaciones desactivadas")
 
-                    // Action Control Row (Follow button + Notifications + Queue/Play)
-                    Row(
+                    // Subscription controls stay above the collection playback actions.
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             // Seguir / Siguiendo Capsule Button
@@ -324,7 +324,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                             // Bell Icon Button
                             Box(
                                 modifier = Modifier
-                                    .size(36.dp)
+                                    .size(44.dp)
                                     .clip(CircleShape)
                                     .background(Color(0xFF2A2A30))
                                     .clickable {
@@ -343,35 +343,24 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                             }
                         }
 
-                        // Right action buttons: Add to queue & Big Green Play Button
+                        // Shared playlist controls: downloads and queue left, Play right.
                         if (episodes.isNotEmpty()) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically) {
                                 com.music.spotui.ui.components.CollectionDownloadButton(episodes, uiLocalized("Descargar episodios")) { complete ->
                                     com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollection(context, "show:$showId",
                                         displayShowTitle, resolvedCover.orEmpty(), resolvedPublisher, false, episodes)
                                     if (!complete) SongPlayer.downloadAll(episodes, context)
                                 }
                                 Spacer(Modifier.width(8.dp))
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_queue_add),
-                                    tint = Color.White,
-                                    modifier = Modifier
-                                        .size(24.dp)
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null,
-                                        ) {
-                                            playerViewModel.addAllToQueue(episodes)
-                                            android.widget.Toast.makeText(
-                                                context,
-                                                "${episodes.size} episodio(s) añadidos a la cola",
-                                                android.widget.Toast.LENGTH_SHORT,
-                                            ).show()
-                                        },
-                                    contentDescription = uiLocalized("Añadir episodios a la cola"),
-                                )
-
-                                Spacer(modifier = Modifier.width(16.dp))
+                                com.music.spotui.ui.components.CollectionActionSurface(onClick = {
+                                    playerViewModel.addAllToQueue(episodes)
+                                    android.widget.Toast.makeText(context,
+                                        "${episodes.size} episodio(s) añadidos a la cola", android.widget.Toast.LENGTH_SHORT).show()
+                                }) {
+                                    Icon(painter = painterResource(id = R.drawable.ic_queue_add), tint = Color.White,
+                                        modifier = Modifier.size(24.dp), contentDescription = uiLocalized("Añadir episodios a la cola"))
+                                }
+                                Spacer(modifier = Modifier.weight(1f))
 
                                 // Spotify Big Play Button
                                 Box(

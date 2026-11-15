@@ -140,17 +140,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     }
 
     // Trigger dinámico para refrescar la UI automáticamente cuando una descarga termina
-    var downloadRefreshTrigger by remember { mutableStateOf(0) }
-    DisposableEffect(Unit) {
-        val oldCallback = SongPlayer.onDownloadsChanged
-        SongPlayer.onDownloadsChanged = {
-            oldCallback?.invoke()
-            downloadRefreshTrigger++
-        }
-        onDispose {
-            SongPlayer.onDownloadsChanged = oldCallback
-        }
-    }
+    val downloadRefreshTrigger by com.music.spotui.data.preferences.downloadsVersion.collectAsState()
 
     var playlistAccess by remember(playlistId) {
         mutableStateOf(com.music.spotui.data.api.PlaylistAccessInfo(
@@ -509,7 +499,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(min = if (tabletCollectionLayout) 260.dp else 440.dp)
+                                .heightIn(min = if (tabletCollectionLayout) 260.dp else 360.dp)
                                 .padding(bottom = 8.dp),
                             verticalArrangement = Arrangement.Center,
                         ) {
@@ -672,8 +662,6 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                                 )
                                                 if (!complete) {
                                                     SongPlayer.downloadAll(songs, context)
-                                                    snackbarMessage = "Downloading ${songs.size} tracks…"
-                                                    snackbarVisible = true
                                                 } else {
                                                     snackbarMessage = "Playlist added to offline library"
                                                     snackbarVisible = true

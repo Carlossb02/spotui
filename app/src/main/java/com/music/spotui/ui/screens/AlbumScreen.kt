@@ -398,7 +398,7 @@ fun SumUpAlbumScreen(
             if (!searchReveal.expanded && searchQuery.isBlank()) {
                 Column(
                     modifier = Modifier.fillMaxWidth()
-                        .heightIn(min = if (tabletCollectionLayout) 260.dp else 400.dp)
+                        .heightIn(min = if (tabletCollectionLayout) 260.dp else 360.dp)
                         .padding(bottom = 8.dp),
                     verticalArrangement = Arrangement.Center
                 ) {

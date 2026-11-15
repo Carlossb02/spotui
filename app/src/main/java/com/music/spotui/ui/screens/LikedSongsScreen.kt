@@ -269,10 +269,10 @@ fun LikedSongsScreen(navController: NavController) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(min = 440.dp),
+                                .heightIn(min = 360.dp),
                             verticalArrangement = Arrangement.Center,
                         ) {
-                            Spacer(modifier = Modifier.height(24.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
 
                             Box(
                                 modifier = Modifier
@@ -339,8 +339,6 @@ fun LikedSongsScreen(navController: NavController) {
                                             com.music.spotui.ui.components.CollectionDownloadButton(songs, uiLocalized("Download liked songs")) { complete ->
                                                 if (!complete) {
                                                     SongPlayer.downloadAll(songs, context)
-                                                    snackbarMessage = "Downloading ${songs.size} tracks…"
-                                                    snackbarVisible = true
                                                 }
                                             }
                                             com.music.spotui.ui.components.CollectionSortButton { showSortSheet = true }

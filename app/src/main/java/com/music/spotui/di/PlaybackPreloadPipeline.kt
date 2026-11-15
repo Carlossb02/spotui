@@ -9,12 +9,12 @@ internal class PlaybackPreloadPipeline {
     private val resolutions = Semaphore(1)
     private val writes = Semaphore(1)
 
-    suspend fun <T : Any> prepare(resolve: suspend () -> T?, completeCache: (suspend (T) -> Unit)? = null, cache: suspend (T) -> Unit) {
+    suspend fun <T : Any> prepare(resolve: suspend () -> T?, completeCache: (suspend (T) -> Unit)? = null, beforeCompleteCache: suspend () -> Boolean = { true }, cache: suspend (T) -> Unit) {
         val value = resolutions.withPermit { resolve() } ?: return
         writes.withPermit { cache(value) }
         if (completeCache != null) {
             delay(1_500)
-            writes.withPermit { completeCache(value) }
+            if (beforeCompleteCache()) writes.withPermit { completeCache(value) }
         }
     }
 }

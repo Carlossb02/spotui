@@ -943,16 +943,9 @@ object SongPlayer {
         // Keep the target's in-flight preload so the tap can join it. Stop unrelated
         // speculative work before starting the foreground request.
         prefetchJobs.entries.filter { it.key != song }.forEach { it.value.cancel() }
-        val queue = boundState?.queue?.value.orEmpty()
-        // Neighbours are prefetched only AFTER the requested song has been handed to the
-        // player, so they never compete with it for network/CPU while it is being resolved.
-        val upcomingSongs: List<String> = if (queue.isNotEmpty()) {
-            val cur = boundState?.currentQueueIndex() ?: -1
-            com.music.spotui.audio.QueuePreloadPolicy.next(queue.map {it.url},cur,com.music.spotui.data.preferences.getPreloadSongCount(appContext))
-        } else emptyList()
-        val startPrefetch: () -> Unit = {
-            if (upcomingSongs.isNotEmpty()) prefetchList(upcomingSongs, appContext, com.music.spotui.data.preferences.getPreloadSongCount(appContext))
-        }
+        // Read the live queue after preparation: a captured window can be stale
+        // if the user adds or reorders tracks while the current stream resolves.
+        val startPrefetch: () -> Unit = { refreshQueuePreload(appContext) }
         val resolvedMediaId = mediaId ?: boundState?.queue?.value?.firstOrNull { it.url == song }?.let { "song/${it.id}" }
         ?: boundState?.songId?.value?.let { if (it != 0) "song/$it" else null }
         currentMediaId = resolvedMediaId
@@ -1315,7 +1308,7 @@ object SongPlayer {
                     // Source resolution can consume the same scarce YouTube connections
                     // as the first audio bytes. Do not even start it until the
                     // foreground track is genuinely READY (not merely queued).
-                    if (!awaitCurrentPlaybackReady()) return@prepare null
+                    if (!awaitCurrentPlaybackReady(headroomMs = 0)) return@prepare null
                     acquireWakeLock(appContext, "spotui:prefetch", 30_000L)
                     try {
                         withTimeoutOrNull(45_000L) {
@@ -1326,12 +1319,14 @@ object SongPlayer {
                     } finally {
                         releaseWakeLock("spotui:prefetch")
                     }
+                }, beforeCompleteCache = {
+                    song != currentRequest && (!listed || song in prefetchTargets) && awaitCurrentPlaybackReady(headroomMs = 10_000)
                 }, completeCache = { url ->
-                    if (song != currentRequest && (!listed || song in prefetchTargets) && awaitCurrentPlaybackReady()) {
+                    if (song != currentRequest && (!listed || song in prefetchTargets)) {
                         cacheIntro(url, appContext, song, position = 256 * 1024L)
                     }
                 }, cache = { url ->
-                    if ((!listed || song in prefetchTargets) && awaitCurrentPlaybackReady()) {
+                    if ((!listed || song in prefetchTargets) && awaitCurrentPlaybackReady(headroomMs = 2_000)) {
                         cacheIntro(url, appContext, song, byteLimit = 256 * 1024L)
                     }
                 })
@@ -1345,7 +1340,7 @@ object SongPlayer {
     }
 
     /** Don't start heavy preloading while the current song is still buffering its first bytes. */
-    private suspend fun awaitCurrentPlaybackReady(timeoutMs: Long = 60_000L): Boolean =
+    private suspend fun awaitCurrentPlaybackReady(timeoutMs: Long = 60_000L, headroomMs: Long = 15_000L): Boolean =
         withTimeoutOrNull(timeoutMs) {
             while (true) {
                 val ready = withContext(Dispatchers.Main) {
@@ -1357,8 +1352,8 @@ object SongPlayer {
                         state != androidx.media3.common.Player.STATE_IDLE && state != androidx.media3.common.Player.STATE_ENDED
                     com.music.spotui.audio.PlaybackLoadingPolicy.canPreload(
                         playbackResolving, hasActiveMedia, state == androidx.media3.common.Player.STATE_READY
-                    ) && (p==null || p.bufferedPosition-p.currentPosition>=15_000L ||
-                        p.duration>0 && p.duration-p.currentPosition<=15_000L)
+                    ) && (p==null || p.bufferedPosition-p.currentPosition>=headroomMs ||
+                        p.duration>0 && p.duration-p.currentPosition<=headroomMs)
                 }
                 if (ready) return@withTimeoutOrNull true
                 delay(200L)
@@ -1948,7 +1943,7 @@ object SongPlayer {
     private val downloadingSongs =
         java.util.concurrent.ConcurrentHashMap<String, com.music.spotui.data.entity.SongsModel>()
 
-    enum class DownloadStage { QUEUED, DOWNLOADING, LYRICS }
+    enum class DownloadStage { QUEUED, DOWNLOADING, LYRICS, PAUSED }
     private val downloadLyricsSlots=Semaphore(2)
     fun completeDownloadedLyrics(context:Context) {
         scope.launch {com.music.spotui.data.preferences.getDownloadedSongs(context).forEach {song->
@@ -1978,13 +1973,73 @@ object SongPlayer {
     /** Includes both active transfers and songs waiting for the two download slots. */
     val downloadQueue = _downloadQueue.asStateFlow()
 
+    private val downloadGate = DownloadTransferGate(2)
+    val pausedDownloads = downloadGate.paused
+    private val downloadBatches = HashMap<Set<String>, Job>()
+    private val downloadStartupChecks = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private var downloadPublication: Job? = null
+    private fun recording(song: com.music.spotui.data.entity.SongsModel) =
+        com.music.spotui.data.preferences.downloadRecordingKey(song.url, song.spotifyTrackId)
+
+    private fun publishDownloads() = synchronized(downloadLock) {
+        if (downloadPublication?.isActive != true) {
+            downloadPublication = scope.launch {
+                delay(250)
+                synchronized(downloadLock) { _downloadQueue.value = queuedDownloads.values.toList(); downloadPublication = null }
+            }
+        }
+    }
+
+    fun pauseDownloads(songs: List<com.music.spotui.data.entity.SongsModel>, pause: Boolean) {
+        val keys = songs.map(::recording).toSet()
+        synchronized(downloadLock) {
+            downloadGate.pause(keys, pause)
+            queuedDownloads.replaceAll { _, entry ->
+                if (recording(entry.song) in keys) entry.copy(stage = if (pause) DownloadStage.PAUSED else DownloadStage.QUEUED) else entry
+            }
+            _downloadQueue.value = queuedDownloads.values.toList()
+        }
+    }
+
+    private suspend fun awaitDownloadSlot(query: String) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - (downloadStartupChecks[query] ?: 0L) >= 250L) {
+            awaitAudioStartup()
+            downloadStartupChecks[query] = now
+        }
+        val key = downloadingSongs[query]?.let(::recording) ?: query
+        downloadGate.await(query, key)
+        updateDownloadEntry(query) { if (it.stage == DownloadStage.QUEUED || it.stage == DownloadStage.PAUSED) it.copy(stage = DownloadStage.DOWNLOADING) else it }
+    }
+
+    fun manageCollectionDownloads(songs: List<com.music.spotui.data.entity.SongsModel>, context: Context, delete: Boolean) {
+        val keys = songs.map(::recording).toSet()
+        scope.launch {
+            val batches = synchronized(downloadLock) { downloadBatches.filterKeys { it == keys }.values.toList() }
+            batches.forEach { it.cancel() }; batches.forEach { it.join() }
+            val tasks = synchronized(downloadLock) { queuedDownloads.filterValues { recording(it.song) in keys }.keys.mapNotNull { q ->
+                activeDownloadConnections[q]?.disconnect()
+                downloadJobs[q]?.also { it.cancel() }
+            } }
+            tasks.forEach { it.join() }
+            pauseDownloads(songs, false)
+            if (delete) {
+                com.music.spotui.data.preferences.getDownloadedEntries(context).filter { recording(it.first) in keys }.forEach {
+                    com.music.spotui.data.preferences.removeDownload(context, it.first.id.toString(), notify = false)
+                }
+                com.music.spotui.data.preferences.notifyDownloadsChanged()
+                com.music.spotui.util.BackupHelper.scheduleAutoBackup(context)
+            }
+        }
+    }
+
     private fun updateDownloadEntry(query: String, transform: (DownloadQueueEntry) -> DownloadQueueEntry) {
         synchronized(downloadLock) {
             val existing = queuedDownloads[query] ?: return
             val next = transform(existing)
             if (next != existing) {
                 queuedDownloads[query] = next
-                _downloadQueue.value = queuedDownloads.values.toList()
+                publishDownloads()
             }
         }
     }
@@ -2026,12 +2081,12 @@ object SongPlayer {
         try {
             java.io.BufferedOutputStream(tmpFile.outputStream()).use { output ->
                 outer@ while (true) {
-                    currentCoroutineContext().ensureActive()
+                    awaitDownloadSlot(query)
                     val end = if (total > 0) minOf(position + chunk - 1, total - 1) else position + chunk - 1
                     var attempt = 0
                     var fullBody = false
                     while (true) {
-                        currentCoroutineContext().ensureActive()
+                        awaitDownloadSlot(query)
                         attempt++
                         val conn = openDownloadConn(url)
                         activeDownloadConnections[query] = conn
@@ -2050,8 +2105,17 @@ object SongPlayer {
                             fullBody = code == 200
                             conn.inputStream.use { input ->
                                 val buf = ByteArray(64 * 1024)
+                                // A server may ignore Range after reconnecting an idle paused stream.
+                                // Consume the already saved prefix rather than appending it twice.
+                                var skip = if (code == 200) position else 0L
+                                while (skip > 0) {
+                                    awaitDownloadSlot(query)
+                                    val read = input.read(buf, 0, minOf(skip, buf.size.toLong()).toInt())
+                                    if (read < 0) { lastDownloadError = "Incomplete stream on resume"; return false }
+                                    skip -= read
+                                }
                                 while (true) {
-                                    currentCoroutineContext().ensureActive()
+                                    awaitDownloadSlot(query)
                                     val r = input.read(buf)
                                     currentCoroutineContext().ensureActive()
                                     if (r < 0) break
@@ -2062,7 +2126,6 @@ object SongPlayer {
                                         if (downloadProgress[query] != pct) {
                                             downloadProgress[query] = pct
                                             updateDownloadEntry(query) { it.copy(progress = pct) }
-                                            onDownloadsChanged?.invoke()
                                         }
                                     }
                                 }
@@ -2087,7 +2150,7 @@ object SongPlayer {
                     if (total < 0) break@outer
                 }
             }
-            currentCoroutineContext().ensureActive()
+            awaitDownloadSlot(query)
             downloadProgress[query] = 100
             updateDownloadEntry(query) { it.copy(progress = 100) }
             return total <= 0 || position >= total
@@ -2100,13 +2163,19 @@ object SongPlayer {
         }
     }
 
-    private val downloadSemaphore = Semaphore(2)
 
     fun downloadAll(songs: List<com.music.spotui.data.entity.SongsModel>, context: Context) {
         val appContext = context.applicationContext
-        // Register every track immediately, before waiting on the semaphore.
-        // This makes the entire playlist's download queue visible and cancellable.
-        songs.forEach { enqueueDownload(it, appContext) }
+        val keys = songs.map(::recording).toSet()
+        synchronized(downloadLock) {
+            if (downloadBatches[keys]?.isActive == true) return
+            val batch = scope.launch(start = CoroutineStart.LAZY) {
+                try { songs.forEach { currentCoroutineContext().ensureActive(); enqueueDownload(it, appContext) } }
+                finally { synchronized(downloadLock) { downloadBatches.remove(keys) } }
+            }
+            downloadBatches[keys] = batch
+            batch.start()
+        }
     }
 
     private fun enqueueDownload(
@@ -2128,17 +2197,14 @@ object SongPlayer {
             downloadingSongs[query] = song
             downloadProgress[query] = 0
             queuedDownloads[query] = DownloadQueueEntry(song, 0, DownloadStage.QUEUED)
-            _downloadQueue.value = queuedDownloads.values.toList()
+            publishDownloads()
 
             val job = scope.launch(start = CoroutineStart.LAZY) {
                 var ok = false
                 var cancelled = false
                 try {
-                    downloadSemaphore.withPermit {
-                        currentCoroutineContext().ensureActive()
-                        updateDownloadEntry(query) { it.copy(stage = DownloadStage.DOWNLOADING) }
-                        ok = downloadSongSuspend(song, appContext)
-                    }
+                    awaitDownloadSlot(query)
+                    ok = downloadSongSuspend(song, appContext)
                 } catch (e: CancellationException) {
                     cancelled = true
                     Log.d(TAG, "Download cancelled: ${song.title}")
@@ -2146,6 +2212,8 @@ object SongPlayer {
                     lastDownloadError = e.message ?: "Unexpected download error"
                     Log.e(TAG, "Download failed: ${song.title}", e)
                 } finally {
+                    downloadGate.release(query)
+                    downloadStartupChecks.remove(query)
                     activeDownloadConnections.remove(query)?.disconnect()
                     downloading.remove(query)
                     downloadingSongs.remove(query)
@@ -2153,7 +2221,7 @@ object SongPlayer {
                     synchronized(downloadLock) {
                         downloadJobs.remove(query)
                         queuedDownloads.remove(query)
-                        _downloadQueue.value = queuedDownloads.values.toList()
+                        publishDownloads()
                     }
                     onDownloadsChanged?.invoke()
                     withContext(NonCancellable + Dispatchers.Main) {
@@ -2171,7 +2239,6 @@ object SongPlayer {
             downloadJobs[query] = job
             job.start()
         }
-        onDownloadsChanged?.invoke()
     }
 
     fun allDownloaded(
@@ -2226,7 +2293,7 @@ object SongPlayer {
         context: Context,
         onComplete: (Boolean) -> Unit = {},
     ) {
-        enqueueDownload(song, context.applicationContext, onComplete)
+        scope.launch { enqueueDownload(song, context.applicationContext, onComplete) }
     }
 
     private suspend fun downloadToFile(
