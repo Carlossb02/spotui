@@ -557,7 +557,7 @@ private fun PopularTrackRow(
                     .padding(8.dp, 0.dp, 12.dp, 0.dp)
                     .size(48.dp)
                     .clip(RoundedCornerShape(4.dp)),
-                model = song.coverUri,
+                model = com.music.spotui.ui.components.rememberSongArtwork(song),
                 contentScale = ContentScale.Crop,
                 failure = placeholder(R.drawable.placeholder),
                 loading = placeholder(R.drawable.placeholder),
@@ -568,7 +568,7 @@ private fun PopularTrackRow(
                     Text(text = song.title, color = titleColor, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
                 }
                 Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                if(song.explicit)com.music.spotui.ui.components.ExplicitBadge()
+                com.music.spotui.ui.components.SongExplicitBadge(song)
                 item.playcount?.let {
                     Text(text = grouped(it), color = Color.Gray, fontSize = 12.sp, maxLines = 1)
                 } ?: Text(text = song.singer, color = Color.Gray, fontSize = 12.sp, maxLines = 1)

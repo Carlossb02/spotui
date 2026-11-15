@@ -720,7 +720,7 @@ fun SearchSongRow(
                 } else {
                     GlideImage(
                         modifier = Modifier.padding(end = 10.dp).size(48.dp).clip(RoundedCornerShape(6.dp)),
-                        model = song.coverUri, contentScale = ContentScale.Crop,
+                        model = com.music.spotui.ui.components.rememberSongArtwork(song), contentScale = ContentScale.Crop,
                         failure = placeholder(R.drawable.placeholder),
                         loading = placeholder(R.drawable.placeholder),
                         contentDescription = ""
@@ -739,7 +739,7 @@ fun SearchSongRow(
                     Row(verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
-                        if (song.explicit) com.music.spotui.ui.components.ExplicitBadge()
+                        com.music.spotui.ui.components.SongExplicitBadge(song)
                         Text(
                             text = "Song • ${song.singer}",
                             color = Color.Gray,

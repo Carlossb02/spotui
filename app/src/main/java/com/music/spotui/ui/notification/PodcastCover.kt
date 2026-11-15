@@ -11,7 +11,7 @@ object PodcastCover {
 
     /** Id-scoped file outside cacheDir, survives Settings > Clear stream cache. */
     fun preferredUri(context: Context, song: SongsModel): String {
-        if (!isEpisode(song)) return song.coverUri
+        if (!isEpisode(song)) return com.music.spotui.data.api.ResolvedSongArtwork.preferred(context,song)
         val file = File(File(context.filesDir, "downloads"), "${song.id}_cover.jpg")
         return if (file.isFile && file.length() > 0L) Uri.fromFile(file).toString()
         else song.coverUri

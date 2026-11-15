@@ -341,7 +341,7 @@ fun DownloadsScreen(navController: NavController) {
                             modifier = Modifier
                                 .size(48.dp)
                                 .clip(RoundedCornerShape(4.dp)),
-                            model = song.coverUri,
+                            model = com.music.spotui.ui.components.rememberSongArtwork(song),
                             failure = placeholder(R.drawable.placeholder),
                             contentScale = ContentScale.Crop,
                             contentDescription = "",
@@ -372,7 +372,7 @@ fun DownloadsScreen(navController: NavController) {
                                 )
                             }
                             Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                                if(song.explicit)com.music.spotui.ui.components.ExplicitBadge()
+                                com.music.spotui.ui.components.SongExplicitBadge(song)
                                 Text(song.singer,color=Color.Gray,fontSize=12.sp,maxLines=1)
                             }
                         }
@@ -423,13 +423,13 @@ fun DownloadsScreen(navController: NavController) {
                     ) {
                         GlideImage(
                             modifier = Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)),
-                            model = song.coverUri, failure = placeholder(R.drawable.placeholder),
+                            model = com.music.spotui.ui.components.rememberSongArtwork(song), failure = placeholder(R.drawable.placeholder),
                             contentScale = ContentScale.Crop, contentDescription = "",
                         )
                         Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
                             Text(song.title, color = Color.White, fontSize = 14.sp, maxLines = 1)
                             Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                                if(song.explicit)com.music.spotui.ui.components.ExplicitBadge()
+                                com.music.spotui.ui.components.SongExplicitBadge(song)
                                 Text(song.singer, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
                             }
                         }
@@ -503,7 +503,7 @@ fun DownloadsScreen(navController: NavController) {
                                     modifier = Modifier
                                         .size(48.dp)
                                         .clip(RoundedCornerShape(4.dp)),
-                                    model = song.coverUri,
+                                    model = com.music.spotui.ui.components.rememberSongArtwork(song),
                                     failure = placeholder(R.drawable.placeholder),
                                     contentScale = ContentScale.Crop,
                                     contentDescription = ""
@@ -525,7 +525,7 @@ fun DownloadsScreen(navController: NavController) {
                                     Row(verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
-                                        if (song.explicit) com.music.spotui.ui.components.ExplicitBadge()
+                                        com.music.spotui.ui.components.SongExplicitBadge(song)
                                         Text(
                                             text = song.singer,
                                             color = Color.Gray,

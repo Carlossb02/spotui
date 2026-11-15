@@ -1187,7 +1187,8 @@ object SongPlayer {
         )
         val metadata = metadataBuilder.build()
         val query = songQuery.ifBlank { currentRequest }
-        val spotifyId = trackIdRegistry[query] ?: spotifyTrackIdForPlayback(query)
+        val spotifyId = (trackIdRegistry[query] ?: spotifyTrackIdForPlayback(query))
+            ?.takeIf {it.matches(Regex("[A-Za-z0-9]{22}"))}
         val stableKey = com.music.spotui.audio.LosslessCacheKeyFactory.buildCacheKey(spotifyId, streamUrl)
 
         return MediaItem.Builder()
@@ -1497,7 +1498,7 @@ object SongPlayer {
             }
             return playback.streamUrl
         }
-        var expectedTier = "${quality.name}:audio-v4-content-rating:${explicitRegistry[song] ?: "unknown"}"
+        var expectedTier = "${quality.name}:audio-v5-uncensored:${explicitRegistry[song] ?: "unknown"}"
 
         val meta = metadataRegistry[song]
         val matchSong = boundState?.queue?.value?.firstOrNull { it.url == song }
@@ -1582,6 +1583,7 @@ object SongPlayer {
                         boundState?.updateResolveDetailNote(note)
                         updateResolveStatus(false)
                     }
+                    StreamSelections.local(appContext,song)
                     alt.value
                 }
                 alt.isYouTube -> {
@@ -1594,6 +1596,7 @@ object SongPlayer {
                         if (forPlayback) updateResolveStatus(false)
                         return null
                     }
+                    StreamSelections.resolved(appContext,song,alt.value,"Manual")
                     val codec = playback.format.mimeType
                         .substringAfter("codecs=\"", "").substringBefore('"').substringBefore('.')
                         .uppercase()
@@ -1629,12 +1632,26 @@ object SongPlayer {
             updateResolveStatus(true, "Checking cache...")
         }
         val networkAvailable = isNetworkAvailable(appContext)
+        if(networkAvailable && flacSpotifyId!=null) {
+            val known=com.music.spotui.data.api.ExplicitContentStore.known(appContext,flacSpotifyId)
+            val rating=when {
+                explicitRegistry[song]==true -> true
+                known!=null -> known
+                !hasRecentVerifiedMetadata(song) -> com.music.spotui.data.api.ExplicitContentStore.ensure(appContext,flacSpotifyId)
+                else -> null
+            }
+            if(rating!=null) {
+                explicitRegistry[song]=rating
+                withContext(Dispatchers.Main) {boundState?.updateContentRating(song,rating)}
+            }
+        }
         // Older stored SongsModel records defaulted every GQL track to false.
         // Verify those snapshots before reusing either URL or candidate caches.
         if(networkAvailable && flacSpotifyId!=null && !hasRecentVerifiedMetadata(song)) {
             ensureSpotifyMatchMetadata(song)
-            expectedTier="${quality.name}:audio-v4-content-rating:${explicitRegistry[song] ?: "unknown"}"
+            expectedTier="${quality.name}:audio-v5-uncensored:${explicitRegistry[song] ?: "unknown"}"
         }
+        expectedTier="${quality.name}:audio-v5-uncensored:${explicitRegistry[song] ?: "unknown"}"
         // A fast cache hit is useful only when the CDN signature is still valid.
         // Without this guard, the player could try a stale URL, hit 403 and spend
         // much longer recovering than a fresh resolution would take.
@@ -2687,8 +2704,9 @@ object SongPlayer {
         )
         metadataRegistry[query] = repaired
         trackIdRegistry[query] = spotifyId
-        explicitRegistry[query] = track.explicit
-        withContext(Dispatchers.Main) {boundState?.updateContentRating(query,track.explicit)}
+        val repairedRating=appCtx?.let {com.music.spotui.data.api.ExplicitContentStore.known(it,spotifyId)} ?: track.explicit
+        explicitRegistry[query] = repairedRating
+        withContext(Dispatchers.Main) {boundState?.updateContentRating(query,repairedRating)}
         if (verifiedMatchMetadata.size > 200) {
             val now = android.os.SystemClock.elapsedRealtime()
             verifiedMatchMetadata.entries.removeIf {
@@ -2736,7 +2754,25 @@ object SongPlayer {
     }
 
     private fun videoCandidateCacheKey(query:String,filter:YouTube.SearchFilter)=
-        "$query|${filter.value}|MATCH_V14:${explicitRegistry[query] ?: "unknown"}"
+        "$query|${filter.value}|MATCH_V15:${explicitRegistry[query] ?: "unknown"}"
+
+    internal fun applyResolvedArtwork(query:String,url:String) {
+        onPlayerThread {boundState?.updateResolvedArtwork(query,url)}
+    }
+    internal suspend fun artworkVideoId(song:com.music.spotui.data.entity.SongsModel,context:Context):String? {
+        registerAlternativeKeys(listOf(song.url to com.music.spotui.data.preferences.alternativeStreamKey(song)))
+        alternativeStreamForPlayback(song.url,context)?.let {return if(it.isYouTube)it.value else null}
+        StreamSelections.get(context,song.url)?.videoId?.takeIf {it.isNotBlank()}?.let {return it}
+        if(song.url.startsWith("yt_local:"))return song.url.removePrefix("yt_local:")
+        videoIdFromYouTubeLink(song.url)?.let {return it}
+        if(song.url.startsWith("content://") || song.url.startsWith("file://") || song.url.startsWith("/"))return null
+        registerLossless(listOf(song.url to song.spotifyTrackId))
+        registerDuration(listOf(song.url to song.durationMs))
+        val rating=com.music.spotui.data.api.ExplicitContentStore.known(context,com.music.spotui.data.api.ratingSpotifyId(song)) ?: song.explicit
+        registerExplicit(listOf(song.url to rating))
+        registerMetadata(listOf(song.url to TrackMatchMetadata(song.title,song.singer,song.album)))
+        return resolveVideoCandidates(song.url,forPlayback=false).firstOrNull()
+    }
 
     private suspend fun resolveVideoCandidates(
         query: String,
@@ -3142,6 +3178,10 @@ object SongPlayer {
                             candRecordingFlags == targetRecordingFlags && editSubtypeEq,
                             albumEq, strongAlbumEq, explicitMatch && wantExplicit != null, durDiff,
                             isOfficialMusicType, isUgcUpload)) exactCandidates.add(item.id)
+                    StreamSelections.candidate(query,StreamSelectionInfo(item.id,item.title,item.artists.joinToString {it.name},
+                        score,stage,item.explicit,
+                        "Title=$titleEq; artist=$artistOk; album=$albumEq; recording flags=$recordingFlagsEq; " +
+                            "duration=${itemDur}s (target=${wantSec}s, difference=${durDiff}s); edition rank=$editionRank; Spotify explicit=$wantExplicit"))
                     scored.add(MatchCandidate(item, stage, score, index,editionRank))
                     if (VERBOSE_MATCH_DIAGNOSTICS) logResolution("  -> '${item.title}' (${itemDur}s) -> stage $stage, score $score")
                 }
@@ -3274,7 +3314,7 @@ object SongPlayer {
         suspend fun tryIds(ids: List<String>, skipValidation: Boolean = false): YTPlayerUtils.PlaybackData? {
             val uniqueIds = ids.filter { it.isNotBlank() }.distinct().filter { tried.add(it) }
             if (uniqueIds.isEmpty()) return null
-            return orderedFirstNotNull(uniqueIds, parallelism = 2) { videoId, index ->
+            val resolved=orderedFirstNotNull(uniqueIds, parallelism = 2) { videoId, index ->
                         if (forPlayback) {
                             updateResolveStatus(true, "Resolving YouTube stream ${index + 1}/${uniqueIds.size}...")
                         }
@@ -3287,7 +3327,7 @@ object SongPlayer {
                             ).onFailure { error ->
                                 lastYtFailureReason = error.message ?: "Stream failed"
                                 Log.w(TAG, "stream failed for $videoId (${error.message}) — trying next candidate for: ${searchTextForPlayback(query)}")
-                            }.getOrNull()
+                            }.getOrNull()?.let {videoId to it}
                         } catch (cancelled: kotlinx.coroutines.CancellationException) {
                             throw cancelled
                         } catch (error: Exception) {
@@ -3295,7 +3335,10 @@ object SongPlayer {
                             Log.w(TAG, "stream failed for $videoId (${error.message}) — trying next candidate for: ${searchTextForPlayback(query)}", error)
                             null
                         }
-            }
+            } ?: return null
+            StreamSelections.resolved(appContext,query,resolved.first,
+                if(skipValidation)"Exact YouTube link / episode" else "Automatic")
+            return resolved.second
         }
         val isPodcast = query.startsWith("yt_ep:")
         val epVideoId = if (isPodcast) {

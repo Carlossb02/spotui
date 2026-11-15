@@ -72,6 +72,13 @@ class CurrentSongState @Inject constructor() {
         _queue.value=queueOrder.songs
         persistQueue()
     }
+    internal fun updateResolvedArtwork(query:String,url:String) {
+        if(_queue.value.none {it.url==query && it.coverUri.isBlank()})return
+        queueOrder.reconcile(_queue.value.map {if(it.url==query && it.coverUri.isBlank())it.copy(coverUri=url) else it})
+        _queue.value=queueOrder.songs
+        if(_songUrl.value==query || _queue.value.any {it.url==query && it.id==_songId.value})_coverUri.value=url
+        persistQueue()
+    }
 
     fun currentQueueIndex(): Int {
         val q = _queue.value

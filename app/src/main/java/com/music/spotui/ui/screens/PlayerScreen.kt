@@ -713,7 +713,9 @@ fun PlayerScreen(
         val configuration = androidx.compose.ui.platform.LocalConfiguration.current
         val isLandscape = !embedded && configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
+        val playerScroll=androidx.compose.foundation.lazy.rememberLazyListState()
         androidx.compose.foundation.lazy.LazyColumn(
+            state=playerScroll,
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -759,7 +761,7 @@ fun PlayerScreen(
                                         .clip(RoundedCornerShape(10.dp))
                                         .alpha(if (canvasUrl != null) 0f else 1f),
                                     model = if (!artworkReady) null else queueSongs.firstOrNull { it.id == songId }?.let {
-                                        com.music.spotui.ui.notification.PodcastCover.preferredUri(context, it)
+                                        com.music.spotui.ui.components.rememberSongArtwork(it)
                                     } ?: songCoverUri,
                                     contentScale = ContentScale.Crop,
                                     contentDescription = ""
@@ -785,7 +787,7 @@ fun PlayerScreen(
                                                 .clip(RoundedCornerShape(10.dp))
                                                 .alpha(if (canvasUrl != null) 0f else 1f),
                                             model = if (!artworkReady) null else pageSong?.let {
-                                                com.music.spotui.ui.notification.PodcastCover.preferredUri(context, it)
+                                                com.music.spotui.ui.components.rememberSongArtwork(it)
                                             } ?: songCoverUri,
                                             contentScale = ContentScale.Crop,
                                             contentDescription = ""
@@ -965,6 +967,7 @@ fun PlayerScreen(
                         onExpand = { showLyrics = true },
                         trackId = lyricsTrack?.spotifyTrackId.orEmpty(),
                         trackDurationSec = (lyricsTrack?.durationMs ?: 0) / 1000,
+                        suspendFollowing=playerScroll.isScrollInProgress,
                     )
                 }
             }

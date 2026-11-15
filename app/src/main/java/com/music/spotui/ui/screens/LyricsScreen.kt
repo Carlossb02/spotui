@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -331,11 +332,23 @@ fun LyricsScreen(
                     val lyrics = s.lyrics
                     val activeIndex = activeIndexFor(lyrics, positionMs)
                     val listState = rememberLazyListState()
+                    val dragging by listState.interactionSource.collectIsDraggedAsState()
+                    var resumeFollowingAt by remember(lyrics) {mutableStateOf(0L)}
+                    LaunchedEffect(dragging) {
+                        if(dragging || resumeFollowingAt>0L)
+                            resumeFollowingAt=android.os.SystemClock.elapsedRealtime()+5000L
+                    }
                     val translated = vm.translatedLines
                     val showTranslations = vm.translationsVisible
-                    LaunchedEffect(activeIndex) {
-                        if (activeIndex >= 0) {
-                            listState.animateScrollToItem(activeIndex.coerceAtLeast(0), scrollOffset = -260)
+                    val density=androidx.compose.ui.platform.LocalDensity.current
+                    LaunchedEffect(activeIndex,dragging,resumeFollowingAt) {
+                        if (lyrics.synced && activeIndex >= 0 && !dragging) {
+                            val remaining=resumeFollowingAt-android.os.SystemClock.elapsedRealtime()
+                            if(remaining>0)kotlinx.coroutines.delay(remaining)
+                            // Let a manual fling finish before resuming; line ticks must
+                            // not cancel the user's scroll with a competing animation.
+                            while(listState.isScrollInProgress)kotlinx.coroutines.delay(50)
+                            listState.animateScrollToItem(activeIndex, scrollOffset = with(density){-100.dp.roundToPx()})
                         }
                     }
                     LazyColumn(
@@ -350,7 +363,7 @@ fun LyricsScreen(
                                 isActive = index == activeIndex,
                                 synced = lyrics.synced,
                                 fontSize = 24.sp,
-                                onTap = if (lyrics.synced) ({ jumpTo(line.timeMs) }) else null,
+                                onTap = if (lyrics.synced) ({ resumeFollowingAt=0; jumpTo(line.timeMs) }) else null,
                                 translatedText = if (showTranslations && translated != null && index < translated.size) translated[index].translatedText else null,
                             )
                         }
@@ -443,6 +456,7 @@ fun InlineLyrics(
     onExpand: () -> Unit,
     trackId: String = "",
     trackDurationSec: Int = 0,
+    suspendFollowing:Boolean=false,
 ) {
     val vm: LyricsViewModel = hiltViewModel()
     // Never use the previous decoder's duration while a new track is resolving.
@@ -502,9 +516,13 @@ fun InlineLyrics(
                 val activeIndex = activeIndexFor(lyrics, positionMs)
                 // Preview window: keep the active synced line in view; plain
                 // lyrics just show the first few lines.
-                val windowStart =
+                val desiredWindow =
                     if (lyrics.synced) activeIndex.coerceIn(0, (lyrics.lines.size - PREVIEW_LINE_COUNT).coerceAtLeast(0))
                     else 0
+                var windowStart by remember(requestKey){mutableStateOf(desiredWindow)}
+                LaunchedEffect(desiredWindow,suspendFollowing) {
+                    if(!suspendFollowing){kotlinx.coroutines.delay(150);windowStart=desiredWindow}
+                }
                 val translated = vm.translatedLines
                 val showTranslations = vm.translationsVisible
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
