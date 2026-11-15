@@ -55,7 +55,10 @@ object LyricsApi {
     }
 
     fun prefetch(title: String, artist: String, album: String, durationSec: Int = 0, trackId: String = "") {
-        if (title.isNotBlank()) prefetchScope.launch { fetch(title, artist, album, durationSec, trackId) }
+        if (title.isNotBlank()) prefetchScope.launch {
+            com.music.spotui.di.SongPlayer.awaitAudioStartup()
+            fetch(title, artist, album, durationSec, trackId)
+        }
     }
 
     suspend fun fetch(title: String, artist: String, album: String, durationSec: Int, trackId: String = ""): Lyrics? = withContext(Dispatchers.IO) {

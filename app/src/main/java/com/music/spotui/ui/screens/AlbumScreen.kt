@@ -431,6 +431,9 @@ fun SumUpAlbumScreen(
                         }
                     )
                     Spacer(modifier = Modifier.height(7.dp))
+                    Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if(albumSongs.any { it.explicit })com.music.spotui.ui.components.ExplicitBadge()
                     Text(
                         text = listOfNotNull(
                             releaseKind,
@@ -438,8 +441,8 @@ fun SumUpAlbumScreen(
                             totalDurationSec.takeIf { it > 0 }?.let { "${it / 60} min" },
                         ).joinToString(" • "),
                         color = Color(0xFFB3B3B3), fontSize = 12.sp,
-                        modifier = Modifier.padding(horizontal = 20.dp)
                     )
+                    }
                     Spacer(modifier = Modifier.height(12.dp))
                     Row(
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -657,10 +660,6 @@ fun SumUpAlbumScreen(
                                     )
                                     Column {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                            if (targetSong.explicit) {
-                                                com.music.spotui.ui.components.ExplicitBadge()
-                                                Spacer(Modifier.width(4.dp))
-                                            }
                                             Text(
                                                 text = targetSong.title,
                                                 color = currentPlayingIndicatorColor,
@@ -673,6 +672,7 @@ fun SumUpAlbumScreen(
                                         Row(verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                             com.music.spotui.ui.components.DownloadedSongIndicator(targetSong.id)
+                                            if (targetSong.explicit) com.music.spotui.ui.components.ExplicitBadge()
                                             Text(
                                                 text = targetSong.singer,
                                                 color = Color.Gray,

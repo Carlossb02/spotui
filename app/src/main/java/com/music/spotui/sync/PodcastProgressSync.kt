@@ -5,6 +5,12 @@ package com.music.spotui.sync
 internal object PodcastProgressSync {
     fun merge(key:String,left:SyncTree,right:SyncTree):SyncTree {
         val merged=left.merge(right)
+        if(key.startsWith("release_news_seen_v1:")) {
+            val values=listOfNotNull(left.fields["/value"],right.fields["/value"]).filter { !it.deleted && it.json.toLongOrNull()!=null }
+            if(values.isEmpty())return merged
+            val maximum=values.maxBy {it.json.toLong()}.copy(mode="max",stamp=values.maxOf {it.stamp})
+            return SyncTree(merged.fields + ("/value" to maximum))
+        }
         if(key!="spotui_podcast_resume_v1:episodes")return merged
         var fields:MutableMap<String,SyncValue>?=null
         (left.fields.keys+right.fields.keys).filter {it.endsWith("/updated")}.forEach { path->

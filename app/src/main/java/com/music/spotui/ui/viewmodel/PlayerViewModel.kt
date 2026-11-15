@@ -227,14 +227,18 @@ class PlayerViewModel @Inject constructor(private val currentSongState: CurrentS
     private val _canvasUrl = mutableStateOf<String?>(null)
     val canvasUrl: State<String?> get() = _canvasUrl
     @Volatile private var canvasRequestId: String = ""
+    private var canvasJob: kotlinx.coroutines.Job? = null
 
     suspend fun historyCanvas(trackId: String): String? = repository.provideCanvasUrl(trackId)
 
     fun loadCanvas(trackId: String) {
+        if (canvasRequestId == trackId && (canvasJob?.isActive == true || _canvasUrl.value != null)) return
+        canvasJob?.cancel()
         _canvasUrl.value = null
         canvasRequestId = trackId
         if (trackId.isBlank()) return
-        viewModelScope.launch {
+        canvasJob = viewModelScope.launch {
+            SongPlayer.awaitAudioStartup()
             val url = withContext(Dispatchers.IO) { repository.provideCanvasUrl(trackId) }
             // Ignore a slow fetch for a track the user already skipped past.
             if (canvasRequestId == trackId) _canvasUrl.value = url

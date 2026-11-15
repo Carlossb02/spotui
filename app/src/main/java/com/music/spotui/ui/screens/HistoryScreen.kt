@@ -254,7 +254,7 @@ fun HistoryScreen(navController: NavController) {
 
 }
 
-private fun HistoryEntry.asSong() = SongsModel(id = songId, title = title, album = album, singer = singer, coverUri = image, url = url, spotifyTrackId = spotifyTrackId, durationMs = durationMs.coerceIn(0, Int.MAX_VALUE.toLong()).toInt())
+private fun HistoryEntry.asSong() = SongsModel(id = songId, title = title, album = album, singer = singer, coverUri = image, url = url, spotifyTrackId = spotifyTrackId, durationMs = durationMs.coerceIn(0, Int.MAX_VALUE.toLong()).toInt(),explicit=explicit)
 
 @Composable
 private fun HistoryRecap(stats: ListeningHistoryStats, kind: HistoryKind) {
@@ -324,7 +324,10 @@ private fun HistoryCanvasCard(rank: HistoryRanking, active: Boolean, lookup: sus
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xEE121212)))))
         Column(Modifier.align(Alignment.BottomStart).padding(16.dp)) {
             Text(track.title, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(track.singer, color = Color.White, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                if(track.explicit)com.music.spotui.ui.components.ExplicitBadge()
+                Text(track.singer, color = Color.White, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
             Text("${rank.plays} ${uiLocalized("reproducciones")}", color = SpotifyGreen, fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
         }
     }
@@ -374,10 +377,13 @@ private fun HistoryRow(
                 .padding(start = 10.dp, end = 8.dp),
         ) {
             Text(entry.title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+            if(entry.explicit)com.music.spotui.ui.components.ExplicitBadge()
             Text(
                 "${entry.playCount} ${uiLocalized("reproducciones")} • ${if (entry.isPodcast()) "Podcast • " else ""}${entry.singer} • ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(entry.ts))}",
                 color = Color.Gray, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
+            }
         }
         Icon(
             imageVector = Icons.Default.Close,

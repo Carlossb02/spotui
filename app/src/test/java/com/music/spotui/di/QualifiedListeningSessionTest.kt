@@ -5,6 +5,11 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class QualifiedListeningSessionTest {
+    @Test fun historyPreservesTheExplicitEditionFlag() {
+        val session=QualifiedListeningSession(song.copy(explicit=true),1000L,"explicit")
+        session.sample(0,true,180_000)
+        assertTrue(session.sample(30_000,true,180_000)!!.explicit)
+    }
     private val song = SongsModel().copy(id = 1, title = "Song", singer = "Artist", url = "song:1", durationMs = 180_000, spotifyTrackId = "spotify-id")
     @Test fun thresholdIsThirtySecondsOfPlaying() {
         val s = QualifiedListeningSession(song, 1000L, "one")

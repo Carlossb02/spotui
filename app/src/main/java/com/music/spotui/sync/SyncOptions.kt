@@ -27,6 +27,7 @@ object SyncOptions {
     }
     fun enabled(category:Category)=mutable.value[category]!=false
     fun category(key:String):Category?=when(key.substringBefore(':')) {
+        "release_news_seen_v1" -> if(key.substringAfter(':')=="podcasts")Category.PODCASTS else Category.LIBRARY
         "LocalPlaylists","LocalLibrary","OwnedLikedSongs","LikedSongs","playlist_youtube_additions_v1","spotui_pinned_library_v1","favorite_external_playlists_v1"->Category.LIBRARY
         "CustomMetadata","AlternativeStreams"->Category.METADATA
         "SubscribedPodcasts","spotui_podcast_resume_v1","spotui_podcast_mode_prefs"->Category.PODCASTS

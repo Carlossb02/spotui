@@ -89,6 +89,7 @@ class LyricsViewModel @Inject constructor(
         _state.value=State.Loading;resetTranslationState();translationSuppressed=false
         loadJob=viewModelScope.launch(Dispatchers.IO) {
             try {
+                com.music.spotui.di.SongPlayer.awaitAudioStartup()
                 val lyrics=LyricsApi.fetch(title,artist,album,durationSec,trackId)
                 withContext(Dispatchers.Main) {
                     if(token!=generation || loadedKey!=key)return@withContext

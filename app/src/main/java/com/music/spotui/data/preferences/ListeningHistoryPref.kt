@@ -20,6 +20,7 @@ data class HistoryEntry(
     val durationMs: Long = 0L, val spotifyTrackId: String = "",
     val qualified: Boolean = false, val eventId: String = "", val playCount: Int = 1,
     val mediaType: String = "",
+    val explicit: Boolean = false,
 )
 private val _listeningHistoryVersion = MutableStateFlow(0L)
 private val _deviceListeningHistoryVersion = MutableStateFlow(0L)
@@ -39,7 +40,7 @@ private fun monthOf(ts: Long) = YearMonth.from(Instant.ofEpochMilli(ts).atZone(Z
 internal fun HistoryEntry.storageKey() = "${monthOf(ts)}:${recordingKey()}:$qualified"
 private fun metadata(o: JSONObject) = HistoryEntry(o.optLong("ts"), o.optInt("songId", -1), o.optString("title"),
     o.optString("singer"), o.optString("album"), o.optString("image"), o.optString("url"),
-    o.optLong("durationMs"), o.optString("spotifyTrackId"), mediaType = o.optString("mediaType"))
+    o.optLong("durationMs"), o.optString("spotifyTrackId"), mediaType = o.optString("mediaType"), explicit=o.optBoolean("explicit"))
 private fun read(file: File): Month {
     if (!file.exists() && !File(file.path + ".bak").exists()) return Month()
     val root = JSONObject(AtomicFile(file).openRead().bufferedReader().use { it.readText() })
@@ -50,7 +51,7 @@ private fun read(file: File): Month {
     }.groupBy { it.track.recordingKey() }.values.map { group ->
         val latest = group.maxBy { it.track.ts }
         val duration = group.firstOrNull { it.track.durationMs > 0 }?.track?.durationMs ?: 0L
-        latest.copy(track = latest.track.copy(durationMs = duration, spotifyTrackId = latest.track.historySpotifyId()),
+        latest.copy(track = latest.track.copy(durationMs = duration, spotifyTrackId = latest.track.historySpotifyId(),explicit=group.any {it.track.explicit}),
             plays = group.sumOf { it.plays }, legacy = group.sumOf { it.legacy },
             qualifiedAt = group.maxOf { it.qualifiedAt }, legacyAt = group.maxOf { it.legacyAt },
             lastEvent = group.maxBy { it.qualifiedAt }.lastEvent)
@@ -64,7 +65,7 @@ private fun write(file: File, month: Month) {
         month.buckets.forEach { b -> val e = b.track
             a.put(JSONObject().put("ts", e.ts).put("songId", e.songId).put("title", e.title).put("singer", e.singer)
                 .put("album", e.album).put("image", e.image).put("url", e.url).put("durationMs", e.durationMs)
-                .put("spotifyTrackId", e.spotifyTrackId).put("mediaType", e.mediaType).put("plays", b.plays).put("legacy", b.legacy)
+                .put("spotifyTrackId", e.spotifyTrackId).put("mediaType", e.mediaType).put("explicit",e.explicit).put("plays", b.plays).put("legacy", b.legacy)
                 .put("qualifiedAt", b.qualifiedAt).put("legacyAt", b.legacyAt).put("lastEvent", b.lastEvent))
         }
         stream.write(JSONObject().put("tracks", a).put("legacyImported", month.legacyImported).toString().toByteArray(Charsets.UTF_8))
@@ -125,11 +126,16 @@ internal fun getDeviceListeningHistory(context: Context, year: Int? = null, mont
     }
 }
 fun getListeningHistory(context: Context, year: Int? = null, month: Int? = null, limit: Int = 500): List<HistoryEntry> {
-    val synced = com.music.spotui.sync.CloudHistory.projection ?: return getDeviceListeningHistory(context, year, month, limit)
-    return synced.asSequence().filter { e ->
+    val synced = com.music.spotui.sync.CloudHistory.projection
+    val rows = synced?.asSequence()?.filter { e ->
         val period = YearMonth.from(Instant.ofEpochMilli(e.ts).atZone(ZoneId.systemDefault()))
         (year == null || period.year == year) && (month == null || period.monthValue == month)
-    }.take(limit).toList()
+    }?.take(limit)?.toList() ?: getDeviceListeningHistory(context, year, month, limit)
+    PodcastResumeStore.ensureLoaded(context)
+    val knownEpisodes = PodcastResumeStore.entries.value.map { it.episode.url }.toMutableSet()
+    context.getSharedPreferences("spotui_episode_show_map_v1", Context.MODE_PRIVATE).all.keys
+        .forEach { knownEpisodes += "yt_ep:$it" }
+    return repairLegacyPodcastHistory(rows, knownEpisodes)
 }
 internal fun notifySyncedHistoryChanged() { _listeningHistoryVersion.update { it + 1L } }
 internal fun storeQualifiedListening(context: Context, entry: HistoryEntry, expectedClearGeneration: Long) = synchronized(historyLock) {

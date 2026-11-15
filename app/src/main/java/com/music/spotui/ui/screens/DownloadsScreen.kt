@@ -352,10 +352,6 @@ fun DownloadsScreen(navController: NavController) {
                                 .weight(1f)
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (song.explicit) {
-                                    com.music.spotui.ui.components.ExplicitBadge()
-                                    Spacer(Modifier.width(4.dp))
-                                }
                                 Text(
                                     text = song.title,
                                     color = Color.White,
@@ -374,6 +370,10 @@ fun DownloadsScreen(navController: NavController) {
                                     color = accent,
                                     trackColor = Color(0xFF333333),
                                 )
+                            }
+                            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                                if(song.explicit)com.music.spotui.ui.components.ExplicitBadge()
+                                Text(song.singer,color=Color.Gray,fontSize=12.sp,maxLines=1)
                             }
                         }
                         Text(
@@ -428,7 +428,10 @@ fun DownloadsScreen(navController: NavController) {
                         )
                         Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
                             Text(song.title, color = Color.White, fontSize = 14.sp, maxLines = 1)
-                            Text(song.singer, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+                            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                                if(song.explicit)com.music.spotui.ui.components.ExplicitBadge()
+                                Text(song.singer, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+                            }
                         }
                         Text("Download", color = accent, fontSize = 12.sp,
                             modifier = Modifier.clickable { SongPlayer.downloadSong(song, context) }.padding(8.dp))
@@ -511,10 +514,6 @@ fun DownloadsScreen(navController: NavController) {
                                         .width(280.dp)
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        if (song.explicit) {
-                                            com.music.spotui.ui.components.ExplicitBadge()
-                                            Spacer(Modifier.width(4.dp))
-                                        }
                                         Text(
                                             text = song.title,
                                             color = currentColor,
@@ -526,6 +525,7 @@ fun DownloadsScreen(navController: NavController) {
                                     Row(verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
+                                        if (song.explicit) com.music.spotui.ui.components.ExplicitBadge()
                                         Text(
                                             text = song.singer,
                                             color = Color.Gray,

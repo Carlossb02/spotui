@@ -1,6 +1,13 @@
 package com.music.spotui.ui.screens
 
 import com.music.spotui.util.uiLocalized
+import androidx.lifecycle.repeatOnLifecycle
+import com.music.spotui.ui.components.releaseNewsBorder
+import com.music.spotui.ui.components.MusicNewsColor
+import com.music.spotui.ui.components.PodcastNewsColor
+import com.music.spotui.ui.components.rememberReleaseCheck
+import com.music.spotui.data.preferences.ReleaseKind
+import com.music.spotui.data.hasUnreadReleases
 
 import android.os.Build
 import android.util.Log
@@ -335,6 +342,25 @@ private fun HomeHeaderRow(
     val context = androidx.compose.ui.platform.LocalContext.current
     val homeViewModel: HomeViewModel = hiltViewModel()
     val isPodcastsLoading by homeViewModel.isPodcastsLoading.collectAsState()
+    val followingArtists by homeViewModel.followedArtists.collectAsState()
+    val subscriptions by com.music.spotui.data.preferences.SubscribedPodcastPref.revision.collectAsState()
+    val artistFollowRevision by com.music.spotui.data.preferences.followedArtistRevision.collectAsState()
+    val podcastReleases by homeViewModel.followedEpisodes.collectAsState()
+    val musicReleases by homeViewModel.followedMusicReleases.collectAsState()
+    val musicSeen by rememberReleaseCheck(ReleaseKind.MUSIC)
+    val podcastsSeen by rememberReleaseCheck(ReleaseKind.PODCASTS)
+    val musicHasNews=hasUnreadReleases(musicReleases.items.map {it.publishedAt},musicSeen)
+    val podcastsHaveNews=hasUnreadReleases(podcastReleases.items.map {it.publishedAt},podcastsSeen)
+    LaunchedEffect(followingArtists,subscriptions) { homeViewModel.refreshFollowedReleases() }
+    LaunchedEffect(artistFollowRevision) {
+        if(artistFollowRevision>0) { kotlinx.coroutines.delay(200);homeViewModel.refreshFollowedArtists() }
+    }
+    val newsLifecycle=androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(newsLifecycle) {
+        newsLifecycle.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            while(true) {homeViewModel.refreshFollowedReleases();kotlinx.coroutines.delay(10*60_000L)}
+        }
+    }
     androidx.compose.runtime.LaunchedEffect(Unit) {
         com.music.spotui.data.api.ProfileCache.ensure(context)
     }
@@ -427,7 +453,7 @@ private fun HomeHeaderRow(
                                     contentAlignment = Alignment.Center,
                                     modifier = Modifier
                                         .zIndex(2f)
-                                        .clip(RoundedCornerShape(50))
+                                        .releaseNewsBorder(musicHasNews, MusicNewsColor).clip(RoundedCornerShape(50))
                                         .background(Color(0xFF64D36D))
                                         .clickable { onResetFilters() }
                                         .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -460,7 +486,7 @@ private fun HomeHeaderRow(
                         } else {
                             Box(
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
+                                    .releaseNewsBorder(musicHasNews, MusicNewsColor).clip(RoundedCornerShape(50))
                                     .background(Color(0xFF2A2A2A))
                                     .clickable { onSelectFilter("Music") }
                                     .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -484,7 +510,7 @@ private fun HomeHeaderRow(
                                     contentAlignment = Alignment.Center,
                                     modifier = Modifier
                                         .zIndex(2f)
-                                        .clip(RoundedCornerShape(50))
+                                        .releaseNewsBorder(podcastsHaveNews, PodcastNewsColor).clip(RoundedCornerShape(50))
                                         .background(Color(0xFF64D36D))
                                         .clickable { onResetFilters() }
                                         .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -517,7 +543,7 @@ private fun HomeHeaderRow(
                         } else {
                             Box(
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
+                                    .releaseNewsBorder(podcastsHaveNews, PodcastNewsColor).clip(RoundedCornerShape(50))
                                     .background(Color(0xFF2A2A2A))
                                     .clickable { onSelectFilter("Podcasts") }
                                     .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -574,6 +600,18 @@ private fun HomeMusicFeedContent(
     val playerViewModel: PlayerViewModel = hiltViewModel()
 
     val followedNames = remember(followedArtists) { followedArtists.map { it.name.lowercase().trim() }.toSet() }
+    val followingMusic by homeViewModel.followedMusicReleases.collectAsState()
+    val followingAlbums=followingMusic.items.map {it.album}
+    LaunchedEffect(isFollowingOnly) {
+        if(isFollowingOnly && !homeViewModel.followedMusicReleases.value.loading)
+            homeViewModel.refreshFollowedReleases(force=true,kind=ReleaseKind.MUSIC)
+    }
+    LaunchedEffect(isFollowingOnly,followingMusic.complete,followingMusic.loading,followingMusic.checkedAt) {
+        if(isFollowingOnly && followingMusic.complete && !followingMusic.loading && followingMusic.checkedAt>0)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.music.spotui.data.preferences.markReleasesChecked(context,ReleaseKind.MUSIC,followingMusic.checkedAt)
+            }
+    }
 
     val filteredAlbums = remember(albumsList, isFollowingOnly, followedNames) {
         if (!isFollowingOnly || followedNames.isEmpty()) albumsList
@@ -584,8 +622,7 @@ private fun HomeMusicFeedContent(
 
     val filteredArtists = remember(artistsList, followedArtists, isFollowingOnly) {
         if (!isFollowingOnly) artistsList
-        else if (followedArtists.isNotEmpty()) followedArtists
-        else artistsList
+        else followedArtists
     }
 
     val filteredSongs = remember(songsList, isFollowingOnly, followedNames) {
@@ -615,7 +652,7 @@ private fun HomeMusicFeedContent(
             // ── Spotify "Latest releases" Feed ──
             item {
                 Text(
-                    text = stringResource(R.string.latest_releases),
+                    text = uiLocalized("Latest updates"),
                     color = Color.White,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
@@ -623,9 +660,21 @@ private fun HomeMusicFeedContent(
                 )
             }
 
-            if (filteredAlbums.isNotEmpty()) {
-                items(filteredAlbums.size) { i ->
-                    val album = filteredAlbums[i]
+            item {
+                Row(Modifier.fillMaxWidth().padding(horizontal=16.dp),verticalAlignment=Alignment.CenterVertically) {
+                    if(followingMusic.loading)CircularProgressIndicator(Modifier.size(22.dp),color=MusicNewsColor,strokeWidth=2.dp)
+                    Spacer(Modifier.weight(1f))
+                    androidx.compose.material3.TextButton(onClick={homeViewModel.refreshFollowedReleases(force=true,kind=ReleaseKind.MUSIC)},enabled=!followingMusic.loading) {
+                        Text(uiLocalized("Refresh"),color=MusicNewsColor)
+                    }
+                }
+                followingMusic.error?.let {Text(uiLocalized(it),color=Color.Gray,modifier=Modifier.padding(16.dp))}
+                if(!followingMusic.loading && followingAlbums.isEmpty())Text(uiLocalized("No recent releases from followed artists."),
+                    color=Color.Gray,modifier=Modifier.padding(16.dp))
+            }
+            if (followingAlbums.isNotEmpty()) {
+                items(followingAlbums.size) { i ->
+                    val album = followingAlbums[i]
                     LatestReleaseCard(
                         album = album,
                         navController = navController,
@@ -705,17 +754,16 @@ private fun LatestReleaseCard(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
-    var isSaved by remember { mutableStateOf(false) }
+    var isSaved by remember(album.spotifyAlbumId) { mutableStateOf(com.music.spotui.data.api.AlbumLibrary.cached(context,album.spotifyAlbumId,album.id)) }
     var showBottomSheet by remember { mutableStateOf(false) }
     var isPlayingLoading by remember { mutableStateOf(false) }
 
-    val isSingle = album.type.equals("single", ignoreCase = true)
-    val cardBg = if (album.id % 2 == 0) Color(0xFF23171B) else Color(0xFF242424)
-    val formattedTime = remember(album.time) { formatReleaseDate(album.time) }
-
     val toggleSave = {
-        isSaved = !isSaved
-        if (isSaved) {
+        scope.launch {
+        val next=!isSaved
+        if(com.music.spotui.data.api.AlbumLibrary.setSaved(context,album.spotifyAlbumId,album.id,next)) {
+        isSaved=next
+        if (next) {
             OfflineCollectionsPref.saveCollection(
                 context = context,
                 id = "album:${album.name}|${album.artists}",
@@ -725,11 +773,11 @@ private fun LatestReleaseCard(
                 isPlaylist = false,
                 songs = emptyList()
             )
-            SpotifySync.setAlbumSaved(context, album.id.toString(), true)
             Toast.makeText(context, "Added to Your Library", Toast.LENGTH_SHORT).show()
         } else {
-            SpotifySync.setAlbumSaved(context, album.id.toString(), false)
             Toast.makeText(context, "Removed from Your Library", Toast.LENGTH_SHORT).show()
+        }
+        }
         }
     }
 
@@ -767,141 +815,9 @@ private fun LatestReleaseCard(
         }
     }
 
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = cardBg),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
-            .clickable {
-                navController.navigate(albumRoute(album.name, album.artists))
-            }
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-        ) {
-            // Top Row: Artwork + Title/Artist + Options (⋮)
-            Row(
-                verticalAlignment = Alignment.Top,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                GlideImage(
-                    model = album.coverUri,
-                    contentDescription = album.name,
-                    contentScale = ContentScale.Crop,
-                    loading = placeholder(R.drawable.placeholder),
-                    failure = placeholder(R.drawable.placeholder),
-                    modifier = Modifier
-                        .size(76.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                )
-                Spacer(modifier = Modifier.width(14.dp))
-                Column(
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        text = album.artists.ifBlank { "Artist" },
-                        color = Color.White,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "${album.name}${if (formattedTime.isNotBlank()) " • $formattedTime" else ""}",
-                        color = Color(0xFFB3B3B3),
-                        fontSize = 13.sp,
-                        maxLines = 1
-                    )
-                }
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .clickable { showBottomSheet = true }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.MoreVert,
-                        contentDescription = uiLocalized("Options"),
-                        tint = Color(0xFFB3B3B3),
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Middle Summary Text
-            val songText = if (isSingle) "1 song" else "12 songs"
-            Text(
-                text = "$songText • ${album.name}",
-                color = Color(0xFFCCCCCC),
-                fontSize = 13.sp,
-                maxLines = 2,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Bottom Control Row: (+) Save and (▶) Play buttons aligned to right
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Spacer(modifier = Modifier.weight(1f))
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    // (+) / (✓) Add to library button
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .clickable { toggleSave() }
-                    ) {
-                        Icon(
-                            imageVector = if (isSaved) Icons.Default.CheckCircle else Icons.Default.AddCircleOutline,
-                            contentDescription = if (isSaved) "In library" else "Add to library",
-                            tint = if (isSaved) Color(0xFF64D36D) else Color.White,
-                            modifier = Modifier.size(26.dp)
-                        )
-                    }
-
-                    // (▶) Play button with loading state
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(Color.White)
-                            .clickable(enabled = !isPlayingLoading) { playRelease() }
-                    ) {
-                        if (isPlayingLoading) {
-                            CircularProgressIndicator(
-                                color = Color.Black,
-                                strokeWidth = 2.5.dp,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = uiLocalized("Play release"),
-                                tint = Color.Black,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-
+    FollowingMusicReleaseCard(album=album,saved=isSaved,loading=isPlayingLoading,
+        onOpen={navController.navigate(albumRoute(album.name,album.artists))},
+        onMore={showBottomSheet=true},onSave={toggleSave()},onPlay={playRelease()})
     val artistList = remember(album.artists) {
         album.artists.split(",").map { it.trim() }.filter { it.isNotBlank() }
     }
@@ -1092,6 +1008,7 @@ private fun HomeSongRow(
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 com.music.spotui.ui.components.DownloadedSongIndicator(song.id)
+                if (song.explicit) com.music.spotui.ui.components.ExplicitBadge()
                 Text(
                     text = song.singer,
                     color = Color(0xFFB3B3B3),
@@ -1129,6 +1046,14 @@ private fun HomePodcastsFeedContent(
     isFollowingOnly: Boolean,
     onTrackOptions: (SongsModel) -> Unit = {},
 ) {
+    if(isFollowingOnly) {
+        FollowingPodcastEpisodesContent(homeViewModel,navController) {
+            HomeHeaderRow(navController,selectedFilter,isFollowingOnly,
+                onSelectFilter={homeViewModel.setSelectedFilter(it)},onToggleFollowing={homeViewModel.toggleFollowing()},
+                onResetFilters={homeViewModel.resetFilters()})
+        }
+        return
+    }
     val context = androidx.compose.ui.platform.LocalContext.current
     val resumePlayer: PlayerViewModel = hiltViewModel()
 
