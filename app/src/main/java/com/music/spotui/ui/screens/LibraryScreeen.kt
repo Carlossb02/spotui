@@ -560,76 +560,16 @@ fun LibraryScreen(navController: NavController) {
             else -> Box(modifier = Modifier.padding(20.dp, 100.dp)) { Snackbar(showMessage = "Couldn't load your library") }
         }
 
-        if (showSortSheet) {
-            ModalBottomSheet(
-                onDismissRequest = { showSortSheet = false },
-                containerColor = Color(0xFF1A1A1A)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                ) {
-                    Text(
-                        text = uiLocalized("Sort by"),
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(16.dp, 12.dp, 16.dp, 12.dp)
-                    )
-                    HorizontalDivider(color = Color(0xFF2A2A2A))
-                    Spacer(modifier = Modifier.height(4.dp))
-                    LibrarySortOption.entries.forEach { option ->
-                        val isSelected = option == currentSort
-                        val icon = when (option) {
-                            LibrarySortOption.RECENTS -> Icons.Default.DateRange
-                            LibrarySortOption.TITLE -> Icons.AutoMirrored.Filled.List
-                            LibrarySortOption.CREATOR -> Icons.Default.Person
-                        }
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    if (currentSort == option) {
-                                        isDescending = !isDescending
-                                    } else {
-                                        currentSort = option
-                                        isDescending = (option == LibrarySortOption.RECENTS)
-                                    }
-                                    setLibrarySortOption(context, currentSort, isDescending)
-                                    showSortSheet = false
-                                }
-                                .padding(16.dp, 14.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = icon,
-                                contentDescription = null,
-                                tint = if (isSelected) Color(0xFF1ED760) else Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
-                            Spacer(modifier = Modifier.width(18.dp))
-                            Text(
-                                text = if (isSelected) option.getDescriptiveLabel(isDescending) else option.getDescriptiveLabel(option == LibrarySortOption.RECENTS),
-                                color = if (isSelected) Color(0xFF1ED760) else Color.White,
-                                fontSize = 15.sp,
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = if (isDescending) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
-                                    contentDescription = null,
-                                    tint = Color(0xFF1ED760),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                }
-            }
-        }
+        if (showSortSheet) com.music.spotui.ui.components.CollectionSortSheet(
+ selected = currentSort.name, descending = isDescending, choices = listOf("RECENTS" to "Fecha", "TITLE" to "Título", "CREATOR" to "Artista"),
+ onDismiss = { showSortSheet = false },
+ onSelected = { key ->
+ val option = LibrarySortOption.valueOf(key)
+ isDescending = if (currentSort == option) !isDescending else option == LibrarySortOption.RECENTS
+ currentSort = option
+ setLibrarySortOption(context, currentSort, isDescending)
+ showSortSheet = false
+ })
     }
 }
 

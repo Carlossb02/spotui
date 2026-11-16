@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
@@ -237,7 +238,7 @@ private fun ArtistOverviewContent(
                         .background(Color(0xFF4A90E2)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(uiLocalized("✓"), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Icon(androidx.compose.material.icons.Icons.Default.Check, "Artista verificado", tint = Color.White, modifier = Modifier.size(12.dp))
                     }
                     Spacer(Modifier.width(6.dp))
                     Text(uiLocalized("Verified Artist"), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
@@ -280,13 +281,7 @@ Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = A
                             fontWeight = FontWeight.SemiBold,
                         )
                     }
-                    Spacer(Modifier.width(16.dp))
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_dots),
-                        contentDescription = "",
-                        tint = Color.Gray,
-                        modifier = Modifier.size(22.dp),
-                    )
+
                 }
                     val collectionSongs = tracks.map { it.song }
                     com.music.spotui.ui.components.CollectionActionBar(
@@ -440,10 +435,10 @@ Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = A
                                 modifier = Modifier.padding(14.dp, 12.dp, 14.dp, 4.dp),
                             )
                         }
-                        Text(
-                            text = overview.biography.orEmpty(),
+                        com.music.spotui.ui.components.ArtistBiographyText(
+                            raw = overview.biography.orEmpty(),
                             color = Color.Gray,
-                            fontSize = 13.sp,
+                            fontSizeSp = 13f,
                             modifier = Modifier.padding(14.dp, 4.dp, 14.dp, 16.dp),
                         )
                     }

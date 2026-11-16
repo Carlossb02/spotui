@@ -22,7 +22,7 @@ enum class LibraryFilterType {
 @HiltViewModel
 class LibraryViewModel @Inject constructor(private val repository: AppRepository) : ViewModel() {
 
-    private val _entries: MutableStateFlow<Response<List<LibraryEntry>>> = MutableStateFlow(repository.cachedLibraryEntries()?.let { Response.Success(it) } ?: Response.Loading())
+    private val _entries: MutableStateFlow<Response<List<LibraryEntry>>> = MutableStateFlow(Response.Loading())
     val entries: StateFlow<Response<List<LibraryEntry>>> = _entries
 
     private val _account: MutableStateFlow<Response<AccountModel>> = MutableStateFlow(Response.Loading())
