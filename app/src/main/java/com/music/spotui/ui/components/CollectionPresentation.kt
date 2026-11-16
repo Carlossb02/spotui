@@ -87,7 +87,7 @@ internal fun CollectionDownloadButton(songs: List<SongsModel>, description: Stri
     val fraction by androidx.compose.animation.core.animateFloatAsState(status.progress, label = "collectionDownload")
     val controlSize = LocalCollectionControlSize.current
     Box(Modifier.size(controlSize), contentAlignment = Alignment.Center) {
-        Box(Modifier.size(controlSize).clip(CircleShape)
+        Box(Modifier.size(controlSize - 4.dp).clip(CircleShape)
             .border(1.35.dp, if (status.complete) CollectionGreen else Color.White, CircleShape)
             .combinedClickable(enabled = keys.isNotEmpty(), role = androidx.compose.ui.semantics.Role.Button,
                 onClick = {
@@ -136,8 +136,8 @@ internal fun CollectionActionBar(
     val pillWidth = metrics.pill.dp
     val playSize = metrics.play.dp
     CompositionLocalProvider(LocalCollectionControlSize provides controlSize) {
-    Row(Modifier.height(76.dp), verticalAlignment = Alignment.CenterVertically) {
-        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.height(68.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(metrics.itemGap.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(controlSize), contentAlignment = Alignment.Center) { download() }
             val sortIcon = when (sortMode) {
                 "DEFAULT" -> com.music.spotui.R.drawable.collection_sort_track
@@ -148,9 +148,9 @@ internal fun CollectionActionBar(
                 "POPULARITY" -> com.music.spotui.R.drawable.collection_sort_popularity
                 else -> com.music.spotui.R.drawable.collection_sort_date
             }
-            Row(Modifier.width(pillWidth).height(controlSize).clip(androidx.compose.foundation.shape.RoundedCornerShape(50))
+            Row(Modifier.width(pillWidth).height(controlSize - 4.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(50))
                 .background(Color.White.copy(alpha = .045f))
-                .border(1.dp, Color.White.copy(alpha = .22f), androidx.compose.foundation.shape.RoundedCornerShape(50))
+                .border(1.35.dp, Color.White, androidx.compose.foundation.shape.RoundedCornerShape(50))
                 .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onSort).padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                 Icon(androidx.compose.ui.res.painterResource(sortIcon), when (sortMode) { "DEFAULT" -> "Orden de pistas"; "TITLE" -> "Título"; "ARTIST" -> "Artista"; "ALBUM" -> "Álbum"; "DURATION" -> "Duración"; "POPULARITY" -> "Popularidad"; else -> "Fecha" }, tint = Color.White, modifier = Modifier.size(22.dp))
@@ -158,7 +158,7 @@ internal fun CollectionActionBar(
                 Icon(androidx.compose.ui.res.painterResource(if (sortDescending) com.music.spotui.R.drawable.collection_sort_down else com.music.spotui.R.drawable.collection_sort_up),
                     if (sortDescending) "Descendente" else "Ascendente", tint = Color.White, modifier = Modifier.size(22.dp))
             }
-            IconButton(onClick = onQueue, enabled = enabled, modifier = Modifier.size(controlSize).border(1.35.dp, Color.White, CircleShape)) {
+            IconButton(onClick = onQueue, enabled = enabled, modifier = Modifier.size(controlSize).padding(2.dp).border(1.35.dp, Color.White, CircleShape)) {
                 Icon(androidx.compose.ui.res.painterResource(com.music.spotui.R.drawable.collection_queue), "Añadir a la cola", tint = Color.White, modifier = Modifier.size(22.dp))
             }
         }
