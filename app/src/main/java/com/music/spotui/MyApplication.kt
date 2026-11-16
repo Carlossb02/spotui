@@ -79,6 +79,12 @@ class MyApplication : Application(){
         YouTube.cookie = null
         com.music.spotui.data.api.FollowingReleaseFeed.get(this)
 
+        // Prepare the disk cache on IO before a tap can initialize it on Main.
+        appScope.launch {
+            kotlinx.coroutines.delay(800L)
+            com.music.spotui.di.SongPlayer.warmUp(this@MyApplication)
+        }
+
         // Pre-warm the YouTube playback pipeline so the first tap doesn't pay for
         // cold-starting the player.js parser and BotGuard WebView (~2-4s combined).
         appScope.launch {

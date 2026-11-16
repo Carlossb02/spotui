@@ -66,8 +66,7 @@ internal fun FollowingMusicReleaseCard(album:AlbumsModel,saved:Boolean,loading:B
     val count=details?.totalTracks?.takeIf {it>0} ?: songs.size
     val artist=details?.artists?.takeIf {it.isNotEmpty()}?.joinToString(", "){it.name} ?: album.artists
     val published=publicationTime(album.time,System.currentTimeMillis())
-    val date=published?.let {java.time.Instant.ofEpochMilli(it).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
-        .format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy",java.util.Locale.getDefault()))}.orEmpty()
+    val date=published?.let {com.music.spotui.data.relativePublicationTime(it)}.orEmpty()
     Card(shape=RoundedCornerShape(12.dp),colors=CardDefaults.cardColors(containerColor=background),
         modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=8.dp).clickable(onClick=onOpen)) {
         BoxWithConstraints(Modifier.fillMaxWidth().padding(16.dp)) {

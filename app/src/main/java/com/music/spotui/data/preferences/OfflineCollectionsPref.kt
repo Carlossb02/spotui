@@ -15,6 +15,12 @@ data class OfflineCollection(
 )
 
 object OfflineCollectionsPref {
+    private val writes = com.music.spotui.util.OrderedIoWrites()
+    fun saveCollectionAsync(context: Context, id: String, name: String, coverUri: String, artists: String, isPlaylist: Boolean, songs: List<SongsModel>) {
+        val app = context.applicationContext
+        writes.submit { saveCollection(app, id, name, coverUri, artists, isPlaylist, songs) }
+    }
+
     private const val PREF = "OfflineCollections"
 
     private fun SongsModel.toJsonObject(): JSONObject = JSONObject().apply {

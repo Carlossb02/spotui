@@ -200,7 +200,8 @@ fun SumUpAlbumScreen(
     val currentAlbum = album.firstOrNull()
     LaunchedEffect(albumSongs, currentAlbum) {
         if (albumSongs.isNotEmpty() && currentAlbum != null) {
-            com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollection(
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollectionAsync(
                 context = context,
                 id = "album:$albumName|$artist",
                 name = albumName,
@@ -209,6 +210,7 @@ fun SumUpAlbumScreen(
                 isPlaylist = false,
                 songs = albumSongs
             )
+            }
         }
     }
 
@@ -446,7 +448,7 @@ fun SumUpAlbumScreen(
                     )
                     }
                     Spacer(modifier = Modifier.height(12.dp))
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
 com.music.spotui.ui.components.LibrarySaveIcon(
                                     saved = albumSaved,
                                     enabled = !albumSaveBusy && albumSpotifyId.isNotBlank(),
@@ -471,20 +473,13 @@ com.music.spotui.ui.components.LibrarySaveIcon(
                                 )
 }
 Spacer(Modifier.height(8.dp))
-Row(
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().height(64.dp)
-                            .padding(horizontal = 20.dp)
-                    ) {
-                        if (snackbarVisible) {
-                            Box(modifier = Modifier.weight(1f)) {
-                                Snackbar(showMessage = snackbarMessage)
-                            }
-                        } else {
-                            com.music.spotui.ui.components.CollectionSecondaryActions(modifier = Modifier.weight(1f)) {
-com.music.spotui.ui.components.CollectionDownloadButton(albumSongs, uiLocalized("Download album")) { complete ->
-                                        com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollection(
+val playing = albumViewModel.currentSongPlayingState.value
+val currentInList = albumSongs.any { it.id == albumViewModel.currentSongId.value }
+com.music.spotui.ui.components.CollectionActionBar(
+ modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+ enabled = albumSongs.isNotEmpty(), playing = currentInList && playing,
+ download = { com.music.spotui.ui.components.CollectionDownloadButton(albumSongs, "Descargar") { complete ->
+                                        com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollectionAsync(
                                             context = context, id = "album:$albumName|$artist",
                                             name = albumName, coverUri = album[0].coverUri,
                                             artists = album[0].artists, isPlaylist = false,
@@ -495,48 +490,18 @@ com.music.spotui.ui.components.CollectionDownloadButton(albumSongs, uiLocalized(
                                             snackbarMessage = "Downloading ${albumSongs.size} tracks…"
                                         } else snackbarMessage = "Album added to offline library"
                                         snackbarVisible = true
-                                    }
-com.music.spotui.ui.components.CollectionSortButton { showSortSheet = true }
-com.music.spotui.ui.components.CollectionActionSurface(onClick = {
-                                        playerViewModel.addAllToQueue(albumSongs)
-                                        android.widget.Toast.makeText(context,
-                                            "${albumSongs.size} track(s) added to queue",
-                                            android.widget.Toast.LENGTH_SHORT).show()
-                                    }) {
-                                        Icon(
-                                            painter = painterResource(R.drawable.ic_queue_add),
-                                            tint = Color.White,
-                                            modifier = Modifier.size(24.dp),
-                                            contentDescription = uiLocalized("Add to queue")
-                                        )
-                                    }
-}
-                        }
-                        if (albumSongs.isNotEmpty()) {
-                            com.music.spotui.ui.components.CollectionActionSurface(onClick = {
+                                    } },
+ onSort = { showSortSheet = true },
+ onQueue = { playerViewModel.addAllToQueue(albumSongs) },
+ onShuffle = {
                                 albumViewModel.startShuffled(albumSongs, sourceName = albumName)?.let { first ->
                                     albumViewModel.updateSongState(
                                         first.coverUri, first.title, first.singer, true,
                                         first.id, 0, albumName)
                                     SongPlayer.playSong(first.url, context, "song/${first.id}")
                                 }
-                            }) {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_player_shuffle),
-                                    tint = Color.White,
-                                    modifier = Modifier.size(24.dp),
-                                    contentDescription = uiLocalized("Shuffle play")
-                                )
-                            }
-                            Spacer(Modifier.width(12.dp))
-                        }
-                        if (albumSongs.isNotEmpty()) {
-                            val playing = albumViewModel.currentSongPlayingState.value
-                            val currentInList = albumSongs.any { it.id == albumViewModel.currentSongId.value }
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(100.dp))
-                                    .background(Color(0xFF1ED760)).clickable {
+                             },
+ onPlay = {
                                         if (currentInList) albumViewModel.setPlaying(!playing)
                                         else {
                                             val first = filteredSongs.firstOrNull() ?: albumSongs.first()
@@ -546,18 +511,8 @@ com.music.spotui.ui.components.CollectionActionSurface(onClick = {
                                                 first.id, 0, albumName)
                                             SongPlayer.playSong(first.url, context, "song/${first.id}")
                                         }
-                                    }
-                            ) {
-                                Icon(
-                                    modifier = Modifier.size(25.dp), tint = Color.Black,
-                                    painter = painterResource(
-                                        if (currentInList && playing) R.drawable.ic_playing
-                                        else R.drawable.play_svgrepo_com),
-                                    contentDescription = if (currentInList && playing) "Pause" else "Play"
-                                )
-                            }
-                        }
-                    }
+                                     }
+)
                 }
             }
 

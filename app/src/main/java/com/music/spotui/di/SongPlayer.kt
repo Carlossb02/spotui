@@ -2981,6 +2981,7 @@ object SongPlayer {
     // An in-flight search may be shared by multiple callers (e.g. album / queue),
     // avoiding duplicate network requests and rate-limit contention.
     private val rawYtSearchCache = com.music.spotui.util.ExpiringLruCache<String, List<SongItem>>(128, 75_000L)
+    private val rawYtSearchSlots = Semaphore(3)
     private val rawYtSearchWork = com.music.spotui.util.SharedWork<String, List<SongItem>>(scope)
 
     private suspend fun sharedYouTubeSearch(q: String, filter: YouTube.SearchFilter): List<SongItem> {
@@ -2989,9 +2990,11 @@ object SongPlayer {
         rawYtSearchCache.get(key)?.let { return it }
         return rawYtSearchWork.await("$epoch|$key") {
             rawYtSearchCache.get(key)?.let { return@await it }
-            val result = YouTube.search(q, filter)
-                .onFailure { Log.w(TAG, "YouTube search failed for $q", it) }
-                .getOrNull()?.items?.filterIsInstance<SongItem>().orEmpty()
+            val result = rawYtSearchSlots.withPermit {
+                YouTube.search(q, filter)
+                    .onFailure { Log.w(TAG, "YouTube search failed for $q", it) }
+                    .getOrNull()?.items?.filterIsInstance<SongItem>().orEmpty()
+            }
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
             synchronized(resolutionCacheLock) {
                 if (resolutionCacheGeneration == epoch && result.isNotEmpty()) rawYtSearchCache.put(key, result)
@@ -3128,7 +3131,11 @@ object SongPlayer {
             searches.getValue(searchText).start()
             if (combined) videoSearches[searchText] = scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) { searchHits(searchText, YouTube.SearchFilter.FILTER_VIDEO) }
             // Prepare alternatives from known metadata without starting redundant requests.
-            launchPlan(buildPlan(null))
+            val knownPlan = buildPlan(null)
+            launchPlan(knownPlan)
+            // Prefetch identical raw queries while exact-ID metadata is checked.
+            // Only the final plan consumes them, in its unchanged order.
+            primaryQueries(knownPlan).forEach { searches.getValue(it).start() }
 
             val metadataWaitStarted = android.os.SystemClock.elapsedRealtime()
             val exactMeta = metadataDeferred.await()

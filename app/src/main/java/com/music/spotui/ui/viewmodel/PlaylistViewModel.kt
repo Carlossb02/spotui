@@ -83,6 +83,8 @@ class PlaylistViewModel @Inject constructor(
         }
     }
 
+    fun snapshotBelongsTo(playlistId: String): Boolean = playlistKey == playlistId
+
     fun loadPlaylist(playlistId: String) {
         if (playlistKey == playlistId) return
         com.music.spotui.sync.GoogleDeviceSync.libraryOpened()
@@ -94,14 +96,15 @@ class PlaylistViewModel @Inject constructor(
         playlistKey=playlistId
         val generation=++loadGeneration
         metadataJob?.cancel();songsJob?.cancel()
-        if(different) {
-            rawSongs=emptyList()
-            _playlist.value=repository.cachedPlaylistDetail(playlistId)?.let {Response.Success(it)}?:Response.Loading()
-            val initial=repository.cachedCollectionSongs("playlist:${com.music.spotui.data.api.Api.HomeCache.cleanId(playlistId)}")
-                ?:repository.playlistSongsForDisplay(playlistId,emptyList()).takeIf {it.isNotEmpty()}
-            _songs.value=initial?.let {rawSongs=it;Response.Success(it)}?:Response.Loading()
-        } else if(_songs.value is Response.Success) {
-            _songs.value=Response.Success(repository.playlistSongsForDisplay(playlistId,rawSongs))
+        if(different) { rawSongs=emptyList(); _playlist.value=Response.Loading(); _songs.value=Response.Loading() }
+        viewModelScope.launch(Dispatchers.IO) {
+            val detail = repository.cachedPlaylistDetail(playlistId)
+            val cached = repository.cachedCollectionSongs("playlist:" + com.music.spotui.data.api.Api.HomeCache.cleanId(playlistId))
+            val initial = repository.playlistSongsForDisplay(playlistId, cached ?: rawSongs).takeIf { it.isNotEmpty() }
+            if (generation == loadGeneration && playlistKey == playlistId) {
+                if (detail != null && _playlist.value !is Response.Success) _playlist.value = Response.Success(detail)
+                if (initial != null && _songs.value !is Response.Success) { rawSongs=initial; _songs.value=Response.Success(initial) }
+            }
         }
         metadataJob=viewModelScope.launch(Dispatchers.IO) {
             repository.providePlaylist(playlistId).collect {result->
