@@ -8,6 +8,7 @@ class CollectionActionMetricsTest {
             assertTrue("Controls overlap at width " + available, metrics.requiredWidth <= available)
             assertTrue(metrics.control >= 40f)
             assertTrue(metrics.gap >= 8f)
+            assertTrue(metrics.itemGap >= 4f)
         }
     }
     @Test fun largerViewportsGiveTheControlsMoreRoom() {
