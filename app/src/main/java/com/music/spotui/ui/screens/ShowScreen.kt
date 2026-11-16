@@ -229,7 +229,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
                 ) {
                     // Show Cover Image
                     val resolvedCover = show?.coverUri?.takeIf { it.isNotBlank() }
@@ -345,65 +345,37 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                             }
                         }
 
-                        // Shared playlist controls: downloads and queue left, Play right.
-                        if (episodes.isNotEmpty()) {
-                            Row(modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically) {
-                                com.music.spotui.ui.components.CollectionSecondaryActions(modifier = Modifier.weight(1f)) {
-                                com.music.spotui.ui.components.CollectionDownloadButton(episodes, uiLocalized("Descargar episodios")) { complete ->
-                                    com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollection(context, "show:$showId",
+                        // The common bar keeps identical slots while episodes load.
+                        run {
+                            com.music.spotui.ui.components.CollectionActionBar(
+ modifier = Modifier.fillMaxWidth(),
+ enabled = episodes.isNotEmpty(), playing = episodes.any { it.id == playerViewModel.currentSongId.value } && playerViewModel.currentSongPlayingState.value,
+ download = { com.music.spotui.ui.components.CollectionDownloadButton(episodes, "Descargar") { complete ->
+                                    com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollectionAsync(context, "show:$showId",
                                         displayShowTitle, resolvedCover.orEmpty(), resolvedPublisher, false, episodes)
                                     if (!complete) SongPlayer.downloadAll(episodes, context)
-                                }
-                                com.music.spotui.ui.components.CollectionSortButton(currentSort.getDescriptiveLabel(isDescending)) { showSortSheet = true }
-                                Spacer(Modifier.width(8.dp))
-                                com.music.spotui.ui.components.CollectionActionSurface(onClick = {
-                                    playerViewModel.addAllToQueue(episodes)
-                                    android.widget.Toast.makeText(context,
-                                        "${episodes.size} episodio(s) añadidos a la cola", android.widget.Toast.LENGTH_SHORT).show()
-                                }) {
-                                    Icon(painter = painterResource(id = R.drawable.ic_queue_add), tint = Color.White,
-                                        modifier = Modifier.size(24.dp), contentDescription = uiLocalized("Añadir episodios a la cola"))
-                                }
-                                }
-
-                                com.music.spotui.ui.components.CollectionActionSurface(onClick = {
+                                } },
+ onSort = { showSortSheet = true },
+ onQueue = { playerViewModel.addAllToQueue(episodes) },
+ onShuffle = {
                                     vm.startShuffled(filteredEpisodes, displayShowTitle)?.let { first ->
                                         vm.updateSongState(first.coverUri, first.title, first.singer, true, first.id, 0, first.album)
                                         com.music.spotui.ui.notification.PodcastCover.preserve(context, first)
                                         SongPlayer.playSong(first.url, context, "song/" + first.id)
                                     }
-                                }) {
-                                    Icon(painterResource(R.drawable.ic_player_shuffle), uiLocalized("Shuffle play"), tint = Color.White, modifier = Modifier.size(24.dp))
-                                }
-                                Spacer(Modifier.width(12.dp))
-                                // Spotify Big Play Button
-                                Box(
-                                    modifier = Modifier
-                                        .size(56.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFF1ED760))
-                                        .clickable {
+                                 },
+ onPlay = {
                                             if (episodes.any { it.id == playerViewModel.currentSongId.value }) {
                                                 playerViewModel.setPlaying(!playerViewModel.currentSongPlayingState.value)
-                                                return@clickable
+                                                return@CollectionActionBar
                                             }
-                                            val firstEp = filteredEpisodes.firstOrNull() ?: return@clickable
+                                            val firstEp = filteredEpisodes.firstOrNull() ?: return@CollectionActionBar
                                             vm.updateQueue(filteredEpisodes)
                                             vm.updateSongState(firstEp.coverUri, firstEp.title, firstEp.singer, true, firstEp.id, 0, firstEp.album)
                                             com.music.spotui.ui.notification.PodcastCover.preserve(context, firstEp)
                                             SongPlayer.playSong(firstEp.url, context, "song/${firstEp.id}")
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = if (episodes.any { it.id == playerViewModel.currentSongId.value } &&
-                                            playerViewModel.currentSongPlayingState.value) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                        contentDescription = uiLocalized("Reproducir"),
-                                        tint = Color.Black,
-                                        modifier = Modifier.size(28.dp)
-                                    )
-                                }
-                            }
+                                         }
+)
                         }
                     }
                 }

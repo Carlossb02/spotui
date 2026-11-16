@@ -314,50 +314,19 @@ fun LikedSongsScreen(navController: NavController) {
                                 fontWeight = FontWeight.Medium
                             )
 
-                            Row(
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(64.dp)
-                                    .padding(20.dp, 0.dp)
-                            ) {
-
-
-                                if (snackbarVisible) {
-                                    Box(modifier = Modifier.weight(1f)) {
-                                        Snackbar(showMessage = snackbarMessage)
-                                    }
-                                    Spacer(modifier = Modifier.width(16.dp))
-                                } else {
-                                    com.music.spotui.ui.components.CollectionSecondaryActions(modifier = Modifier.weight(1f)) {
-com.music.spotui.ui.components.CollectionDownloadButton(songs, uiLocalized("Download liked songs")) { complete ->
+                            val playing = likedSongsViewModel.currentSongPlayingState.value
+val currentInList = songs.any { it.id == likedSongsViewModel.currentSongId.value }
+com.music.spotui.ui.components.CollectionActionBar(
+ modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+ enabled = songs.isNotEmpty(), playing = currentInList && playing,
+ download = { com.music.spotui.ui.components.CollectionDownloadButton(songs, "Descargar") { complete ->
                                                 if (!complete) {
                                                     SongPlayer.downloadAll(songs, context)
                                                 }
-                                            }
-com.music.spotui.ui.components.CollectionSortButton { showSortSheet = true }
-com.music.spotui.ui.components.CollectionActionSurface(onClick = {
-                                                playerViewModel.addAllToQueue(songs)
-                                                android.widget.Toast.makeText(
-                                                    context,
-                                                    "${songs.size} track(s) added to queue",
-                                                    android.widget.Toast.LENGTH_SHORT,
-                                                ).show()
-                                            }) {
-                                                Icon(
-                                                    painter = painterResource(id = R.drawable.ic_queue_add),
-                                                    tint = Color.White,
-                                                    modifier = Modifier
-                                                        .size(24.dp)
-                                                        ,
-                                                    contentDescription = uiLocalized("Add to queue"),
-                                                )
-                                            }
-}
-                                }
-                                if (songs.isNotEmpty()) {
-                                    com.music.spotui.ui.components.CollectionActionSurface(onClick = {
+                                            } },
+ onSort = { showSortSheet = true },
+ onQueue = { playerViewModel.addAllToQueue(songs) },
+ onShuffle = {
                                         likedSongsViewModel.startShuffled(songs, sourceName = "Canciones que te gustan")?.let { first ->
                                             likedSongsViewModel.updateSongState(
                                                 first.coverUri,
@@ -370,31 +339,8 @@ com.music.spotui.ui.components.CollectionActionSurface(onClick = {
                                             )
                                             SongPlayer.playSong(first.url, context, "song/${first.id}")
                                         }
-                                    }) {
-                                        Icon(
-                                            painter = painterResource(id = R.drawable.ic_player_shuffle),
-                                            tint = Color.White,
-                                            modifier = Modifier
-                                                .size(24.dp)
-                                                ,
-                                            contentDescription = uiLocalized("Shuffle play"),
-                                        )
-                                    }
-                                    Spacer(Modifier.width(12.dp))
-                                }
-                                if (songs.isNotEmpty()) {
-                                    val playing = likedSongsViewModel.currentSongPlayingState.value
-                                    val currentInList = songs.any { it.id == likedSongsViewModel.currentSongId.value }
-                                    Box(
-                                        contentAlignment = Alignment.Center,
-                                        modifier = Modifier
-                                            .size(56.dp)
-                                            .clip(RoundedCornerShape(100.dp))
-                                            .background(Color(0xFF1ED760))
-                                            .clickable(
-                                                interactionSource = remember { MutableInteractionSource() },
-                                                indication = null
-                                            ) {
+                                     },
+ onPlay = {
                                                 when {
                                                     currentInList -> likedSongsViewModel.setPlaying(!playing)
                                                     else -> {
@@ -411,19 +357,8 @@ com.music.spotui.ui.components.CollectionActionSurface(onClick = {
                                                         SongPlayer.playSong(songs[0].url, context, "song/${songs[0].id}")
                                                     }
                                                 }
-                                            }
-                                    ) {
-                                        Icon(
-                                            modifier = Modifier.size(25.dp),
-                                            tint = Color.Black,
-                                            painter = painterResource(
-                                                id = if (currentInList && playing) R.drawable.ic_playing else R.drawable.play_svgrepo_com,
-                                            ),
-                                            contentDescription = if (currentInList && playing) "Pause" else "Play"
-                                        )
-                                    }
-                                }
-                            }
+                                             }
+)
                         }
                     }
 

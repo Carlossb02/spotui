@@ -119,7 +119,9 @@ private fun ArtistOverviewContent(
     artistName: String,
 ) {
     val context = LocalContext.current
-    val tracks = overview.topTracks
+    var orderByTitle by remember(overview.id) { mutableStateOf(false) }
+    var showCollectionSort by remember { mutableStateOf(false) }
+    val tracks = remember(overview.topTracks, orderByTitle) { if (orderByTitle) overview.topTracks.sortedBy { it.song.title.lowercase() } else overview.topTracks }
     val displayName = overview.name.ifBlank { artistName }
 
     // Warm the stream cache for the top tracks so the first tap plays instantly.
@@ -249,14 +251,8 @@ private fun ArtistOverviewContent(
 
         // ── Action row: Follow + shuffle + play ──
         item {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp, 16.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.fillMaxWidth()) {
+Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(modifier = Modifier
                         .clip(RoundedCornerShape(20.dp))
                         .border(1.dp, Color.Gray, RoundedCornerShape(20.dp))
@@ -288,39 +284,32 @@ private fun ArtistOverviewContent(
                         modifier = Modifier.size(22.dp),
                     )
                 }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_player_shuffle),
-                        contentDescription = "",
-                        tint = Color.White,
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                            ) { if (tracks.isNotEmpty()) playTrackAt(tracks.indices.random()) },
+                    val collectionSongs = tracks.map { it.song }
+                    com.music.spotui.ui.components.CollectionActionBar(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        enabled = collectionSongs.isNotEmpty(),
+                        playing = collectionSongs.any { it.id == artistViewModel.currentSongId.value } && artistViewModel.currentSongPlayingState.value,
+                        download = { com.music.spotui.ui.components.CollectionDownloadButton(collectionSongs, "Descargar") { complete ->
+                            if (!complete) SongPlayer.downloadAll(collectionSongs, context)
+                        } },
+                        onSort = { showCollectionSort = true },
+                        onQueue = { artistViewModel.addAllToQueue(collectionSongs) },
+                        onShuffle = { artistViewModel.startShuffled(collectionSongs, overview.name)?.let { first ->
+                            artistViewModel.updateSongState(first.coverUri, first.title, first.singer, true, first.id, 0, first.album)
+                            SongPlayer.playSong(first.url, context, "song/" + first.id)
+                        } },
+                        onPlay = { if (collectionSongs.any { it.id == artistViewModel.currentSongId.value }) artistViewModel.setPlaying(!artistViewModel.currentSongPlayingState.value) else playTrackAt(0) }
                     )
-                    Spacer(Modifier.width(20.dp))
-                    Box(modifier = Modifier
-                        .size(56.dp)
-                        .clip(CircleShape)
-                        .background(SpotifyGreen)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) { playTrackAt(0) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.play_svgrepo_com),
-                            contentDescription = "",
-                            tint = Color.Black,
-                            modifier = Modifier.size(26.dp),
-                        )
-                    }
+                    if (showCollectionSort) androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { showCollectionSort = false },
+                        title = { Text("Ordenar") },
+                        text = { Column {
+                            androidx.compose.material3.TextButton(onClick = { orderByTitle=false; showCollectionSort=false }) { Text("Popularidad") }
+                            androidx.compose.material3.TextButton(onClick = { orderByTitle=true; showCollectionSort=false }) { Text("Título") }
+                        } },
+                        confirmButton = { androidx.compose.material3.TextButton(onClick = { showCollectionSort=false }) { Text("Cerrar") } }
+                    )
                 }
-            }
         }
 
         // ── Popular tracks ──

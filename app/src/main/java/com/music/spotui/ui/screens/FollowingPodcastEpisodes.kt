@@ -131,8 +131,7 @@ private fun FollowingEpisodeRow(item:FollowedEpisode,playing:Boolean,onPlay:()->
             }}
             if(description.isNotBlank())Text(description,color=Color(0xFFB3B3B3),fontSize=14.sp,lineHeight=21.sp,
                 maxLines=2,overflow=TextOverflow.Ellipsis)
-            val date=java.time.Instant.ofEpochMilli(item.publishedAt).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
-                .format(java.time.format.DateTimeFormatter.ofPattern("d MMM",java.util.Locale.getDefault()))
+            val date=com.music.spotui.data.relativePublicationTime(item.publishedAt)
             val minutes=episode.durationMs/60_000
             val duration=if(minutes>=60)"${minutes/60} h ${minutes%60} min" else "$minutes min"
             Text(date+if(minutes>0)" · $duration" else "",color=Color.White,fontSize=13.sp)

@@ -74,8 +74,15 @@ fun MyNavHost(
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(150L)
         if (playerViewModel.currentSongTitle.value.isBlank()) {
-            com.music.spotui.data.preferences.loadLastPlayback(context)?.let { (song, positionMs) ->
-                val savedQueue = com.music.spotui.data.preferences.loadLastQueue(context)
+            val restored = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val playback = com.music.spotui.data.preferences.loadLastPlayback(context)
+                val queue = com.music.spotui.data.preferences.loadLastQueue(context)
+                com.music.spotui.data.preferences.loadOriginalQueue(context)
+                playback to queue
+            }
+            if (playerViewModel.currentSongTitle.value.isNotBlank()) return@LaunchedEffect
+            restored.first?.let { (song, positionMs) ->
+                val savedQueue = restored.second
                 val queue = if (savedQueue.isNotEmpty()) savedQueue else listOf(song)
                 val idx = com.music.spotui.data.preferences.loadLastQueueIndex(context, queue, song.id)
                 playerViewModel.updateQueue(queue, isManualEdit = true)

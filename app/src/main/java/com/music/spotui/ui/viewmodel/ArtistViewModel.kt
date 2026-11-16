@@ -39,6 +39,13 @@ class ArtistViewModel @Inject constructor(private val repository: AppRepository,
         currentSongState.updateSongState(coverUri, title, singer, playingState, songId, songIndex, album)
     }
 
+    fun addAllToQueue(songs: List<SongsModel>) = currentSongState.enqueue(songs)
+    fun startShuffled(songs: List<SongsModel>, sourceName: String) = currentSongState.startShuffled(songs, sourceName)
+    fun setPlaying(playing: Boolean) {
+        if (playing) com.music.spotui.di.SongPlayer.play() else com.music.spotui.di.SongPlayer.pause()
+        currentSongState.setPlaying(playing)
+    }
+
     val likeState = currentSongState.likeState
 
     fun updateLikeState(likeState : Boolean){

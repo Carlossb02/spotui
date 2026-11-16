@@ -121,9 +121,11 @@ fun loadLastQueue(context: Context): List<SongsModel> = loadQueue(context, KEY_Q
 fun loadOriginalQueue(context: Context): List<SongsModel> =
     loadQueue(context, "original_queue").ifEmpty { loadLastQueue(context) }
 
+private val parsedQueueMemory = java.util.concurrent.ConcurrentHashMap<String, Pair<String, List<SongsModel>>>()
 private fun loadQueue(context: Context, key: String): List<SongsModel> {
     val p = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
     val raw = p.getString(key, null) ?: return emptyList()
+    parsedQueueMemory[key]?.takeIf { it.first == raw }?.let { return it.second }
     return runCatching {
         val array = JSONArray(raw)
         val list = mutableListOf<SongsModel>()
@@ -134,7 +136,7 @@ private fun loadQueue(context: Context, key: String): List<SongsModel> {
                 list.add(song)
             }
         }
-        list
+        list.toList().also { parsedQueueMemory[key] = raw to it }
     }.getOrNull() ?: emptyList()
 }
 

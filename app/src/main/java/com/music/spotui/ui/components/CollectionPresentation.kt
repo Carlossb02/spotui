@@ -82,8 +82,8 @@ internal fun CollectionDownloadButton(songs: List<SongsModel>, description: Stri
     var menu by remember { mutableStateOf(false) }
     val paused = keys.any { it in pausedKeys }
     val fraction by androidx.compose.animation.core.animateFloatAsState(status.progress, label = "collectionDownload")
-    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-        Box(Modifier.size(44.dp).clip(CircleShape).background(Color.White.copy(alpha = .065f))
+    Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(36.dp).clip(CircleShape)
             .combinedClickable(enabled = keys.isNotEmpty(), role = androidx.compose.ui.semantics.Role.Button,
                 onClick = {
                     when {
@@ -114,5 +114,36 @@ internal fun CollectionDownloadButton(songs: List<SongsModel>, description: Stri
 internal fun CollectionSecondaryActions(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
     Box(modifier.padding(end = 20.dp).clip(androidx.compose.ui.graphics.RectangleShape)) {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = content)
+    }
+}
+
+/** A single fixed contract for collection controls; screen-specific actions belong above. */
+@Composable
+internal fun CollectionActionBar(
+    modifier: Modifier = Modifier, enabled: Boolean, playing: Boolean,
+    download: @Composable () -> Unit, onSort: () -> Unit, onQueue: () -> Unit,
+    onShuffle: () -> Unit, onPlay: () -> Unit,
+) {
+    Row(modifier.height(64.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) { download() }
+            OutlinedButton(onClick = onSort, modifier = Modifier.width(76.dp).height(40.dp),
+                contentPadding = PaddingValues(4.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)) {
+                Text("Ordenar", color = Color(0xFFB3B3B3), style = MaterialTheme.typography.labelMedium, maxLines = 1)
+            }
+            IconButton(onClick = onQueue, enabled = enabled, modifier = Modifier.size(40.dp)) {
+                Icon(androidx.compose.ui.res.painterResource(com.music.spotui.R.drawable.ic_queue_add), "Añadir a la cola", tint = Color(0xFFB3B3B3), modifier = Modifier.size(24.dp))
+            }
+        }
+        Spacer(Modifier.width(16.dp))
+        IconButton(onClick = onShuffle, enabled = enabled, modifier = Modifier.size(40.dp)) {
+            Icon(androidx.compose.ui.res.painterResource(com.music.spotui.R.drawable.ic_player_shuffle), "Aleatorio", tint = Color(0xFFB3B3B3), modifier = Modifier.size(24.dp))
+        }
+        Spacer(Modifier.width(8.dp))
+        FilledIconButton(onClick = onPlay, enabled = enabled, modifier = Modifier.size(52.dp),
+            colors = IconButtonDefaults.filledIconButtonColors(containerColor = CollectionGreen, contentColor = Color.Black,
+                disabledContainerColor = CollectionGreen.copy(alpha = .35f), disabledContentColor = Color.Black)) {
+            Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pausar" else "Reproducir", modifier = Modifier.size(30.dp))
+        }
     }
 }
