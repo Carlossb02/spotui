@@ -348,7 +348,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         // Shared playlist controls: downloads and queue left, Play right.
                         if (episodes.isNotEmpty()) {
                             Row(modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                                com.music.spotui.ui.components.CollectionSecondaryActions(modifier = Modifier.weight(1f)) {
                                 com.music.spotui.ui.components.CollectionDownloadButton(episodes, uiLocalized("Descargar episodios")) { complete ->
                                     com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollection(context, "show:$showId",
                                         displayShowTitle, resolvedCover.orEmpty(), resolvedPublisher, false, episodes)

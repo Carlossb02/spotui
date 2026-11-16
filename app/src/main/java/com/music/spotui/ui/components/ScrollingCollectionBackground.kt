@@ -81,7 +81,7 @@ fun Modifier.scrollingCollectionBackground(
                     clipRect(top = top - 100.dp.toPx(), bottom = imageBottom) {
                         drawImage(bitmap, dstOffset = IntOffset(0, (top - 100.dp.toPx()).roundToInt()),
                             dstSize = IntSize(size.width.roundToInt(), (header.size + 100.dp.toPx()).roundToInt().coerceAtLeast(1)))
-                        drawRect(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .12f), baseColor.copy(alpha = .4f), baseColor),
+                        drawRect(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .08f), baseColor.copy(alpha = .3f), baseColor),
                             startY = top, endY = imageBottom))
                     }
                 }

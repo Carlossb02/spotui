@@ -446,23 +446,8 @@ fun SumUpAlbumScreen(
                     )
                     }
                     Spacer(modifier = Modifier.height(12.dp))
-                    Row(
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().height(64.dp)
-                            .padding(horizontal = 20.dp)
-                    ) {
-                        if (snackbarVisible) {
-                            Box(modifier = Modifier.weight(1f)) {
-                                Snackbar(showMessage = snackbarMessage)
-                            }
-                        } else {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                com.music.spotui.ui.components.LibrarySaveIcon(
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+com.music.spotui.ui.components.LibrarySaveIcon(
                                     saved = albumSaved,
                                     enabled = !albumSaveBusy && albumSpotifyId.isNotBlank(),
                                     onClick = {
@@ -484,22 +469,21 @@ fun SumUpAlbumScreen(
                                         }
                                     },
                                 )
-                                if (albumSongs.isNotEmpty()) {
-                                    com.music.spotui.ui.components.CollectionActionSurface(onClick = {
-                                        playerViewModel.addAllToQueue(albumSongs)
-                                        android.widget.Toast.makeText(context,
-                                            "${albumSongs.size} track(s) added to queue",
-                                            android.widget.Toast.LENGTH_SHORT).show()
-                                    }) {
-                                        Icon(
-                                            painter = painterResource(R.drawable.ic_queue_add),
-                                            tint = Color.White,
-                                            modifier = Modifier.size(24.dp),
-                                            contentDescription = uiLocalized("Add to queue")
-                                        )
-                                    }
-
-                                    com.music.spotui.ui.components.CollectionDownloadButton(albumSongs, uiLocalized("Download album")) { complete ->
+}
+Spacer(Modifier.height(8.dp))
+Row(
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().height(64.dp)
+                            .padding(horizontal = 20.dp)
+                    ) {
+                        if (snackbarVisible) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                Snackbar(showMessage = snackbarMessage)
+                            }
+                        } else {
+                            com.music.spotui.ui.components.CollectionSecondaryActions(modifier = Modifier.weight(1f)) {
+com.music.spotui.ui.components.CollectionDownloadButton(albumSongs, uiLocalized("Download album")) { complete ->
                                         com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollection(
                                             context = context, id = "album:$albumName|$artist",
                                             name = albumName, coverUri = album[0].coverUri,
@@ -512,10 +496,21 @@ fun SumUpAlbumScreen(
                                         } else snackbarMessage = "Album added to offline library"
                                         snackbarVisible = true
                                     }
-                                    com.music.spotui.ui.components.CollectionSortButton { showSortSheet = true }
-
-                                }
-                            }
+com.music.spotui.ui.components.CollectionSortButton { showSortSheet = true }
+com.music.spotui.ui.components.CollectionActionSurface(onClick = {
+                                        playerViewModel.addAllToQueue(albumSongs)
+                                        android.widget.Toast.makeText(context,
+                                            "${albumSongs.size} track(s) added to queue",
+                                            android.widget.Toast.LENGTH_SHORT).show()
+                                    }) {
+                                        Icon(
+                                            painter = painterResource(R.drawable.ic_queue_add),
+                                            tint = Color.White,
+                                            modifier = Modifier.size(24.dp),
+                                            contentDescription = uiLocalized("Add to queue")
+                                        )
+                                    }
+}
                         }
                         if (albumSongs.isNotEmpty()) {
                             com.music.spotui.ui.components.CollectionActionSurface(onClick = {

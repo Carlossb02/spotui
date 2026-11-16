@@ -29,6 +29,7 @@ class MyApplication : Application(){
         com.music.spotui.data.api.SpotifyPendingWrites.install(this)
         com.music.spotui.sync.GoogleDeviceSync.install(this)
         appScope.launch {
+            kotlinx.coroutines.delay(1_200L)
             // Reading an old/corrupt local snapshot is optional startup work.
             // One failed warmup must not terminate the process over the login screen.
             val tasks=listOf<Pair<String,()->Unit>>(
@@ -41,6 +42,8 @@ class MyApplication : Application(){
                 "library" to {com.music.spotui.data.api.LibraryCatalogCache.read(this@MyApplication);Unit},
             )
             tasks.forEach { (name,load)->
+                com.music.spotui.di.SongPlayer.awaitAudioStartup()
+                kotlinx.coroutines.delay(75L)
                 try {
                     load()
                 } catch (cancelled:CancellationException) {
@@ -79,6 +82,8 @@ class MyApplication : Application(){
         // Pre-warm the YouTube playback pipeline so the first tap doesn't pay for
         // cold-starting the player.js parser and BotGuard WebView (~2-4s combined).
         appScope.launch {
+            kotlinx.coroutines.delay(1_500L)
+            com.music.spotui.di.SongPlayer.awaitAudioStartup()
             runCatching { com.metrolist.innertube.NewPipeExtractor.init() }
         }
     }

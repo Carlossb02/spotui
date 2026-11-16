@@ -330,20 +330,14 @@ fun LikedSongsScreen(navController: NavController) {
                                     }
                                     Spacer(modifier = Modifier.width(16.dp))
                                 } else {
-                                    Row(
-                                        horizontalArrangement = Arrangement.Start,
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        if (songs.isNotEmpty()) {
-                                            com.music.spotui.ui.components.CollectionDownloadButton(songs, uiLocalized("Download liked songs")) { complete ->
+                                    com.music.spotui.ui.components.CollectionSecondaryActions(modifier = Modifier.weight(1f)) {
+com.music.spotui.ui.components.CollectionDownloadButton(songs, uiLocalized("Download liked songs")) { complete ->
                                                 if (!complete) {
                                                     SongPlayer.downloadAll(songs, context)
                                                 }
                                             }
-                                            com.music.spotui.ui.components.CollectionSortButton { showSortSheet = true }
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            com.music.spotui.ui.components.CollectionActionSurface(onClick = {
+com.music.spotui.ui.components.CollectionSortButton { showSortSheet = true }
+com.music.spotui.ui.components.CollectionActionSurface(onClick = {
                                                 playerViewModel.addAllToQueue(songs)
                                                 android.widget.Toast.makeText(
                                                     context,
@@ -360,10 +354,7 @@ fun LikedSongsScreen(navController: NavController) {
                                                     contentDescription = uiLocalized("Add to queue"),
                                                 )
                                             }
-                                            Spacer(modifier = Modifier.width(8.dp))
-
-                                        }
-                                    }
+}
                                 }
                                 if (songs.isNotEmpty()) {
                                     com.music.spotui.ui.components.CollectionActionSurface(onClick = {

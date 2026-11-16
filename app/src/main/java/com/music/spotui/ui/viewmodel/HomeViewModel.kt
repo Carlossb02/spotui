@@ -83,7 +83,7 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository,
             }
         }
         viewModelScope.launch {
-            kotlinx.coroutines.delay(1_800L)
+            kotlinx.coroutines.delay(8_000L)
             var checks = 0
             while (checks < 10 && com.music.spotui.di.SongPlayer.isPreparingTrack()) {
                 checks++

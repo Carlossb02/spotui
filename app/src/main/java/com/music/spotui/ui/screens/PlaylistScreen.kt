@@ -603,7 +603,16 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                             )
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            Row(
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+if (externalReadOnly) {
+                                            com.music.spotui.ui.components.LibrarySaveIcon(
+                                                saved = favoritePlaylist, onClick = { togglePlaylistFavorite() },
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                        }
+}
+Spacer(Modifier.height(8.dp))
+Row(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
@@ -619,38 +628,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                     }
                                     Spacer(modifier = Modifier.width(16.dp))
                                 } else {
-                                    Row(
-                                        horizontalArrangement = Arrangement.Start,
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        if (externalReadOnly) {
-                                            com.music.spotui.ui.components.LibrarySaveIcon(
-                                                saved = favoritePlaylist, onClick = { togglePlaylistFavorite() },
-                                            )
-                                            Spacer(Modifier.width(8.dp))
-                                        }
-                                        if (songs.isNotEmpty()) {
-                                            // Add all playlist tracks to the queue.
-                                            com.music.spotui.ui.components.CollectionActionSurface(onClick = {
-                                                playlistViewModel.addAllToQueue(filteredSongs)
-                                                android.widget.Toast.makeText(
-                                                    context,
-                                                    "${filteredSongs.size} track(s) added to queue",
-                                                    android.widget.Toast.LENGTH_SHORT,
-                                                ).show()
-                                            }) {
-                                                Icon(
-                                                    painter = painterResource(id = R.drawable.ic_queue_add),
-                                                    tint = Color.White,
-                                                    modifier = Modifier
-                                                        .size(24.dp)
-                                                        ,
-                                                    contentDescription = uiLocalized("Add to queue"),
-                                                )
-                                            }
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            com.music.spotui.ui.components.CollectionDownloadButton(songs, uiLocalized("Download playlist")) { complete ->
+                                    com.music.spotui.ui.components.CollectionSecondaryActions(modifier = Modifier.weight(1f)) {
+com.music.spotui.ui.components.CollectionDownloadButton(songs, uiLocalized("Download playlist")) { complete ->
                                                 com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollection(
                                                     context = context,
                                                     id = playlistId,
@@ -667,12 +646,25 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                                     snackbarVisible = true
                                                 }
                                             }
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            com.music.spotui.ui.components.CollectionSortButton { showSortSheet = true }
-
-
-                                        }
-                                    }
+com.music.spotui.ui.components.CollectionSortButton { showSortSheet = true }
+com.music.spotui.ui.components.CollectionActionSurface(onClick = {
+                                                playlistViewModel.addAllToQueue(filteredSongs)
+                                                android.widget.Toast.makeText(
+                                                    context,
+                                                    "${filteredSongs.size} track(s) added to queue",
+                                                    android.widget.Toast.LENGTH_SHORT,
+                                                ).show()
+                                            }) {
+                                                Icon(
+                                                    painter = painterResource(id = R.drawable.ic_queue_add),
+                                                    tint = Color.White,
+                                                    modifier = Modifier
+                                                        .size(24.dp)
+                                                        ,
+                                                    contentDescription = uiLocalized("Add to queue"),
+                                                )
+                                            }
+}
                                 }
                                 // Always visible: pause when playing, resume when this
                                 // list's track is paused, otherwise start from the top.

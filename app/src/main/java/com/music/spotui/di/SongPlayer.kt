@@ -2908,7 +2908,7 @@ object SongPlayer {
             // Both exact-ID sources retain their original precedence, but their
             // network waits overlap. Never rank candidates until both finish.
             val rating = async { ensureMatchingContentRating(query, spotifyId, context) }
-            val result = (0 until 3).firstNotNullOfOrNull { attempt ->
+            val result = orderedFirstNotNull((0 until 3).toList(), parallelism = 2) { attempt, _ ->
                 if (attempt > 0) delay(250L * attempt)
                 try {
                     withTimeoutOrNull(5000L) { com.metrolist.spotify.Spotify.track(spotifyId).getOrNull() }

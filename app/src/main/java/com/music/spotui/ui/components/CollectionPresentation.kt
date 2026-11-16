@@ -1,5 +1,7 @@
 package com.music.spotui.ui.components
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
@@ -105,5 +107,12 @@ internal fun CollectionDownloadButton(songs: List<SongsModel>, description: Stri
         if (!status.complete && (requested || status.active)) CircularProgressIndicator(
             progress = { fraction.coerceAtLeast(.015f) }, modifier = Modifier.fillMaxSize(),
             color = CollectionGreen, trackColor = Color.White.copy(alpha = .1f), strokeWidth = 2.dp, strokeCap = StrokeCap.Round)
+    }
+}
+
+@Composable
+internal fun CollectionSecondaryActions(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
+    Box(modifier.padding(end = 20.dp).clip(androidx.compose.ui.graphics.RectangleShape)) {
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = content)
     }
 }
