@@ -226,15 +226,10 @@ fun CollectionSortRow(
 fun CollectionSortSheet(
     selected: String,
     descending: Boolean,
+    choices: List<Pair<String, String>> = listOf("DATE" to "Fecha de incorporación", "TITLE" to "Título", "ARTIST" to "Artista", "ALBUM" to "Álbum"),
     onSelected: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val choices = listOf(
-        "DATE" to "Fecha de incorporación",
-        "TITLE" to "Título",
-        "ARTIST" to "Artista",
-        "ALBUM" to "Álbum"
-    )
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color(0xFF202020)) {
         Column(modifier = Modifier.fillMaxWidth().padding(bottom = 22.dp)) {
             Text(uiLocalized("Ordenar por"), color = Color.White, fontSize = 19.sp,
