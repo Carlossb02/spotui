@@ -4,6 +4,9 @@ import com.music.spotui.util.uiLocalized
 
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -226,12 +229,12 @@ fun CollectionSortRow(
 fun CollectionSortSheet(
     selected: String,
     descending: Boolean,
-    choices: List<Pair<String, String>> = listOf("DATE" to "Fecha de incorporación", "TITLE" to "Título", "ARTIST" to "Artista", "ALBUM" to "Álbum"),
+    choices: List<Pair<String, String>> = listOf("DATE" to "Fecha", "TITLE" to "Título", "ARTIST" to "Artista", "ALBUM" to "Álbum"),
     onSelected: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color(0xFF202020)) {
-        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 22.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 22.dp)) {
             Text(uiLocalized("Ordenar por"), color = Color.White, fontSize = 19.sp,
                 fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp))
             Text(uiLocalized("Pulsa de nuevo la opción seleccionada para invertir el orden"),
@@ -243,6 +246,18 @@ fun CollectionSortSheet(
                 Row(modifier = Modifier.fillMaxWidth().clickable { onSelected(key) }
                     .padding(horizontal = 24.dp, vertical = 15.dp),
                     verticalAlignment = Alignment.CenterVertically) {
+                    val optionIcon = when (key) {
+                        "TITLE" -> com.music.spotui.R.drawable.collection_sort_title
+                        "ARTIST", "CREATOR" -> com.music.spotui.R.drawable.collection_sort_artist
+                        "ALBUM" -> com.music.spotui.R.drawable.collection_sort_album
+                        "DURATION" -> com.music.spotui.R.drawable.collection_sort_duration
+                        "DEFAULT" -> com.music.spotui.R.drawable.collection_sort_track
+                        "POPULARITY" -> com.music.spotui.R.drawable.collection_sort_popularity
+                        else -> com.music.spotui.R.drawable.collection_sort_date
+                    }
+                    Icon(androidx.compose.ui.res.painterResource(optionIcon), null,
+                        tint = if (active) Color(0xFF1ED760) else Color.White, modifier = Modifier.size(24.dp))
+                    Spacer(Modifier.width(16.dp))
                     Text(title, modifier = Modifier.weight(1f), fontSize = 16.sp,
                         color = if (active) Color(0xFF1ED760) else Color.White,
                         fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal)

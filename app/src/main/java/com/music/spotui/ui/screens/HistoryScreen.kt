@@ -225,22 +225,16 @@ fun HistoryScreen(navController: NavController) {
             }
         }
     }
-    if (showSortSheet) ModalBottomSheet(onDismissRequest = { showSortSheet = false }, containerColor = Color(0xFF202020)) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(20.dp)) {
-            Text(uiLocalized("Ordenar historial"), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            HistorySortOption.entries.forEach { option ->
-                TextButton(onClick = {
-                    descending = if (currentSort == option) !descending else option == HistorySortOption.DATE
-                    currentSort = option
-                    setHistorySortOption(context, option, descending)
-                    showSortSheet = false
-                }, modifier = Modifier.fillMaxWidth()) {
-                    Text(uiLocalized(when(option) { HistorySortOption.DATE -> "Fecha"; HistorySortOption.TITLE -> "Título"; HistorySortOption.ARTIST -> "Artista o podcast" }), color = if (currentSort == option) SpotifyGreen else Color.White, modifier = Modifier.weight(1f))
-                    if (currentSort == option) Icon(if (descending) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp, null, tint = SpotifyGreen)
-                }
-            }
-        }
-    }
+    if (showSortSheet) com.music.spotui.ui.components.CollectionSortSheet(
+ selected = currentSort.name, descending = descending, choices = listOf("DATE" to "Fecha", "TITLE" to "Título", "ARTIST" to "Artista"),
+ onDismiss = { showSortSheet = false },
+ onSelected = { key ->
+ val option = HistorySortOption.valueOf(key)
+ descending = if (currentSort == option) !descending else option == HistorySortOption.DATE
+ currentSort = option
+ setHistorySortOption(context, option, descending)
+ showSortSheet = false
+ })
     if (showClearDialog) AlertDialog(onDismissRequest = { showClearDialog = false }, containerColor = Color(0xFF242424),
         title = { Text(uiLocalized("¿Borrar el historial?"), color = Color.White) },
         text = { Text(uiLocalized("Se eliminará tu historial de música y podcasts."), color = MutedText) },

@@ -14,8 +14,8 @@ android {
         applicationId = "com.music.spotidroid"
         minSdk = 26
         targetSdk = 37
-        versionCode = 202608163
-        versionName = "1.9.6.14"
+        versionCode = 202608164
+        versionName = "1.9.6.15"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -47,6 +47,13 @@ android {
             )
             // Sign release with the shared debug key so the APK is installable via sideload
             // and upgrades the existing (debug-signed) install in place.
+            signingConfig = signingConfigs.getByName("sharedDebug")
+        }
+        create("performance") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".debug"
+            isDebuggable = false
+            matchingFallbacks += listOf("release")
             signingConfig = signingConfigs.getByName("sharedDebug")
         }
         debug {

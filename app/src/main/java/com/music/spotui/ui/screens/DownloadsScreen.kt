@@ -552,76 +552,16 @@ fun DownloadsScreen(navController: NavController) {
                 modifier = Modifier.align(Alignment.CenterEnd)
             )
 
-            if (showSortSheet) {
-                    ModalBottomSheet(
-                        onDismissRequest = { showSortSheet = false },
-                        containerColor = Color(0xFF1A1A1A)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .navigationBarsPadding()
-                        ) {
-                            Text(
-                                text = uiLocalized("Sort by"),
-                                color = Color.White,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(16.dp, 12.dp, 16.dp, 12.dp)
-                            )
-                            HorizontalDivider(color = Color(0xFF2A2A2A))
-                            Spacer(modifier = Modifier.height(4.dp))
-                            DownloadSortOption.entries.forEach { option ->
-                                val isSelected = option == currentSort
-                                 val icon = when (option) {
-                                     DownloadSortOption.DATE -> Icons.Default.DateRange
-                                     DownloadSortOption.TITLE -> Icons.AutoMirrored.Filled.List
-                                     DownloadSortOption.ARTIST -> Icons.Default.Person
-                                 }
-
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            if (currentSort == option) {
-                                                isDescending = !isDescending
-                                            } else {
-                                                currentSort = option
-                                                isDescending = (option == DownloadSortOption.DATE)
-                                            }
-                                            setDownloadsSortOption(context, currentSort, isDescending)
-                                            showSortSheet = false
-                                        }
-                                        .padding(16.dp, 14.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = icon,
-                                        contentDescription = null,
-                                        tint = if (isSelected) Color(AppPalette.toArgb()) else Color.White,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(18.dp))
-                                    Text(
-                                        text = if (isSelected) option.getDescriptiveLabel(isDescending) else option.getDescriptiveLabel(option == DownloadSortOption.DATE),
-                                        color = if (isSelected) Color(AppPalette.toArgb()) else Color.White,
-                                        fontSize = 15.sp,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    if (isSelected) {
-                                        Icon(
-                                            imageVector = if (isDescending) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
-                                            contentDescription = null,
-                                            tint = Color(AppPalette.toArgb()),
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(12.dp))
-                        }
-                    }
-                }
+            if (showSortSheet) com.music.spotui.ui.components.CollectionSortSheet(
+ selected = currentSort.name, descending = isDescending, choices = listOf("DATE" to "Fecha", "TITLE" to "Título", "ARTIST" to "Artista"),
+ onDismiss = { showSortSheet = false },
+ onSelected = { key ->
+ val option = DownloadSortOption.valueOf(key)
+ isDescending = if (currentSort == option) !isDescending else option == DownloadSortOption.DATE
+ currentSort = option
+ setDownloadsSortOption(context, currentSort, isDescending)
+ showSortSheet = false
+ })
                 if (showClearConfirmDialog) {
                     AlertDialog(
                         onDismissRequest = { showClearConfirmDialog = false },

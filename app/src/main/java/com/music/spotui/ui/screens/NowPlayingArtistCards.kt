@@ -142,9 +142,8 @@ internal fun NowPlayingArtistCards(
                                 color = Color(0xFFB3B3B3), fontSize = 15.sp)
                         }
                         profile?.biography?.takeIf(String::isNotBlank)?.let { biography ->
-                            Text(android.text.Html.fromHtml(biography, android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim(),
-                                color = Color(0xFFB3B3B3), fontSize = 15.sp, lineHeight = 22.sp,
-                                maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            com.music.spotui.ui.components.ArtistBiographyText(raw = biography,
+                                color = Color(0xFFB3B3B3), fontSizeSp = 15f, maxLines = 3)
                             Text(uiLocalized("Show more"), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                     }

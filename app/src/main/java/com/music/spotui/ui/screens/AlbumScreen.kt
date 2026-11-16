@@ -695,76 +695,15 @@ com.music.spotui.ui.components.CollectionActionBar(
         )
     }
 
-        if (showSortSheet) {
-            ModalBottomSheet(
-                onDismissRequest = { showSortSheet = false },
-                containerColor = Color(0xFF1A1A1A)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                ) {
-                    Text(
-                        text = uiLocalized("Sort by"),
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(16.dp, 12.dp, 16.dp, 12.dp)
-                    )
-                    androidx.compose.material3.HorizontalDivider(color = Color(0xFF2A2A2A))
-                    Spacer(modifier = Modifier.height(4.dp))
-                    AlbumSortOption.entries.forEach { option ->
-                        val isSelected = option == currentSort
-                        val icon = when (option) {
-                            AlbumSortOption.DEFAULT -> Icons.Default.DateRange
-                            AlbumSortOption.TITLE -> Icons.AutoMirrored.Filled.List
-                            AlbumSortOption.ARTIST -> Icons.Default.Person
-                            AlbumSortOption.DURATION -> Icons.Default.Menu
-                        }
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    if (currentSort == option) {
-                                        isDescending = !isDescending
-                                    } else {
-                                        currentSort = option
-                                        isDescending = (option != AlbumSortOption.DEFAULT)
-                                    }
-                                    setAlbumSortOption(context, albumName, currentSort, isDescending)
-                                    showSortSheet = false
-                                }
-                                .padding(16.dp, 14.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = icon,
-                                contentDescription = null,
-                                tint = if (isSelected) Color(AppPalette.toArgb()) else Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
-                            Spacer(modifier = Modifier.width(18.dp))
-                            Text(
-                                text = if (isSelected) option.getDescriptiveLabel(isDescending) else option.getDescriptiveLabel(option != AlbumSortOption.DEFAULT),
-                                color = if (isSelected) Color(AppPalette.toArgb()) else Color.White,
-                                fontSize = 15.sp,
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = if (isDescending) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
-                                    contentDescription = null,
-                                    tint = Color(AppPalette.toArgb()),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                }
-            }
-        }
+        if (showSortSheet) com.music.spotui.ui.components.CollectionSortSheet(
+ selected = currentSort.name, descending = isDescending, choices = listOf("DEFAULT" to "Orden de pistas", "TITLE" to "Título", "ARTIST" to "Artista", "DURATION" to "Duración"),
+ onDismiss = { showSortSheet = false },
+ onSelected = { key ->
+ val option = AlbumSortOption.valueOf(key)
+ isDescending = if (currentSort == option) !isDescending else option != AlbumSortOption.DEFAULT
+ currentSort = option
+ setAlbumSortOption(context, albumName, currentSort, isDescending)
+ showSortSheet = false
+ })
     }
 }
