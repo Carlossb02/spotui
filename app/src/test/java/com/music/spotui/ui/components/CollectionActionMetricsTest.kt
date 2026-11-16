@@ -2,6 +2,15 @@ package com.music.spotui.ui.components
 import org.junit.Assert.*
 import org.junit.Test
 class CollectionActionMetricsTest {
+    @Test fun phonesNeverShowLabelsAndTabletLabelsFitOnlyWhenThereIsRoom() {
+        for (width in 288..1200) {
+            val phone = collectionActionMetrics(width.toFloat(), false)
+            assertFalse(phone.labels)
+            val tablet = collectionActionMetrics(width.toFloat(), true)
+            assertTrue(tablet.requiredWidth <= width)
+            assertEquals(width >= 560, tablet.labels)
+        }
+    }
     @Test fun allButtonsAndTheirGapFitNarrowPhonesAndTablets() {
         for (available in 288..1200) {
             val metrics=collectionActionMetrics(available.toFloat())
