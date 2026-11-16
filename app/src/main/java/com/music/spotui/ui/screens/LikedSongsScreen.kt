@@ -317,6 +317,7 @@ fun LikedSongsScreen(navController: NavController) {
                             val playing = likedSongsViewModel.currentSongPlayingState.value
 val currentInList = songs.any { it.id == likedSongsViewModel.currentSongId.value }
 com.music.spotui.ui.components.CollectionActionBar(
+ accent = Color(0xFF7961C7),
  sortMode = currentSort.name, sortDescending = isDescending,
  modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
  enabled = songs.isNotEmpty(), playing = currentInList && playing,

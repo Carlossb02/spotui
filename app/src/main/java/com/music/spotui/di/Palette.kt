@@ -60,7 +60,7 @@ class Palette {
                     Palette
                         .from(resource)
                         .generate { palette ->
-                        val lightVibrantColor = palette?.mutedSwatch?.rgb
+                        val lightVibrantColor = palette?.mutedSwatch?.rgb ?: palette?.vibrantSwatch?.rgb ?: palette?.dominantSwatch?.rgb
                         lightVibrantColor?.let {
                             // Convert RGB color integer to ARGB color integer with full opacity
                             val argbColor = Color(it or (0xFF shl 24))
