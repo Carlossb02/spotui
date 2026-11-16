@@ -606,6 +606,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                             )
                             Spacer(modifier = Modifier.height(12.dp))
 
+                            if (externalReadOnly) {
                             Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
 if (externalReadOnly) {
                                             com.music.spotui.ui.components.LibrarySaveIcon(
@@ -615,9 +616,11 @@ if (externalReadOnly) {
                                         }
 }
 Spacer(Modifier.height(8.dp))
+}
 val playing = playlistViewModel.currentSongPlayingState.value
 val currentInList = songs.any { it.id == playlistViewModel.currentSongId.value }
 com.music.spotui.ui.components.CollectionActionBar(
+ sortMode = currentSort.name, sortDescending = isDescending,
  modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
  enabled = songs.isNotEmpty(), playing = currentInList && playing,
  download = { com.music.spotui.ui.components.CollectionDownloadButton(songs, "Descargar") { complete ->

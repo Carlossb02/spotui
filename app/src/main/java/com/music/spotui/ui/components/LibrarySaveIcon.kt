@@ -14,10 +14,12 @@ import androidx.compose.ui.unit.dp
 /** The same shape and saved/unsaved colours for albums and playlist shortcuts. */
 @Composable
 fun LibrarySaveIcon(saved: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+    androidx.compose.material3.IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(40.dp)) {
     Icon(
-        imageVector = if (saved) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+        painter = androidx.compose.ui.res.painterResource(if (saved) com.music.spotui.R.drawable.collection_heart_saved else com.music.spotui.R.drawable.collection_heart),
         tint = if (saved) Color(0xFF1ED760) else Color.White,
         contentDescription = if (saved) "Quitar de tu biblioteca" else "Guardar en tu biblioteca",
-        modifier = Modifier.size(27.dp).clickable(enabled = enabled, onClick = onClick),
+        modifier = Modifier.size(24.dp),
     )
+    }
 }

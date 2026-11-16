@@ -328,7 +328,6 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                                 modifier = Modifier
                                     .size(44.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0xFF2A2A30))
                                     .clickable {
                                         isNotificationOn = !isNotificationOn
                                         val msg = if (isNotificationOn) msgNotifOn else msgNotifOff
@@ -348,6 +347,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         // The common bar keeps identical slots while episodes load.
                         run {
                             com.music.spotui.ui.components.CollectionActionBar(
+ sortMode = currentSort.name, sortDescending = isDescending,
  modifier = Modifier.fillMaxWidth(),
  enabled = episodes.isNotEmpty(), playing = episodes.any { it.id == playerViewModel.currentSongId.value } && playerViewModel.currentSongPlayingState.value,
  download = { com.music.spotui.ui.components.CollectionDownloadButton(episodes, "Descargar") { complete ->

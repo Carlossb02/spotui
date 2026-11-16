@@ -286,6 +286,7 @@ Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = A
                 }
                     val collectionSongs = tracks.map { it.song }
                     com.music.spotui.ui.components.CollectionActionBar(
+ sortMode = if (orderByTitle) "TITLE" else "POPULARITY", sortDescending = !orderByTitle,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                         enabled = collectionSongs.isNotEmpty(),
                         playing = collectionSongs.any { it.id == artistViewModel.currentSongId.value } && artistViewModel.currentSongPlayingState.value,

@@ -448,6 +448,7 @@ fun SumUpAlbumScreen(
                     )
                     }
                     Spacer(modifier = Modifier.height(12.dp))
+                    if (albumSpotifyId.isNotBlank()) {
                     Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
 com.music.spotui.ui.components.LibrarySaveIcon(
                                     saved = albumSaved,
@@ -473,9 +474,11 @@ com.music.spotui.ui.components.LibrarySaveIcon(
                                 )
 }
 Spacer(Modifier.height(8.dp))
+}
 val playing = albumViewModel.currentSongPlayingState.value
 val currentInList = albumSongs.any { it.id == albumViewModel.currentSongId.value }
 com.music.spotui.ui.components.CollectionActionBar(
+ sortMode = currentSort.name, sortDescending = isDescending,
  modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
  enabled = albumSongs.isNotEmpty(), playing = currentInList && playing,
  download = { com.music.spotui.ui.components.CollectionDownloadButton(albumSongs, "Descargar") { complete ->
