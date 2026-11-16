@@ -120,8 +120,12 @@ private fun ArtistOverviewContent(
 ) {
     val context = LocalContext.current
     var orderByTitle by remember(overview.id) { mutableStateOf(false) }
+    var artistSortDescending by remember(overview.id) { mutableStateOf(true) }
     var showCollectionSort by remember { mutableStateOf(false) }
-    val tracks = remember(overview.topTracks, orderByTitle) { if (orderByTitle) overview.topTracks.sortedBy { it.song.title.lowercase() } else overview.topTracks }
+    val tracks = remember(overview.topTracks, orderByTitle, artistSortDescending) {
+        if (orderByTitle) { val ordered=overview.topTracks.sortedBy { it.song.title.lowercase() }; if (artistSortDescending) ordered.reversed() else ordered }
+        else if (artistSortDescending) overview.topTracks else overview.topTracks.reversed()
+    }
     val displayName = overview.name.ifBlank { artistName }
 
     // Warm the stream cache for the top tracks so the first tap plays instantly.
@@ -286,7 +290,7 @@ Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = A
                 }
                     val collectionSongs = tracks.map { it.song }
                     com.music.spotui.ui.components.CollectionActionBar(
- sortMode = if (orderByTitle) "TITLE" else "POPULARITY", sortDescending = !orderByTitle,
+ sortMode = if (orderByTitle) "TITLE" else "POPULARITY", sortDescending = artistSortDescending,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                         enabled = collectionSongs.isNotEmpty(),
                         playing = collectionSongs.any { it.id == artistViewModel.currentSongId.value } && artistViewModel.currentSongPlayingState.value,
@@ -301,14 +305,17 @@ Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = A
                         } },
                         onPlay = { if (collectionSongs.any { it.id == artistViewModel.currentSongId.value }) artistViewModel.setPlaying(!artistViewModel.currentSongPlayingState.value) else playTrackAt(0) }
                     )
-                    if (showCollectionSort) androidx.compose.material3.AlertDialog(
-                        onDismissRequest = { showCollectionSort = false },
-                        title = { Text("Ordenar") },
-                        text = { Column {
-                            androidx.compose.material3.TextButton(onClick = { orderByTitle=false; showCollectionSort=false }) { Text("Popularidad") }
-                            androidx.compose.material3.TextButton(onClick = { orderByTitle=true; showCollectionSort=false }) { Text("Título") }
-                        } },
-                        confirmButton = { androidx.compose.material3.TextButton(onClick = { showCollectionSort=false }) { Text("Cerrar") } }
+                    if (showCollectionSort) com.music.spotui.ui.components.CollectionSortSheet(
+                        selected = if (orderByTitle) "TITLE" else "POPULARITY",
+                        descending = artistSortDescending,
+                        choices = listOf("POPULARITY" to "Popularidad", "TITLE" to "Título"),
+                        onDismiss = { showCollectionSort = false },
+                        onSelected = { selected ->
+                            val title = selected == "TITLE"
+                            artistSortDescending = if (orderByTitle == title) !artistSortDescending else !title
+                            orderByTitle = title
+                            showCollectionSort = false
+                        }
                     )
                 }
         }

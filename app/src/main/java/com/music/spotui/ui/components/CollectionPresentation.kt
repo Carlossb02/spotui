@@ -2,6 +2,7 @@ package com.music.spotui.ui.components
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
@@ -94,7 +95,7 @@ internal fun CollectionDownloadButton(songs: List<SongsModel>, description: Stri
                 }, onLongClick = { menu = true }), contentAlignment = Alignment.Center) {
             Icon(painter = androidx.compose.ui.res.painterResource(if (paused) com.music.spotui.R.drawable.collection_play else if (status.active) com.music.spotui.R.drawable.collection_pause else com.music.spotui.R.drawable.collection_download),
                 contentDescription = if (paused) "Reanudar descargas" else if (status.active) "Pausar descargas" else description,
-                tint = if (status.complete) CollectionGreen else Color.White, modifier = Modifier.size(24.dp))
+                tint = if (status.complete) CollectionGreen else Color.White, modifier = Modifier.size(22.dp))
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text("Cancelar descargas de esta colección") }, onClick = {
                     menu = false; requested = false; SongPlayer.manageCollectionDownloads(songs, context, delete = false)
@@ -137,29 +138,29 @@ internal fun CollectionActionBar(
                 "POPULARITY" -> com.music.spotui.R.drawable.collection_sort_popularity
                 else -> com.music.spotui.R.drawable.collection_sort_date
             }
-            Column(Modifier.width(76.dp).height(44.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
-                .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onSort),
-                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(androidx.compose.ui.res.painterResource(sortIcon), when (sortMode) { "DEFAULT" -> "Orden de pistas"; "TITLE" -> "Título"; "ARTIST" -> "Artista"; "ALBUM" -> "Álbum"; "DURATION" -> "Duración"; "POPULARITY" -> "Popularidad"; else -> "Fecha" }, tint = Color(0xFFE0E0E0), modifier = Modifier.size(20.dp))
-                    Icon(androidx.compose.ui.res.painterResource(if (sortDescending) com.music.spotui.R.drawable.collection_sort_down else com.music.spotui.R.drawable.collection_sort_up),
-                        if (sortDescending) "Descendente" else "Ascendente", tint = CollectionGreen, modifier = Modifier.size(14.dp))
-                }
-                Text("Ordenar", color = Color(0xFFB3B3B3), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+            Row(Modifier.width(96.dp).height(36.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(50))
+                .background(Color.White.copy(alpha = .045f))
+                .border(1.dp, Color.White.copy(alpha = .22f), androidx.compose.foundation.shape.RoundedCornerShape(50))
+                .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onSort).padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                Icon(androidx.compose.ui.res.painterResource(sortIcon), when (sortMode) { "DEFAULT" -> "Orden de pistas"; "TITLE" -> "Título"; "ARTIST" -> "Artista"; "ALBUM" -> "Álbum"; "DURATION" -> "Duración"; "POPULARITY" -> "Popularidad"; else -> "Fecha" }, tint = Color.White, modifier = Modifier.size(22.dp))
+                Text("Ordenar", color = Color.White, fontSize = androidx.compose.ui.unit.TextUnit.Unspecified, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                Icon(androidx.compose.ui.res.painterResource(if (sortDescending) com.music.spotui.R.drawable.collection_sort_down else com.music.spotui.R.drawable.collection_sort_up),
+                    if (sortDescending) "Descendente" else "Ascendente", tint = Color.White, modifier = Modifier.size(22.dp))
             }
             IconButton(onClick = onQueue, enabled = enabled, modifier = Modifier.size(40.dp)) {
-                Icon(androidx.compose.ui.res.painterResource(com.music.spotui.R.drawable.collection_queue), "Añadir a la cola", tint = Color(0xFFB3B3B3), modifier = Modifier.size(24.dp))
+                Icon(androidx.compose.ui.res.painterResource(com.music.spotui.R.drawable.collection_queue), "Añadir a la cola", tint = Color.White, modifier = Modifier.size(22.dp))
             }
         }
-        Spacer(Modifier.width(16.dp))
+        Spacer(Modifier.width(12.dp))
         IconButton(onClick = onShuffle, enabled = enabled, modifier = Modifier.size(40.dp)) {
-            Icon(androidx.compose.ui.res.painterResource(com.music.spotui.R.drawable.collection_shuffle), "Aleatorio", tint = Color(0xFFB3B3B3), modifier = Modifier.size(24.dp))
+            Icon(androidx.compose.ui.res.painterResource(com.music.spotui.R.drawable.collection_shuffle), "Aleatorio", tint = Color.White, modifier = Modifier.size(22.dp))
         }
         Spacer(Modifier.width(8.dp))
         FilledIconButton(onClick = onPlay, enabled = enabled, modifier = Modifier.size(52.dp),
             colors = IconButtonDefaults.filledIconButtonColors(containerColor = CollectionGreen, contentColor = Color.Black,
                 disabledContainerColor = CollectionGreen.copy(alpha = .35f), disabledContentColor = Color.Black)) {
-            Icon(androidx.compose.ui.res.painterResource(if (playing) com.music.spotui.R.drawable.collection_pause else com.music.spotui.R.drawable.collection_play), if (playing) "Pausar" else "Reproducir", modifier = Modifier.size(30.dp))
+            Icon(androidx.compose.ui.res.painterResource(if (playing) com.music.spotui.R.drawable.collection_pause else com.music.spotui.R.drawable.collection_play), if (playing) "Pausar" else "Reproducir", modifier = Modifier.size(22.dp))
         }
     }
 }
