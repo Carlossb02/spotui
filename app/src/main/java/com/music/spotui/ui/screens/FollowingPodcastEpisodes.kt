@@ -53,9 +53,9 @@ internal fun FollowingPodcastEpisodesContent(
     var savedIn by remember {mutableStateOf<SongsModel?>(null)}
     menu?.let {song->SongOptionsSheet(song=song,navController=navController,context=context,onDismiss={menu=null})}
     savedIn?.let {song->SavedInSheet(song=song,context=context,onDismiss={savedIn=null})}
-    LaunchedEffect(feed.items,feed.loading,feed.checkedAt) {
+    LaunchedEffect(feed.items) {
         if(feed.items.isNotEmpty())withContext(Dispatchers.IO) {
-            markReleasesChecked(context,ReleaseKind.PODCASTS,maxOf(System.currentTimeMillis(),feed.items.maxOf { it.publishedAt }))
+            markReleasesChecked(context,ReleaseKind.PODCASTS,feed.items.maxOf { it.publishedAt })
         }
     }
     fun play(index:Int) {

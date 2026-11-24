@@ -31,7 +31,6 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -93,13 +92,12 @@ import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import kotlinx.coroutines.delay
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.graphics.graphicsLayer
-import kotlinx.coroutines.launch
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.drawscope.clipRect
 
@@ -170,13 +168,7 @@ fun MiniPlayer(
         miniPlayerViewModel.syncWithPlayer()
     }
 
-    var swipeOffsetY by remember { mutableFloatStateOf(0f) }
     var swipeOffsetX by remember { mutableFloatStateOf(0f) }
-    val coroutineScope = rememberCoroutineScope()
-
-    LaunchedEffect(songId) {
-        swipeOffsetX = 0f
-    }
 
     var songProgress by remember { mutableFloatStateOf(0f) }
     // Poll the playback engine on a coroutine rather than writing Compose
@@ -247,6 +239,59 @@ fun MiniPlayer(
     }
 
 
+    val expand = rememberUpdatedState { onExpandPlayer?.invoke() ?: navController.navigate(Routes.Player.route) }
+    val gesture = Modifier.pointerInput(songId, tabletLayout) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            var axis = 0
+            var dx = 0f
+            var dy = 0f
+            var released = false
+            try {
+                while (true) {
+                    val event = awaitPointerEvent()
+                    if (event.changes.any { it.id != down.id && it.pressed }) break
+                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                    if (change.isConsumed) break
+                    dx = change.position.x - down.position.x
+                    dy = change.position.y - down.position.y
+                    if (!change.pressed) {
+                        released = true
+                        if (axis != 0) change.consume()
+                        break
+                    }
+                    if (axis == 0) {
+                        val x = kotlin.math.abs(dx)
+                        val y = kotlin.math.abs(dy)
+                        axis = when {
+                            x > viewConfiguration.touchSlop && x > y * 1.3f -> 1
+                            y > viewConfiguration.touchSlop && y > x * 1.3f -> 2
+                            else -> 0
+                        }
+                    }
+                    if (axis == 1) {
+                        change.consume()
+                        swipeOffsetX = (dx * .55f).coerceIn(-64.dp.toPx(), 64.dp.toPx())
+                    } else if (axis == 2 && !tabletLayout && dy < 0f) {
+                        change.consume()
+                    }
+                }
+                if (released && axis == 1 && kotlin.math.abs(dx) >= 48.dp.toPx() &&
+                    kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.3f) {
+                    val queue = miniPlayerViewModel.queue.value
+                    if (dx < 0) miniPlayerViewModel.playNextSongs(queue, context)
+                    else miniPlayerViewModel.playPreviousSong(queue, context)
+                } else if (released && axis == 2 && !tabletLayout && dy <= -36.dp.toPx()) {
+                    expand.value()
+                }
+            } finally {
+                swipeOffsetX = 0f
+            }
+        }
+    }
+    val artworkOffset by androidx.compose.animation.core.animateFloatAsState(
+        swipeOffsetX, animationSpec = spring(stiffness = 650f), label = "miniPlayerSwipe"
+    )
     if (tabletLayout) {
         val podcastVideoId = currentTrack?.url?.takeIf { it.startsWith("yt_ep:") }
             ?.removePrefix("yt_ep:")?.substringBefore('|')
@@ -256,6 +301,7 @@ fun MiniPlayer(
             Modifier.fillMaxWidth().height(60.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color(0xFF212121))
+                .then(gesture)
         ) {
             Row(
                 Modifier.weight(1f).fillMaxWidth()
@@ -292,7 +338,7 @@ fun MiniPlayer(
                         )
                     }
                 }
-                Column(Modifier.weight(1f).padding(start = 11.dp, end = 6.dp)) {
+                Column(Modifier.weight(1f).graphicsLayer { translationX = artworkOffset }.padding(start = 11.dp, end = 6.dp)) {
                     Text(songTitle, modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE),
                         fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1,
                         color = Color.White)
@@ -333,10 +379,6 @@ fun MiniPlayer(
         modifier = Modifier
 
             .padding(13.dp, 0.dp)
-            .graphicsLayer {
-                translationY = swipeOffsetY
-                alpha = (1f + swipeOffsetY / 150f).coerceIn(0f, 1f)
-            }
             .clip(RoundedCornerShape(8.dp))
             .background(darkVibrantColor)
             .padding(8.dp, 0.dp)
@@ -354,140 +396,7 @@ fun MiniPlayer(
                 ) {
                     onExpandPlayer?.invoke() ?: navController.navigate(Routes.Player.route)
                 }
-                .pointerInput(Unit) {
-                    var navigated = false
-                    var lastEventTimeMs = 0L
-                    val distThresholdY = 20.dp.toPx()
-                    val velThresholdY = 1500f // px/s upward
-                    val distThresholdX = 40.dp.toPx()
-                    val velThresholdX = 1000f // px/s horizontal
-                    val touchSlop = viewConfiguration.touchSlop
-
-                    var totalDx = 0f
-                    var totalDy = 0f
-                    var currentDirection = 0 // 0: Undetermined, 1: Horizontal, 2: Vertical
-                    var lastVelocityX = 0f
-
-                    detectDragGestures(
-                        onDragStart = {
-                            navigated = false
-                            lastEventTimeMs = 0L
-                            totalDx = 0f
-                            totalDy = 0f
-                            currentDirection = 0
-                            lastVelocityX = 0f
-                        },
-                        onDragEnd = {
-                            if (currentDirection == 2) {
-                                if (!navigated) {
-                                    // Snap back with spring animation
-                                    coroutineScope.launch {
-                                        val anim = Animatable(swipeOffsetY)
-                                        anim.animateTo(
-                                            targetValue = 0f,
-                                            animationSpec = spring(
-                                                dampingRatio = 0.7f,
-                                                stiffness = 400f
-                                            )
-                                        ) { swipeOffsetY = value }
-                                    }
-                                } else {
-                                    // Continue upward + fade out while full player slides in
-                                    coroutineScope.launch {
-                                        val anim = Animatable(swipeOffsetY)
-                                        anim.animateTo(
-                                            targetValue = -300f,
-                                            animationSpec = tween(280)
-                                        ) { swipeOffsetY = value }
-                                        swipeOffsetY = 0f
-                                    }
-                                }
-                            } else if (currentDirection == 1) {
-                                val queue = miniPlayerViewModel.queue.value
-                                if (swipeOffsetX > distThresholdX || lastVelocityX > velThresholdX) {
-                                    // Swiped right (dragged from left to right): Previous track
-                                    coroutineScope.launch {
-                                        val anim = Animatable(swipeOffsetX)
-                                        anim.animateTo(
-                                            targetValue = 300f,
-                                            animationSpec = tween(150)
-                                        )
-                                        miniPlayerViewModel.playPreviousSong(queue, context)
-                                        swipeOffsetX = 0f
-                                    }
-                                } else if (swipeOffsetX < -distThresholdX || lastVelocityX < -velThresholdX) {
-                                    // Swiped left (dragged from right to left): Next track
-                                    coroutineScope.launch {
-                                        val anim = Animatable(swipeOffsetX)
-                                        anim.animateTo(
-                                            targetValue = -300f,
-                                            animationSpec = tween(150)
-                                        )
-                                        miniPlayerViewModel.playNextSongs(queue, context)
-                                        swipeOffsetX = 0f
-                                    }
-                                } else {
-                                    // Snap back with spring animation
-                                    coroutineScope.launch {
-                                        val anim = Animatable(swipeOffsetX)
-                                        anim.animateTo(
-                                            targetValue = 0f,
-                                            animationSpec = spring(
-                                                dampingRatio = 0.7f,
-                                                stiffness = 400f
-                                            )
-                                        ) { swipeOffsetX = value }
-                                    }
-                                }
-                            }
-                            currentDirection = 0
-                        },
-                        onDragCancel = {
-                            coroutineScope.launch {
-                                val animY = Animatable(swipeOffsetY)
-                                animY.animateTo(0f, spring(0.7f, 400f)) { swipeOffsetY = value }
-                            }
-                            coroutineScope.launch {
-                                val animX = Animatable(swipeOffsetX)
-                                animX.animateTo(0f, spring(0.7f, 400f)) { swipeOffsetX = value }
-                            }
-                            currentDirection = 0
-                        },
-                    ) { change, dragAmount ->
-                        change.consume()
-                        val now = change.uptimeMillis
-                        val dtMs = if (lastEventTimeMs > 0L) now - lastEventTimeMs else 0L
-                        lastEventTimeMs = now
-
-                        if (currentDirection == 0) {
-                            totalDx += dragAmount.x
-                            totalDy += dragAmount.y
-                            if (kotlin.math.abs(totalDx) > touchSlop || kotlin.math.abs(totalDy) > touchSlop) {
-                                if (kotlin.math.abs(totalDx) > kotlin.math.abs(totalDy)) {
-                                    currentDirection = 1 // HORIZONTAL
-                                } else {
-                                    currentDirection = 2 // VERTICAL
-                                }
-                            }
-                        }
-
-                        if (currentDirection == 2) {
-                            swipeOffsetY = (swipeOffsetY + dragAmount.y).coerceAtMost(0f)
-                            if (!navigated) {
-                                val velocityPxPerSec = if (dtMs > 5) dragAmount.y / dtMs * 1000f else 0f
-                                if (swipeOffsetY < -distThresholdY || velocityPxPerSec < -velThresholdY) {
-                                    navigated = true
-                                    onExpandPlayer?.invoke() ?: navController.navigate(Routes.Player.route)
-                                }
-                            }
-                        } else if (currentDirection == 1) {
-                            swipeOffsetX += dragAmount.x
-                            if (dtMs > 5) {
-                                lastVelocityX = dragAmount.x / dtMs * 1000f
-                            }
-                        }
-                    }
-                }
+                .then(gesture)
         ){
 
             Row(horizontalArrangement = Arrangement.Start,
@@ -496,7 +405,7 @@ fun MiniPlayer(
                     .weight(1f)
                     .clipToBounds()
                     .graphicsLayer {
-                        translationX = swipeOffsetX
+                        translationX = artworkOffset
                     }
             ) {
                 val podcastVideoId = currentTrack?.url?.takeIf { it.startsWith("yt_ep:") }

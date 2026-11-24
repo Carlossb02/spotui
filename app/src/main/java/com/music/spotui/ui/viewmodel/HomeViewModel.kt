@@ -77,10 +77,6 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository,
         fetchFollowedArtists()
         viewModelScope.launch {
             refreshFollowedReleases()
-            while(true) {
-                kotlinx.coroutines.delay(10*60_000L)
-                refreshFollowedReleases()
-            }
         }
         viewModelScope.launch {
             kotlinx.coroutines.delay(8_000L)
@@ -213,7 +209,12 @@ class HomeViewModel @Inject constructor(private val repository: AppRepository,
     }
 
     private fun fetchFollowedArtists() = viewModelScope.launch(Dispatchers.IO) {
+        repository.storedFollowedArtists()?.let {
+            _followedArtists.value = it
+            refreshFollowedReleases(kind = com.music.spotui.data.preferences.ReleaseKind.MUSIC)
+        }
         _followedArtists.value = repository.provideFollowedArtists()
+        refreshFollowedReleases(kind = com.music.spotui.data.preferences.ReleaseKind.MUSIC)
     }
     fun refreshFollowedArtists() { fetchFollowedArtists() }
 

@@ -27,6 +27,7 @@ internal fun rememberReleaseCheck(kind:ReleaseKind):State<Long> {
             if(key==kind.key || key==kind.key+"_reset")seen.value=lastReleaseCheck(context,kind)
         }
         prefs.registerOnSharedPreferenceChangeListener(listener)
+        seen.value = lastReleaseCheck(context, kind)
         onDispose {prefs.unregisterOnSharedPreferenceChangeListener(listener)}
     }
     return seen
