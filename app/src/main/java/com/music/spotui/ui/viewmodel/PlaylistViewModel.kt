@@ -89,6 +89,7 @@ class PlaylistViewModel @Inject constructor(
         if (playlistKey == playlistId) return
         com.music.spotui.sync.GoogleDeviceSync.libraryOpened()
         reloadPlaylist(playlistId)
+        if (playlistId.startsWith("local_pl_")) com.music.spotui.data.api.LocalSpotifyMirror.refresh(com.music.spotui.MyApplication.instance,playlistId)
     }
 
     fun reloadPlaylist(playlistId: String) {

@@ -19,6 +19,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
@@ -126,14 +128,8 @@ internal fun CollectionDownloadButton(songs: List<SongsModel>, description: Stri
     }
 }
 
-private fun Modifier.collectionCapsuleSurface(accent: Color): Modifier {
-    val shape = androidx.compose.foundation.shape.RoundedCornerShape(50)
-    return clip(shape).background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(
-        androidx.compose.ui.graphics.lerp(accent, Color.White, .12f).copy(alpha = .42f),
-        accent.copy(alpha = .20f), Color(0xFF101016).copy(alpha = .88f))))
-        .border(1.2.dp, androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color.White.copy(alpha = .40f),
-            accent.copy(alpha = .65f), Color.White.copy(alpha = .22f))), shape)
-}
+@Composable
+private fun Modifier.collectionCapsuleSurface(accent: Color): Modifier = liquidCollectionGlass(accent)
 
 @Composable
 private fun CollectionCapsuleBody(label: String, modifier: Modifier, icon: @Composable RowScope.() -> Unit) {
@@ -179,12 +175,20 @@ internal fun CollectionActionBar(
     modifier: Modifier = Modifier, enabled: Boolean, playing: Boolean,
     download: @Composable () -> Unit, onSort: () -> Unit, onQueue: () -> Unit,
     onShuffle: () -> Unit, onPlay: () -> Unit,
-    sortMode: String, sortDescending: Boolean, accent: Color = Color(0xFF75648F),
+    sortMode: String, sortDescending: Boolean, accent: Color = Color(0xFF75648F), coverUri: String = "",
 ) {
+    val backdrop by rememberCollectionBackdrop(coverUri)
+    val glassBackdrop = backdrop ?: remember(accent) {
+        android.graphics.Bitmap.createBitmap(64, 64, android.graphics.Bitmap.Config.ARGB_8888).also { bitmap ->
+            val paint = android.graphics.Paint().apply { shader = android.graphics.LinearGradient(0f, 0f, 64f, 64f,
+                androidx.compose.ui.graphics.lerp(accent, Color.White, .15f).toArgb(), accent.toArgb(), android.graphics.Shader.TileMode.CLAMP) }
+            android.graphics.Canvas(bitmap).drawRect(0f, 0f, 64f, 64f, paint)
+        }.asImageBitmap()
+    }
     val tablet = LocalConfiguration.current.smallestScreenWidthDp >= 600
     BoxWithConstraints(modifier) {
         val metrics = remember(maxWidth, tablet) { collectionActionMetrics(maxWidth.value, tablet) }
-        CompositionLocalProvider(LocalCapsuleMetrics provides metrics, LocalCapsuleAccent provides accent) {
+        CompositionLocalProvider(LocalCapsuleMetrics provides metrics, LocalCapsuleAccent provides accent, LocalGlassBackdrop provides glassBackdrop) {
             Row(Modifier.height(68.dp), verticalAlignment = Alignment.CenterVertically) {
                 Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(metrics.itemGap.dp), verticalAlignment = Alignment.CenterVertically) {
                     download()

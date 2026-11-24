@@ -720,6 +720,10 @@ fun PlayerScreen(
         val configuration = androidx.compose.ui.platform.LocalConfiguration.current
         val isLandscape = !embedded && configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
+        if (currentEpisode == null) PreparePlayerLyrics(songTitle, songSinger, playerViewModel.currentSongAlbum.value,
+            lyricsTrack?.spotifyTrackId.orEmpty(), (lyricsTrack?.durationMs ?: 0) / 1000)
+        val lyricsPosition = rememberPlaybackPositionMs()
+        val trackCredits by rememberTrackCredits(if (currentEpisode == null) lyricsTrack?.spotifyTrackId.orEmpty() else "")
         val playerScroll=androidx.compose.foundation.lazy.rememberLazyListState()
         androidx.compose.foundation.lazy.LazyColumn(
             state=playerScroll,
@@ -730,7 +734,7 @@ fun PlayerScreen(
                     Column(
                         verticalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier
-                            .fillParentMaxHeight()
+                            .fillParentMaxHeight(if (currentEpisode == null) .90f else 1f)
                             .fillMaxWidth()
                             .then(if (embedded) Modifier else Modifier.navigationBarsPadding()),
                         horizontalAlignment = Alignment.CenterHorizontally
@@ -974,6 +978,7 @@ fun PlayerScreen(
                     )
                 } else {
                     InlineLyrics(
+                        playbackPosition = lyricsPosition,
                         title = songTitle,
                         artist = songSinger,
                         album = playerViewModel.currentSongAlbum.value,
@@ -981,7 +986,6 @@ fun PlayerScreen(
                         onExpand = { showLyrics = true },
                         trackId = lyricsTrack?.spotifyTrackId.orEmpty(),
                         trackDurationSec = (lyricsTrack?.durationMs ?: 0) / 1000,
-                        suspendFollowing=playerScroll.isScrollInProgress,
                     )
                 }
             }
@@ -994,6 +998,7 @@ fun PlayerScreen(
                         navController = navController,
                     )
                 }
+                item { NowPlayingTrackCredits(trackCredits, navController) }
             }
         }
 

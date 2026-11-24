@@ -21,6 +21,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -64,6 +65,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -94,8 +96,8 @@ import kotlinx.coroutines.launch
 /** Polls ExoPlayer's position every 250ms so the active lyric line tracks the music. */
 
 @Composable
-private fun rememberPlaybackPositionMs(): State<Long> {
-    val pos = remember { mutableStateOf(0L) }
+internal fun rememberPlaybackPositionMs(): State<Long> {
+    val pos = remember { mutableStateOf(SongPlayer.getCurrentPosition().coerceAtLeast(0L)) }
     LaunchedEffect(Unit) {
         while (true) {
             pos.value = SongPlayer.getCurrentPosition().coerceAtLeast(0L)
@@ -439,6 +441,14 @@ private fun TranslateFloatingPanel(vm: LyricsViewModel, modifier: Modifier = Mod
     }
 }
 
+/** Keep the request alive when the lazy preview card is outside the viewport. */
+@Composable
+internal fun PreparePlayerLyrics(title:String,artist:String,album:String,trackId:String,durationSec:Int) {
+    val vm: LyricsViewModel = hiltViewModel()
+    val key = LyricsViewModel.requestKey(title,artist,album,durationSec,trackId)
+    LaunchedEffect(key) { vm.load(title,artist,album,durationSec,trackId) }
+}
+
 /** How many lines the inline lyrics card previews before "Show lyrics". */
 private const val PREVIEW_LINE_COUNT = 5
 
@@ -456,7 +466,7 @@ fun InlineLyrics(
     onExpand: () -> Unit,
     trackId: String = "",
     trackDurationSec: Int = 0,
-    suspendFollowing:Boolean=false,
+    playbackPosition: State<Long>? = null,
 ) {
     val vm: LyricsViewModel = hiltViewModel()
     // Never use the previous decoder's duration while a new track is resolving.
@@ -465,7 +475,7 @@ fun InlineLyrics(
     LaunchedEffect(requestKey) {vm.load(title,artist,album,durationSec,trackId)}
     val receivedState by vm.state.collectAsState()
     val state=vm.visibleState(requestKey,receivedState)
-    val positionMs by rememberPlaybackPositionMs()
+    val positionMs by (playbackPosition ?: rememberPlaybackPositionMs())
 
     Column(
         modifier = Modifier
@@ -517,15 +527,13 @@ fun InlineLyrics(
                 // Preview window: keep the active synced line in view; plain
                 // lyrics just show the first few lines.
                 val desiredWindow =
-                    if (lyrics.synced) activeIndex.coerceIn(0, (lyrics.lines.size - PREVIEW_LINE_COUNT).coerceAtLeast(0))
+                    if (lyrics.synced) activeIndex.coerceAtLeast(0)
                     else 0
-                var windowStart by remember(requestKey){mutableStateOf(desiredWindow)}
-                LaunchedEffect(desiredWindow,suspendFollowing) {
-                    if(!suspendFollowing){kotlinx.coroutines.delay(150);windowStart=desiredWindow}
-                }
+                val windowStart = desiredWindow
                 val translated = vm.translatedLines
                 val showTranslations = vm.translationsVisible
-                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Column(modifier = Modifier.height(250.dp * androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceAtLeast(1f)).clipToBounds(),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     lyrics.lines.drop(windowStart).take(PREVIEW_LINE_COUNT).forEachIndexed { i, line ->
                         val globalIndex = windowStart + i
                         LyricLineText(

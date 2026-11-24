@@ -78,6 +78,7 @@ internal object SpotifyPendingWrites {
         kick(app)
     }
     fun kick(context: Context) {
+        LocalSpotifyMirror.kick(context)
         scope.launch {
             try { if (!drain(context.applicationContext)) schedule(context.applicationContext) } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { Log.w("SpotifyOutbox", "Will retry pending changes", failure); schedule(context.applicationContext) }
         }

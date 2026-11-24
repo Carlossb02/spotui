@@ -285,6 +285,7 @@ Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = A
                 }
                     val collectionSongs = tracks.map { it.song }
                     com.music.spotui.ui.components.CollectionActionBar(
+ coverUri = overview.headerImage.ifBlank { overview.avatarImage },
  accent = com.music.spotui.ui.components.rememberCollectionAccent(overview.headerImage.ifBlank { overview.avatarImage }),
  sortMode = if (orderByTitle) "TITLE" else "POPULARITY", sortDescending = artistSortDescending,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),

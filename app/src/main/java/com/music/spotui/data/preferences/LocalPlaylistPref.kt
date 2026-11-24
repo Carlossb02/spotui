@@ -10,7 +10,11 @@ data class LocalPlaylist(
     val name: String,
     val coverUri: String,
     val songs: List<SongsModel>,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val spotifyPlaylistId: String = "",
+    val spotifyOwnerId: String = "",
+    val spotifyBaseline: List<String>? = null,
+    val spotifyBaselineName: String = ""
 )
 
 object LocalPlaylistPref {
@@ -62,6 +66,10 @@ object LocalPlaylistPref {
         put("name", name)
         put("coverUri", coverUri)
         put("createdAt", createdAt)
+        put("spotifyPlaylistId", spotifyPlaylistId)
+        put("spotifyOwnerId", spotifyOwnerId)
+        spotifyBaseline?.let { put("spotifyBaseline", JSONArray(it)) }
+        put("spotifyBaselineName", spotifyBaselineName)
         val songArray = JSONArray()
         songs.forEach { songArray.put(it.toJsonObject()) }
         put("songs", songArray)
@@ -79,7 +87,11 @@ object LocalPlaylistPref {
             name = o.getString("name"),
             coverUri = o.optString("coverUri", ""),
             songs = songList,
-            createdAt = o.optLong("createdAt", System.currentTimeMillis())
+            createdAt = o.optLong("createdAt", System.currentTimeMillis()),
+            spotifyPlaylistId = o.optString("spotifyPlaylistId"),
+            spotifyOwnerId = o.optString("spotifyOwnerId"),
+            spotifyBaseline = o.optJSONArray("spotifyBaseline")?.let { a -> (0 until a.length()).map { a.getString(it) } },
+            spotifyBaselineName = o.optString("spotifyBaselineName")
         )
     }.getOrNull()
 
@@ -92,7 +104,7 @@ object LocalPlaylistPref {
         return playlist
     }
 
-    /** Create a local playlist with the supplied tracks. No Spotify write requests. */
+    /** Create a local playlist with the supplied tracks. Spotify synchronization is queued by the preference observer. */
     fun createPlaylistWithSongs(context: Context, name: String, songs: List<SongsModel>): LocalPlaylist {
         val playlist = LocalPlaylist(
             id = "local_pl_" + java.util.UUID.randomUUID(),
@@ -112,6 +124,22 @@ object LocalPlaylistPref {
             savePlaylistIds(context, existingIds)
         }
         prefs.edit().putString(playlist.id, playlist.toJson()).apply()
+        com.music.spotui.data.api.SavedTrackLibrary.localChanged(context)
+        com.music.spotui.util.BackupHelper.scheduleAutoBackup(context)
+    }
+
+    /** Serialize large collections off the UI thread; compare-and-set prevents stale
+     * network responses from replacing edits made while Spotify was loading. */
+    internal suspend fun saveSyncedPlaylist(context: Context, expected: LocalPlaylist, updated: LocalPlaylist) {
+        if (expected == updated) return
+        val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        val raw = prefs.getString(expected.id, null)
+        check(raw != null && getLocalPlaylist(context, expected.id) == expected) { "La lista local cambió; se reintentará" }
+        val serialized = updated.toJson()
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+            check(prefs.getString(expected.id, null) == raw) { "La lista local cambió; se reintentará" }
+            prefs.edit().putString(updated.id, serialized).apply()
+        }
         com.music.spotui.data.api.SavedTrackLibrary.localChanged(context)
         com.music.spotui.util.BackupHelper.scheduleAutoBackup(context)
     }
