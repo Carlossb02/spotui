@@ -108,6 +108,7 @@ import com.music.spotui.ui.components.PlaylistSpotifyManagementSection
 import com.music.spotui.ui.components.PlaylistSpotifyManagementSheet
 import com.music.spotui.ui.components.PlaylistSpotifyMenuItems
 import com.music.spotui.ui.components.openSpotifyPlaylist
+import com.music.spotui.ui.components.openSpotifyPlaylistTab
 import com.music.spotui.ui.components.spotifyPlaylistUrl
 import com.music.spotui.data.preferences.LocalPlaylistPref
 import com.music.spotui.data.entity.AlbumsModel
@@ -164,7 +165,14 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     LaunchedEffect(playlistId) { playlistViewModel.loadPlaylist(playlistId) }
     var refreshProfile by remember(profilePlaylistId) { mutableStateOf(0) }
     LaunchedEffect(context, profilePlaylistId, refreshProfile) {
-        if (profilePlaylistId.isNotBlank()) playlistAccess = PlaylistAccess.load(context, profilePlaylistId)
+        if (profilePlaylistId.isNotBlank()) {
+            if (refreshProfile == 0) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    PlaylistAccess.cached(context, profilePlaylistId)
+                }?.let { playlistAccess = it }
+            }
+            playlistAccess = PlaylistAccess.load(context, profilePlaylistId)
+        }
     }
     val spotifyMirrorStatuses by com.music.spotui.data.api.LocalSpotifyMirror.statuses.collectAsState()
     val spotifyMirrorStatus = spotifyMirrorStatuses[playlistId]
@@ -185,7 +193,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         )
 
     val spotifyUrl = remember(profilePlaylistId) { spotifyPlaylistUrl(profilePlaylistId) }
-    val visualCover = if (!linkedSpotifyId.isNullOrBlank()) {
+    val visualCover = if (profilePlaylistId.isNotBlank()) {
         playlistAccess.coverUri.ifBlank { playlist.coverUri }
     } else playlist.coverUri
     val spotifyDescription = remember(playlistAccess.description, playlistId, linkedSpotifyId) {
@@ -220,12 +228,12 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     if (showSpotifyManagement || manageInSpotify != null) {
         PlaylistSpotifyManagementSheet(
             initialSection = manageInSpotify,
-            allowDetails = isLocalPlaylist,
             onDismiss = {
                 showSpotifyManagement = false
                 manageInSpotify = null
             },
             onOpenSpotify = openInSpotify,
+            onOpenTab = { spotifyUrl?.let { awaitingSpotifyReturn = openSpotifyPlaylistTab(context, it) } },
         )
     }
 
@@ -971,7 +979,7 @@ com.music.spotui.ui.components.CollectionActionBar(
                             Text("Privacidad en Spotify", color = Color.White, fontSize = 16.sp)
                         }
                     }
-                    if (isLocalPlaylist && (linkedSpotifyId == "" || spotifyUrl != null && playlistAccess.isOwner)) {
+                    if ((isLocalPlaylist && linkedSpotifyId == "") || (spotifyUrl != null && playlistAccess.isOwner)) {
                         Row(modifier = Modifier.fillMaxWidth().clickable {
                             showPlaylistActions = false
                             if (spotifyUrl != null) manageInSpotify = PlaylistSpotifyManagementSection.DETAILS
@@ -985,16 +993,18 @@ com.music.spotui.ui.components.CollectionActionBar(
                                 color = Color.White, fontSize = 16.sp)
                         }
                     }
-                    if (isLocalPlaylist) {
+                    if (isLocalPlaylist || (spotifyUrl != null && playlistAccess.isOwner)) {
                         Row(modifier = Modifier.fillMaxWidth().clickable {
                             showPlaylistActions = false
-                            showDeleteDialog = true
+                            if (isLocalPlaylist) showDeleteDialog = true
+                            else manageInSpotify = PlaylistSpotifyManagementSection.DELETE
                         }.padding(horizontal = 24.dp, vertical = 16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFFF7070))
                             Spacer(Modifier.width(20.dp))
-                            Text(uiLocalized("Eliminar lista"), color = Color(0xFFFF7070), fontSize = 16.sp)
+                            Text(if (isLocalPlaylist) uiLocalized("Eliminar lista") else "Eliminar en Spotify",
+                                color = Color(0xFFFF7070), fontSize = 16.sp)
                         }
                     }
                     Spacer(Modifier.height(18.dp))

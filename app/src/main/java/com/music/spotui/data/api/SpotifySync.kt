@@ -144,8 +144,11 @@ object SpotifySync {
             check(SpotifyTokenProvider.ensureToken(context.applicationContext)) { "Spotify session unavailable" }
             val result = mutableListOf<com.metrolist.spotify.models.SpotifyPlaylist>()
             var offset = 0
+            var total: Int? = null
             do {
                 val page = Spotify.myPlaylists(limit = 50, offset = offset).getOrThrow()
+                check(page.offset == offset && (total == null || total == page.total)) { "Playlist library changed during pagination" }
+                total = page.total
                 result.addAll(page.items)
                 val next = page.offset + page.limit.coerceAtLeast(1)
                 check(next > offset) { "Playlist pagination did not advance" }

@@ -609,10 +609,13 @@ object Spotify {
                 response.obj("data")?.obj("me")?.obj("libraryV3")
                     ?: throw SpotifyException(500, "Invalid libraryV3 response")
 
-            val totalCount = libraryData.int("totalCount") ?: 0
+            val totalCount = libraryData.int("totalCount")?.takeIf { it >= 0 }
+                ?: throw SpotifyException(502, "Spotify omitted the library total")
             val pagingInfo = libraryData.obj("pagingInfo")
 
-            val rawItems = libraryData.arr("items").orEmpty()
+            val rawItems = libraryData.arr("items")
+                ?: throw SpotifyException(502, "Spotify omitted the library rows")
+            if (rawItems.isEmpty() && offset < totalCount) throw SpotifyException(502, "Incomplete Spotify library page")
             // Diagnostic mirror of myLibraryNode: collaborative playlists historically
             // surfaced under typenames the strict equality check below silently dropped
             // (issue #37). Logging the typename distribution lets us spot any future
@@ -893,11 +896,15 @@ object Spotify {
                 response.obj("data")?.obj("me")?.obj("libraryV3")
                     ?: throw SpotifyException(500, "Invalid libraryV3 response")
 
-            val totalCount = libraryData.int("totalCount") ?: 0
+            val totalCount = libraryData.int("totalCount")?.takeIf { it >= 0 }
+                ?: throw SpotifyException(502, "Spotify omitted the library total")
             val pagingInfo = libraryData.obj("pagingInfo")
 
+            val rawItems = libraryData.arr("items")
+                ?: throw SpotifyException(502, "Spotify omitted the album rows")
+            if (rawItems.isEmpty() && offset < totalCount) throw SpotifyException(502, "Incomplete Spotify album page")
             val albums =
-                libraryData.arr("items")?.mapNotNull { itemElem ->
+                rawItems.mapNotNull { itemElem ->
                     val wrapper = itemElem.jsonObject.obj("item") ?: return@mapNotNull null
                     val typeName = wrapper.str("__typename") ?: ""
                     if (!typeName.contains("Album", ignoreCase = true)) return@mapNotNull null
@@ -922,7 +929,7 @@ object Spotify {
                         releaseDate = data.obj("date")?.int("year")?.toString(),
                         uri = albumUri,
                     )
-                } ?: emptyList()
+                }
 
             SpotifyPaging(
                 items = albums,
@@ -1021,8 +1028,15 @@ object Spotify {
                 response.obj("data")?.obj("playlistV2")?.obj("content")
                     ?: throw SpotifyException(500, "No content in fetchPlaylist response")
 
+            val total = content.int("totalCount")?.takeIf { it >= 0 }
+                ?: throw SpotifyException(502, "Spotify omitted the playlist track count")
+            val items = content.arr("items")
+                ?: throw SpotifyException(502, "Spotify omitted the playlist items")
+            if (items.size != minOf(limit, (total - offset).coerceAtLeast(0))) {
+                throw SpotifyException(502, "Spotify returned an incomplete playlist page")
+            }
             val tracks =
-                content.arr("items")?.map { elem ->
+                items.map { elem ->
                     val itemWrapper = elem.jsonObject.obj("itemV2")
                     val itemData = itemWrapper?.obj("data")
                     val wrapperUri = itemWrapper?.str("_uri") ?: itemWrapper?.str("uri")
@@ -1031,11 +1045,11 @@ object Spotify {
                         track = itemData?.let { parseGqlTrack(it, uriOverride = wrapperUri) },
                         uid = uid,
                     )
-                } ?: emptyList()
+                }
 
             SpotifyPaging(
                 items = tracks,
-                total = content.int("totalCount") ?: 0,
+                total = total,
                 limit = limit,
                 offset = offset,
             )

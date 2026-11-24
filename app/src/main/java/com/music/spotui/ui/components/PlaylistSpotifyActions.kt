@@ -7,11 +7,14 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.browser.customtabs.CustomTabsClient
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.OpenInNew
@@ -49,6 +52,23 @@ internal fun openSpotifyPlaylist(context: Context, url: Uri): Boolean {
     } catch (_: ActivityNotFoundException) {
         Toast.makeText(context, "No hay una app para abrir Spotify", Toast.LENGTH_SHORT).show()
         false
+    }
+}
+
+/** Opens Spotify's own site in a browser-owned tab over Spotui. */
+internal fun openSpotifyPlaylistTab(context: Context, url: Uri): Boolean {
+    val browserPackage = CustomTabsClient.getPackageName(context, null)
+        ?: return openSpotifyPlaylist(context, url)
+    val tab = CustomTabsIntent.Builder()
+        .setShowTitle(true)
+        .setColorScheme(CustomTabsIntent.COLOR_SCHEME_DARK)
+        .build()
+    tab.intent.setPackage(browserPackage)
+    return try {
+        tab.launchUrl(context, url)
+        true
+    } catch (_: ActivityNotFoundException) {
+        openSpotifyPlaylist(context, url)
     }
 }
 
@@ -98,6 +118,8 @@ internal enum class PlaylistSpotifyManagementSection(val label: String, val icon
         "En Spotify, abre el menú de la lista y elige Editar lista. Desde ahí puedes cambiar el nombre, la descripción y la portada."),
     PRIVACY("Privacidad y perfil", Icons.Default.Lock,
         "En el menú de la lista de Spotify, elige Hacer privada o Hacer pública. Para mostrarla u ocultarla en tu perfil, usa Añadir al perfil o Quitar del perfil."),
+    DELETE("Eliminar lista", Icons.Default.Delete,
+        "En Spotify, abre los tres puntos de la lista y elige Eliminar lista."),
     COLLABORATORS("Colaboradores", Icons.Default.GroupAdd,
         "En Spotify, abre el menú de una lista privada y elige Invitar a colaboradores. Para quitar un permiso, toca las fotos de perfil bajo el nombre y abre el menú de esa persona."),
 }
@@ -106,18 +128,16 @@ internal enum class PlaylistSpotifyManagementSection(val label: String, val icon
 @Composable
 internal fun PlaylistSpotifyManagementSheet(
     initialSection: PlaylistSpotifyManagementSection? = null,
-    allowDetails: Boolean = true,
     onDismiss: () -> Unit,
     onOpenSpotify: () -> Unit,
+    onOpenTab: () -> Unit,
 ) {
     var selected by remember(initialSection) { mutableStateOf(initialSection) }
     if (selected == null) ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color(0xFF202020)) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 12.dp)) {
             Text("Gestionar en Spotify", color = Color.White, style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(start = 24.dp, top = 8.dp, bottom = 12.dp))
-            PlaylistSpotifyManagementSection.entries.filter {
-                allowDetails || it != PlaylistSpotifyManagementSection.DETAILS
-            }.forEach { action ->
+            PlaylistSpotifyManagementSection.entries.forEach { action ->
                 PlaylistExternalAction(action.icon, action.label) { selected = action }
             }
         }
@@ -129,9 +149,17 @@ internal fun PlaylistSpotifyManagementSheet(
             title = { Text(action.label) },
             text = { Text(action.help) },
             confirmButton = {
-                TextButton(onClick = { onDismiss(); onOpenSpotify() }) { Text("Abrir en Spotify") }
+                TextButton(onClick = {
+                    onDismiss()
+                    onOpenTab()
+                }) { Text("Abrir pestaña de Spotify") }
             },
-            dismissButton = { TextButton(onClick = back) { Text(if (initialSection == null) "Volver" else "Cancelar") } },
+            dismissButton = {
+                TextButton(onClick = {
+                    onDismiss()
+                    onOpenSpotify()
+                }) { Text("Usar app de Spotify") }
+            },
         )
     }
 }
