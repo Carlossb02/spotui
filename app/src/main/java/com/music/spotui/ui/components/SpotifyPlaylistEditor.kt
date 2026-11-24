@@ -33,7 +33,6 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun SpotifyPlaylistEditor(
     id: String,
-    ownerId: String,
     localId: String?,
     onSaved: suspend (name: String?, description: String?, changedCover: Boolean) -> Unit,
     onOpenSpotify: () -> Unit,
@@ -41,21 +40,22 @@ internal fun SpotifyPlaylistEditor(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var details by remember(id, ownerId) { mutableStateOf<SpotifyPlaylistEditorApi.Details?>(null) }
-    var name by rememberSaveable(id, ownerId) { mutableStateOf<String?>(null) }
-    var description by rememberSaveable(id, ownerId) { mutableStateOf<String?>(null) }
-    var cover by rememberSaveable(id, ownerId) { mutableStateOf<Uri?>(null) }
+    var details by remember(id) { mutableStateOf<SpotifyPlaylistEditorApi.Details?>(null) }
+    var name by rememberSaveable(id) { mutableStateOf<String?>(null) }
+    var description by rememberSaveable(id) { mutableStateOf<String?>(null) }
+    var cover by rememberSaveable(id) { mutableStateOf<Uri?>(null) }
     val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { picked ->
         if (picked != null) cover = picked
     }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var coverFailed by remember { mutableStateOf(false) }
     var loadAttempt by remember { mutableStateOf(0) }
 
-    LaunchedEffect(id, ownerId, localId, loadAttempt) {
+    LaunchedEffect(id, localId, loadAttempt) {
         error = null
         try {
-            details = SpotifyPlaylistEditorApi.load(context, id, ownerId, localId)
+            details = SpotifyPlaylistEditorApi.load(context, id, localId)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -90,7 +90,11 @@ internal fun SpotifyPlaylistEditor(
                         TextButton(enabled = !saving, onClick = { cover = null }) { Text("Quitar selección") }
                     }
                 }
-                TextButton(onClick = onOpenSpotify, enabled = !saving) { Text("Portada y privacidad en Spotify") }
+                if (original != null) {
+                    TextButton(onClick = onOpenSpotify, enabled = !saving) {
+                        Text(if (coverFailed) "Abrir portada en Spotify" else "Privacidad en Spotify")
+                    }
+                }
                 if (saving) LinearProgressIndicator(Modifier.fillMaxWidth())
                 error?.let {
                     Text(it, color = MaterialTheme.colorScheme.error)
@@ -104,11 +108,29 @@ internal fun SpotifyPlaylistEditor(
                 onClick = {
                     saving = true
                     error = null
+                    coverFailed = false
                     val selectedCover = cover
                     scope.launch {
                         try {
-                            SpotifyPlaylistEditorApi.save(context, id, ownerId, localId, newName, newDescription, selectedCover)
-                            onSaved(newName, newDescription, selectedCover != null)
+                            val result = SpotifyPlaylistEditorApi.save(
+                                context, id, original.ownerId, localId, newName, newDescription, selectedCover,
+                            )
+                            val savedCover = selectedCover != null && result.coverError == null
+                            if (newName != null || newDescription != null || savedCover) {
+                                onSaved(newName, newDescription, savedCover)
+                            }
+                            if (result.coverError == null) {
+                                onDismiss()
+                            } else {
+                                details = original.copy(
+                                    name = newName ?: original.name,
+                                    description = newDescription ?: original.description,
+                                )
+                                error = if (newName != null || newDescription != null) {
+                                    "Se guardaron los demás cambios. ${result.coverError}"
+                                } else result.coverError
+                                coverFailed = true
+                            }
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (failure: Exception) {
