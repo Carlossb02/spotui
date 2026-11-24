@@ -723,7 +723,7 @@ fun SumUpLibraryScreen(
                                 tint = Color(0xFF1ED760), modifier = Modifier.size(13.dp))
                             Spacer(Modifier.width(3.dp))
                         }
-                        if (entry.isLocal) {
+                        if (entry.isLocal && entry.linkedSpotifyPlaylistId.isBlank()) {
                             Icon(
                                 imageVector = Icons.Default.PhoneAndroid,
                                 contentDescription = uiLocalized("Local Storage"),
@@ -949,7 +949,7 @@ fun LibraryGridScreen(
                             tint = Color(0xFF1ED760), modifier = Modifier.size(12.dp))
                         Spacer(Modifier.width(3.dp))
                     }
-                    if (entry.isLocal) {
+                    if (entry.isLocal && entry.linkedSpotifyPlaylistId.isBlank()) {
                         Icon(
                             imageVector = Icons.Default.PhoneAndroid,
                             contentDescription = uiLocalized("Local Storage"),

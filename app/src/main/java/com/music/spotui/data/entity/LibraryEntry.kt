@@ -14,4 +14,5 @@ data class LibraryEntry(
     val artists: String = "",
     val isLocal: Boolean = false,
     val isPodcast: Boolean = false,
+    val linkedSpotifyPlaylistId: String = "",
 )

@@ -1,6 +1,14 @@
 package com.music.spotui.data.preferences
 
 import android.content.Context
+import android.content.SharedPreferences
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import com.music.spotui.data.entity.SongsModel
 import org.json.JSONArray
 import org.json.JSONObject
@@ -15,7 +23,9 @@ data class LocalPlaylist(
     val spotifyOwnerId: String = "",
     val spotifyBaseline: List<String>? = null,
     val spotifyBaselineName: String = ""
-)
+) {
+    val syncedSpotifyId: String get() = if (spotifyBaseline != null) spotifyPlaylistId else ""
+}
 
 object LocalPlaylistPref {
     /** Repair by immutable Spotify ID, preserving membership, edits and order. */
@@ -29,6 +39,17 @@ object LocalPlaylistPref {
         if(changed){editor.apply();com.music.spotui.data.api.SavedTrackLibrary.localChanged(context)}
     }
     private const val PREF = "LocalPlaylists"
+
+    internal fun observeSyncedSpotifyId(context: Context, playlistId: String) = callbackFlow {
+        val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == playlistId || key == null) trySend(Unit)
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        trySend(Unit)
+        awaitClose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }.conflate().map { getLocalPlaylist(context, playlistId)?.syncedSpotifyId.orEmpty() }
+        .distinctUntilChanged().flowOn(Dispatchers.IO)
     private const val KEY_PLAYLIST_IDS = "local_playlist_ids_order"
 
     private fun SongsModel.toJsonObject(): JSONObject = JSONObject().apply {

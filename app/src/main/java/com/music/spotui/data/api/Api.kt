@@ -915,14 +915,18 @@ class Api @Inject constructor(
     private fun liveLibrary(remote: List<com.music.spotui.data.entity.LibraryEntry>): List<com.music.spotui.data.entity.LibraryEntry> {
         val localPlaylists = com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylists(context)
         val mirroredIds = localPlaylists.map { it.spotifyPlaylistId }.filter { it.isNotBlank() }.toSet()
-        val localEntries = localPlaylists.map { pl ->
+        val remotePlaylists = remote.filter { it.isPlaylist }.associateBy { it.spotifyId }
+        val localEntries = localPlaylists.map { playlist ->
+            val linkedId = playlist.syncedSpotifyId
+            val remotePlaylist = remotePlaylists[linkedId]
             com.music.spotui.data.entity.LibraryEntry(
-                spotifyId = pl.id,
-                name = pl.name,
-                subtitle = (if (pl.spotifyPlaylistId.isNotBlank()) "Spotify • " else "Pendiente de Spotify • ") + "${pl.songs.size} " + (if (pl.songs.size == 1) "canción" else "canciones"),
-                coverUri = pl.coverUri,
+                spotifyId = playlist.id,
+                name = playlist.name,
+                subtitle = if (linkedId.isNotBlank()) remotePlaylist?.subtitle ?: "Playlist" else "Lista de Spotui",
+                coverUri = playlist.coverUri.ifBlank { remotePlaylist?.coverUri.orEmpty() },
                 isPlaylist = true,
                 isLocal = true,
+                linkedSpotifyPlaylistId = linkedId,
             )
         }
         val favoriteEntries = com.music.spotui.data.preferences.FavoritePlaylistsPref.entries(context)
