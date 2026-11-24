@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.automirrored.filled.List
@@ -103,6 +104,7 @@ import com.music.spotui.R
 import com.music.spotui.data.api.Response
 import com.music.spotui.data.api.PlaylistAccess
 import com.music.spotui.data.api.PlaylistAccessInfo
+import com.music.spotui.ui.components.PlaylistSpotifyManagementSection
 import com.music.spotui.ui.components.PlaylistSpotifyManagementSheet
 import com.music.spotui.ui.components.PlaylistSpotifyMenuItems
 import com.music.spotui.ui.components.openSpotifyPlaylist
@@ -192,7 +194,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             androidx.core.text.HtmlCompat.FROM_HTML_MODE_COMPACT).toString()
             .replace("Spotui-ID: " + playlistId, "").trim()
     }
-    var manageInSpotify by remember(profilePlaylistId) { mutableStateOf(false) }
+    var showSpotifyManagement by remember(profilePlaylistId) { mutableStateOf(false) }
+    var manageInSpotify by remember(profilePlaylistId) { mutableStateOf<PlaylistSpotifyManagementSection?>(null) }
     var awaitingSpotifyReturn by remember(profilePlaylistId) { mutableStateOf(false) }
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle, playlistId, profilePlaylistId) {
@@ -214,8 +217,16 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     val openInSpotify: () -> Unit = {
         spotifyUrl?.let { awaitingSpotifyReturn = openSpotifyPlaylist(context, it) }
     }
-    if (manageInSpotify) {
-        PlaylistSpotifyManagementSheet(onDismiss = { manageInSpotify = false }, onOpenSpotify = openInSpotify)
+    if (showSpotifyManagement || manageInSpotify != null) {
+        PlaylistSpotifyManagementSheet(
+            initialSection = manageInSpotify,
+            allowDetails = isLocalPlaylist,
+            onDismiss = {
+                showSpotifyManagement = false
+                manageInSpotify = null
+            },
+            onOpenSpotify = openInSpotify,
+        )
     }
 
     val togglePlaylistFavorite: () -> Unit = {
@@ -299,7 +310,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
 
-    if (showRenameDialog) {
+    if (showRenameDialog && isLocalPlaylist && linkedSpotifyId == "") {
         val currentName = playlist.name.ifBlank { playlistName }
         var newPlaylistNameInput by remember(currentName) { mutableStateOf(currentName) }
         AlertDialog(
@@ -359,7 +370,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         )
     }
 
-    if (showDeleteDialog) {
+    if (showDeleteDialog && isLocalPlaylist) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
             containerColor = Color(0xFF282828),
@@ -896,7 +907,7 @@ com.music.spotui.ui.components.CollectionActionBar(
                         PlaylistSpotifyMenuItems(url, playlistAccess.isOwner,
                             onDismiss = { showPlaylistActions = false },
                             onOpenSpotify = openInSpotify,
-                            onManage = { manageInSpotify = true },
+                            onManage = { showSpotifyManagement = true },
                         )
                     }
                     if (externalReadOnly) {
@@ -948,17 +959,33 @@ com.music.spotui.ui.components.CollectionActionBar(
                             Text(uiLocalized("Añadir canciones a la cola"), color = Color.White, fontSize = 16.sp)
                         }
                     }
-                    if (playlistId.startsWith("local_pl_")) {
+                    if (spotifyUrl != null && playlistAccess.isOwner) {
                         Row(modifier = Modifier.fillMaxWidth().clickable {
                             showPlaylistActions = false
-                            showRenameDialog = true
+                            manageInSpotify = PlaylistSpotifyManagementSection.PRIVACY
+                        }.padding(horizontal = 24.dp, vertical = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Lock, contentDescription = null, tint = Color.White)
+                            Spacer(Modifier.width(20.dp))
+                            Text("Privacidad en Spotify", color = Color.White, fontSize = 16.sp)
+                        }
+                    }
+                    if (isLocalPlaylist && (linkedSpotifyId == "" || spotifyUrl != null && playlistAccess.isOwner)) {
+                        Row(modifier = Modifier.fillMaxWidth().clickable {
+                            showPlaylistActions = false
+                            if (spotifyUrl != null) manageInSpotify = PlaylistSpotifyManagementSection.DETAILS
+                            else showRenameDialog = true
                         }.padding(horizontal = 24.dp, vertical = 16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White)
                             Spacer(Modifier.width(20.dp))
-                            Text(uiLocalized("Cambiar nombre"), color = Color.White, fontSize = 16.sp)
+                            Text(if (spotifyUrl != null) "Cambiar nombre en Spotify" else uiLocalized("Cambiar nombre"),
+                                color = Color.White, fontSize = 16.sp)
                         }
+                    }
+                    if (isLocalPlaylist) {
                         Row(modifier = Modifier.fillMaxWidth().clickable {
                             showPlaylistActions = false
                             showDeleteDialog = true

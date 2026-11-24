@@ -93,7 +93,7 @@ internal fun PlaylistSpotifyMenuItems(
     }
 }
 
-private enum class PlaylistManagement(val label: String, val icon: ImageVector, val help: String) {
+internal enum class PlaylistSpotifyManagementSection(val label: String, val icon: ImageVector, val help: String) {
     DETAILS("Nombre, descripción y portada", Icons.Default.Edit,
         "En Spotify, abre el menú de la lista y elige Editar lista. Desde ahí puedes cambiar el nombre, la descripción y la portada."),
     PRIVACY("Privacidad y perfil", Icons.Default.Lock,
@@ -104,26 +104,34 @@ private enum class PlaylistManagement(val label: String, val icon: ImageVector, 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun PlaylistSpotifyManagementSheet(onDismiss: () -> Unit, onOpenSpotify: () -> Unit) {
-    var selected by remember { mutableStateOf<PlaylistManagement?>(null) }
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color(0xFF202020)) {
+internal fun PlaylistSpotifyManagementSheet(
+    initialSection: PlaylistSpotifyManagementSection? = null,
+    allowDetails: Boolean = true,
+    onDismiss: () -> Unit,
+    onOpenSpotify: () -> Unit,
+) {
+    var selected by remember(initialSection) { mutableStateOf(initialSection) }
+    if (selected == null) ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color(0xFF202020)) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 12.dp)) {
             Text("Gestionar en Spotify", color = Color.White, style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(start = 24.dp, top = 8.dp, bottom = 12.dp))
-            PlaylistManagement.entries.forEach { action ->
+            PlaylistSpotifyManagementSection.entries.filter {
+                allowDetails || it != PlaylistSpotifyManagementSection.DETAILS
+            }.forEach { action ->
                 PlaylistExternalAction(action.icon, action.label) { selected = action }
             }
         }
     }
     selected?.let { action ->
+        val back = { if (initialSection == null) selected = null else onDismiss() }
         AlertDialog(
-            onDismissRequest = { selected = null },
+            onDismissRequest = back,
             title = { Text(action.label) },
             text = { Text(action.help) },
             confirmButton = {
                 TextButton(onClick = { onDismiss(); onOpenSpotify() }) { Text("Abrir en Spotify") }
             },
-            dismissButton = { TextButton(onClick = { selected = null }) { Text("Volver") } },
+            dismissButton = { TextButton(onClick = back) { Text(if (initialSection == null) "Volver" else "Cancelar") } },
         )
     }
 }
