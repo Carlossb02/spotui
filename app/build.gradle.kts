@@ -14,8 +14,8 @@ android {
         applicationId = "com.music.spotidroid"
         minSdk = 26
         targetSdk = 37
-        versionCode = 202608173
-        versionName = "1.9.6.24"
+        versionCode = 202608174
+        versionName = "1.9.6.25"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -168,6 +168,7 @@ dependencies {
 
     //okhttp + timber (used by the ported YouTube streaming flow)
     implementation(libs.okhttp)
+    implementation("androidx.browser:browser:1.4.0")
     implementation(libs.timber)
     implementation(libs.kotlinx.serialization.json)
 

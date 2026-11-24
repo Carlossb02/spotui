@@ -770,12 +770,10 @@ class Api @Inject constructor(
         }
 
         if (!SpotifyTokenProvider.ensureToken(context)) {
+            if (cached != null) return@flow
             val col = com.music.spotui.data.preferences.OfflineCollectionsPref.getCollection(context, clean)
             if (col != null) {
-                val downloadedSongs = col.songs.filter {
-                    com.music.spotui.data.preferences.isDownloaded(context, it.id.toString())
-                }
-                emit(Response.Success(downloadedSongs))
+                emit(Response.Success(playlistSongsForDisplay(clean, col.songs)))
             } else if (cached == null) {
                 emit(Response.Error("Spotify not authenticated — set sp_dc cookie"))
             }
@@ -813,6 +811,7 @@ class Api @Inject constructor(
             var offset = probe.offset + probe.limit.coerceAtLeast(1)
             while (offset < total) {
                 val page = Spotify.playlistTracks(clean, limit = 100, offset = offset).getOrNull() ?: return@flow
+                if (page.total != total || page.offset != offset) return@flow
                 songs += page.items.mapNotNull { it.track?.toSongModel() }
                 val next = page.offset + page.limit.coerceAtLeast(1)
                 if (next <= offset) return@flow
@@ -826,7 +825,9 @@ class Api @Inject constructor(
             if (total <= 100) {
                 val pageResult = Spotify.playlistTracks(clean, limit = 100, offset = 0)
                 if (pageResult.isSuccess) {
-                    val songs = pageResult.getOrThrow().items.mapNotNull { it.track?.toSongModel() }
+                    val page = pageResult.getOrThrow()
+                    if (page.total != total || page.offset != 0) return@flow
+                    val songs = page.items.mapNotNull { it.track?.toSongModel() }
                     LibraryContentMemory.put(context, key, songs, session)
                     HomeCache.setPlaylistSongs(clean, songs)
                     emit(Response.Success(LibraryContentMemory.playlistSongs(context, clean, songs)))
@@ -840,6 +841,7 @@ class Api @Inject constructor(
                 while (offset >= 0) {
                     val pageResult = Spotify.playlistTracks(clean, limit = 100, offset = offset)
                     val page = pageResult.getOrNull() ?: return@flow
+                    if (page.total != total || page.offset != offset) return@flow
 
                     val pageSongs = page.items.mapNotNull { it.track?.toSongModel() }
                     songs.addAll(0, pageSongs)
@@ -864,8 +866,11 @@ class Api @Inject constructor(
         if (requireComplete) {
             val result = mutableListOf<T>()
             var offset = 0
+            var total: Int? = null
             do {
                 val page = fetch(offset).getOrThrow()
+                check(page.offset == offset && (total == null || total == page.total)) { "Library changed during pagination" }
+                total = page.total
                 result += page.items
                 val next = page.offset + page.limit.coerceAtLeast(1)
                 check(next > offset) { "Library pagination did not advance" }
@@ -1022,8 +1027,11 @@ class Api @Inject constructor(
         if(id.startsWith("local_pl_"))return com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylist(context,id)?.let {
             AlbumsModel(stableId("playlist:$id"),"Local Playlist",it.coverUri,it.name,"${it.songs.size} songs")
         }
-        HomeCache.getPlaylistDetail(id)?.let {return it}
-        val item=LibraryCatalogCache.peek(context)?.firstOrNull {it.isPlaylist && cleanId(it.spotifyId)==id}?:return null
+        HomeCache.getPlaylistDetail(id).takeIf { HomeCache.libraryAccount == SpotifySession.spDc(context) }?.let { return it }
+        PlaylistAccess.cached(context, id)?.takeIf { it.playlistName.isNotBlank() }?.let { header ->
+            return AlbumsModel(stableId("playlist:" + id), header.ownerName, header.coverUri, header.playlistName, stripHtml(header.description))
+        }
+        val item=LibraryCatalogCache.read(context).firstOrNull {it.isPlaylist && cleanId(it.spotifyId)==id}?:return null
         return AlbumsModel(stableId("playlist:$id"),item.subtitle,item.coverUri,item.name,"")
     }
     fun playlistSongsForDisplay(playlistId:String,fallback:List<SongsModel>):List<SongsModel> {
@@ -1153,6 +1161,7 @@ class Api @Inject constructor(
             }
         }
         if (!SpotifyTokenProvider.ensureToken(context)) {
+            if (cached != null) return@flow
             val col = com.music.spotui.data.preferences.OfflineCollectionsPref.getCollection(context, clean)
             if (col != null) {
                 val model = AlbumsModel(
