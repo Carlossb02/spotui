@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -225,6 +226,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     }
     val displayedDescription = presentation.description ?: originalDescription
     val remotePlaylistId = spotifyUrl?.lastPathSegment
+    val editTargetReady = !isLocalPlaylist || linkedSpotifyId != null
+    val canOfferSyncedEditor = remotePlaylistId != null && (!playlistAccess.ownershipVerified || playlistAccess.isOwner)
     val canEditRemoteDetails = remotePlaylistId != null && playlistAccess.isOwner && playlistAccess.ownerId.isNotBlank()
     var showSpotifyEditor by androidx.compose.runtime.saveable.rememberSaveable(playlistId) { mutableStateOf(false) }
     var showPresentationEditor by androidx.compose.runtime.saveable.rememberSaveable(playlistId) { mutableStateOf(false) }
@@ -253,10 +256,9 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     val openInSpotify: () -> Unit = {
         spotifyUrl?.let { awaitingSpotifyReturn = openSpotifyPlaylist(context, it) }
     }
-    if (showSpotifyEditor && remotePlaylistId != null && canEditRemoteDetails) {
+    if (showSpotifyEditor && remotePlaylistId != null) {
         SpotifyPlaylistEditor(
             id = remotePlaylistId,
-            ownerId = playlistAccess.ownerId,
             localId = playlistId.takeIf { isLocalPlaylist },
             onSaved = { newName, newDescription, changedCover ->
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -271,12 +273,12 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                     }
                     com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(remotePlaylistId)
                     com.music.spotui.data.api.Api.HomeCache.library = null
+                    com.music.spotui.data.api.SpotifySync.invalidatePlaylistCatalog()
                 }
                 playlistAccess = playlistAccess.copy(
                     playlistName = newName ?: playlistAccess.playlistName,
                     description = newDescription ?: playlistAccess.description,
                 )
-                showSpotifyEditor = false
                 refreshProfile++
                 playlistViewModel.reloadPlaylist(playlistId)
             },
@@ -386,8 +388,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             && !songsSettled) return@LaunchedEffect
         if (action == LibraryPlaylistAction.ADD && !canEditPlaylist && !accessResolved)
             return@LaunchedEffect
-        if (action in listOf(LibraryPlaylistAction.COLLABORATORS, LibraryPlaylistAction.PRIVACY,
-                LibraryPlaylistAction.NAME, LibraryPlaylistAction.DETAILS) &&
+        if (action in listOf(LibraryPlaylistAction.COLLABORATORS, LibraryPlaylistAction.PRIVACY) &&
             profilePlaylistId.isNotBlank() && !accessResolved)
             return@LaunchedEffect
         if ((action == LibraryPlaylistAction.NAME || action == LibraryPlaylistAction.DETAILS || action == LibraryPlaylistAction.REMOVE) &&
@@ -412,8 +413,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             LibraryPlaylistAction.ADD ->
                 if (canEditPlaylist) showAddMusic = true else message("Spotify no confirma permiso para añadir canciones a esta lista")
             LibraryPlaylistAction.TRACKS -> editingTracks = true
-            LibraryPlaylistAction.NAME -> if (canEditRemoteDetails) showSpotifyEditor = true else showRenameDialog = true
-            LibraryPlaylistAction.DETAILS -> if (canEditRemoteDetails) showSpotifyEditor = true else showPresentationEditor = true
+            LibraryPlaylistAction.NAME -> if (remotePlaylistId != null) showSpotifyEditor = true else showRenameDialog = true
+            LibraryPlaylistAction.DETAILS -> if (remotePlaylistId != null) showSpotifyEditor = true else showPresentationEditor = true
             LibraryPlaylistAction.REMOVE -> showDeleteDialog = true
             LibraryPlaylistAction.COPY ->
                 if (songs.isNotEmpty()) showCopyPlaylist = true else message("No hay canciones disponibles para copiar")
@@ -1106,7 +1107,7 @@ com.music.spotui.ui.components.CollectionActionBar(
                             Text(uiLocalized("Añadir canciones a la cola"), color = Color.White, fontSize = 16.sp)
                         }
                     }
-                    if (canEditRemoteDetails) {
+                    if (canOfferSyncedEditor) {
                         Row(modifier = Modifier.fillMaxWidth().clickable {
                             showPlaylistActions = false
                             showSpotifyEditor = true
@@ -1115,10 +1116,10 @@ com.music.spotui.ui.components.CollectionActionBar(
                         ) {
                             Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White)
                             Spacer(Modifier.width(20.dp))
-                            Text("Editar lista sincronizada", color = Color.White, fontSize = 16.sp)
+                            Text("Editar nombre, descripción y portada", color = Color.White, fontSize = 16.sp)
                         }
                     }
-                    if (isLocalPlaylist || presentationId != null) {
+                    if (editTargetReady && !canOfferSyncedEditor && (isLocalPlaylist || presentationId != null)) {
                         Row(modifier = Modifier.fillMaxWidth().clickable {
                             showPlaylistActions = false
                             showRenameDialog = true
@@ -1132,15 +1133,31 @@ com.music.spotui.ui.components.CollectionActionBar(
                         }
                     }
                     if (presentationId != null) {
-                        Row(modifier = Modifier.fillMaxWidth().clickable {
-                            showPlaylistActions = false
-                            showPresentationEditor = true
-                        }.padding(horizontal = 24.dp, vertical = 16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White)
-                            Spacer(Modifier.width(20.dp))
-                            Text("Editar descripción y portada en Spotui", color = Color.White, fontSize = 16.sp)
+                        if (editTargetReady && !canOfferSyncedEditor) {
+                            Row(modifier = Modifier.fillMaxWidth().clickable {
+                                showPlaylistActions = false
+                                showPresentationEditor = true
+                            }.padding(horizontal = 24.dp, vertical = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White)
+                                Spacer(Modifier.width(20.dp))
+                                Text("Editar descripción y portada en Spotui", color = Color.White, fontSize = 16.sp)
+                            }
+                        } else if (canOfferSyncedEditor &&
+                            (presentation.alias.isNotBlank() || presentation.description != null || presentation.coverUri.isNotBlank())) {
+                            Row(modifier = Modifier.fillMaxWidth().clickable {
+                                showPlaylistActions = false
+                                PlaylistPresentationPref.update(context, presentationId) {
+                                    it.copy(alias = "", description = null, coverUri = "")
+                                }
+                            }.padding(horizontal = 24.dp, vertical = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null, tint = Color.White)
+                                Spacer(Modifier.width(20.dp))
+                                Text("Usar datos de Spotify", color = Color.White, fontSize = 16.sp)
+                            }
                         }
                         val canHide = !isLocalPlaylist || !linkedSpotifyId.isNullOrBlank()
                         Row(modifier = Modifier.fillMaxWidth().clickable {

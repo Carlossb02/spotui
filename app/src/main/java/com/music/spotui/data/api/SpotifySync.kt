@@ -115,7 +115,7 @@ object SpotifySync {
             if (ok && cleanTr.isNotBlank()) {
                 membershipCache[playlist.id] = ConcurrentHashMap.newKeySet<String>().apply { add(cleanTr) }
             }
-            synchronized(this@SpotifySync) { catalogAt = 0L; catalogAccount = null }
+            invalidatePlaylistCatalog()
             SavedTrackLibrary.created(app, playlist.id, name, if (ok && cleanTr.isNotBlank()) setOf(cleanTr) else emptySet())
             Api.HomeCache.library = null
             onDone(ok)
@@ -133,6 +133,12 @@ object SpotifySync {
     private var catalogAccount: String? = null
     private var catalogAt = 0L
     private var catalog = emptyList<com.metrolist.spotify.models.SpotifyPlaylist>()
+
+    @Synchronized
+    internal fun invalidatePlaylistCatalog() {
+        catalogAccount = null
+        catalogAt = 0L
+    }
 
     /** Shared complete catalog: membership and Library never repeat the same concurrent scan. */
     suspend fun allLibraryPlaylists(context: Context, forceRefresh: Boolean = false): List<com.metrolist.spotify.models.SpotifyPlaylist> {

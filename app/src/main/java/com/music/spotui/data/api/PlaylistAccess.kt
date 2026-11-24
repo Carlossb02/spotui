@@ -23,6 +23,7 @@ data class PlaylistAccessInfo(
     val description: String = "",
     val playlistName: String = "",
     val ownerId: String = "",
+    val ownershipVerified: Boolean = false,
 )
 
 object PlaylistAccess {
@@ -37,7 +38,7 @@ object PlaylistAccess {
     internal fun cached(context: Context, playlistId: String): PlaylistAccessInfo? {
         val raw = prefs(context).getString(key(SpotifySession.spDc(context), playlistId), null) ?: return null
         return runCatching { Json.decodeFromString<PlaylistAccessInfo>(raw) }.getOrNull()
-            ?.copy(canEdit = false, isOwner = false)
+            ?.copy(canEdit = false, isOwner = false, ownershipVerified = false)
     }
 
     suspend fun load(context: Context, playlistId: String): PlaylistAccessInfo = withContext(Dispatchers.IO) {
@@ -83,10 +84,11 @@ object PlaylistAccess {
             description = details.description.orEmpty(),
             playlistName = details.name,
             ownerId = owner?.id.orEmpty(),
+            ownershipVerified = currentId.isNotBlank() && !owner?.id.isNullOrBlank(),
         )
         if (SpotifySession.spDc(context) != session) return@withContext PlaylistAccessInfo()
         prefs(context).edit().putString(key(session, playlistId),
-            Json.encodeToString(fresh.copy(canEdit = false, isOwner = false))).apply()
+            Json.encodeToString(fresh.copy(canEdit = false, isOwner = false, ownershipVerified = false))).apply()
         fresh
     }
 }

@@ -495,9 +495,10 @@ object Spotify {
                     response.obj("data")?.obj("me")?.obj("profile")
                         ?: throw SpotifyException(500, "Invalid profileAttributes response")
 
-                val uri = profile.str("uri") ?: ""
+                val id = spotifyUserId(profile)
+                check(id.isNotBlank()) { "Spotify omitted the signed-in user's ID" }
                 SpotifyUser(
-                    id = uri.substringAfterLast(":").ifBlank { profile.str("id").orEmpty() },
+                    id = id,
                     displayName = profile.str("name"),
                     email = null,
                     images = parseGqlImages(profile.obj("avatar")?.arr("sources")),
@@ -512,6 +513,15 @@ object Spotify {
     suspend fun user(userId: String): Result<SpotifyUser> = runCatching {
         require(userId.isNotBlank()) { "Empty Spotify user ID" }
         authenticatedGet<SpotifyUser>("users/${java.net.URLEncoder.encode(userId, "UTF-8")}")
+    }
+
+    private fun spotifyUserId(data: JsonObject?, alternateUri: String? = null): String {
+        val prefix = "spotify:user:"
+        return sequenceOf(data?.str("uri"), data?.str("_uri"), alternateUri)
+            .filterNotNull().firstOrNull { it.startsWith(prefix) && it.length > prefix.length }
+            ?.removePrefix(prefix)
+            ?: data?.str("id")?.takeIf(String::isNotBlank)
+            ?: data?.str("username").orEmpty()
     }
 
     // ── Lyrics (color-lyrics — the official synced lyrics endpoint) ─────
@@ -971,7 +981,7 @@ object Spotify {
             val ownerWrapper = playlist.obj("ownerV2") ?: playlist.obj("owner")
             val ownerData = ownerWrapper?.obj("data") ?: ownerWrapper
             val ownerUri = ownerData?.str("uri") ?: ownerWrapper?.str("_uri") ?: ""
-            val ownerId = ownerUri.substringAfterLast(":").ifBlank { ownerData?.str("id").orEmpty() }
+            val ownerId = spotifyUserId(ownerData, ownerUri)
 
             val images = parseGqlPlaylistImages(playlist.obj("images"))
             // Spotify does not guarantee that the members array is complete. Show
@@ -1123,30 +1133,9 @@ object Spotify {
         SpotifyPlaylist(id = id, uri = uri, name = name, public = false)
     }
 
-    /** Rename a mirrored playlist with the same web player session. */
-    suspend fun renamePlaylist(playlistId: String, name: String): Result<Unit> = runCatching {
-        val payload = buildJsonObject {
-            putJsonArray("deltas") {
-                add(buildJsonObject {
-                    putJsonArray("ops") {
-                        add(buildJsonObject {
-                            put("kind", "UPDATE_LIST_ATTRIBUTES")
-                            putJsonObject("updateListAttributes") {
-                                putJsonObject("newAttributes") {
-                                    putJsonObject("values") { put("name", name) }
-                                }
-                            }
-                        })
-                    }
-                    putJsonObject("info") {
-                        putJsonObject("source") { put("client", "WEBPLAYER") }
-                    }
-                })
-            }
-        }
-        playlistWrite("https://spclient.wg.spotify.com/playlist/v2/playlist/$playlistId/changes", payload)
-        Unit
-    }
+    /** Rename an owned playlist using the same write as other playlist metadata. */
+    suspend fun renamePlaylist(playlistId: String, name: String): Result<Unit> =
+        editPlaylistAttributes(playlistId, newName = name)
 
     /**
      * Removes tracks from a Spotify playlist via GQL mutation.

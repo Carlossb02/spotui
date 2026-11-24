@@ -26,7 +26,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
 internal fun spotifyPlaylistUrl(id: String): Uri? {
-    val realId = id.removePrefix("spotify:playlist:").removePrefix("playlist:")
+    val realId = id.trim().substringBefore('?').substringBefore('|')
+        .removePrefix("https://open.spotify.com/playlist/")
+        .removePrefix("spotify:playlist:").removePrefix("playlist:").removePrefix("playlist/")
     if (!realId.matches(Regex("[A-Za-z0-9]{22}"))) return null
     return Uri.parse("https://open.spotify.com/playlist/" + realId)
 }
