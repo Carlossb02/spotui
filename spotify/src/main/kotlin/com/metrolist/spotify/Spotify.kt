@@ -615,7 +615,10 @@ object Spotify {
 
             val rawItems = libraryData.arr("items")
                 ?: throw SpotifyException(502, "Spotify omitted the library rows")
-            if (rawItems.isEmpty() && offset < totalCount) throw SpotifyException(502, "Incomplete Spotify library page")
+            val pageLimit = pagingInfo?.int("limit") ?: limit
+            if (rawItems.size < minOf(pageLimit, (totalCount - offset).coerceAtLeast(0))) {
+                throw SpotifyException(502, "Incomplete Spotify library page")
+            }
             // Diagnostic mirror of myLibraryNode: collaborative playlists historically
             // surfaced under typenames the strict equality check below silently dropped
             // (issue #37). Logging the typename distribution lets us spot any future
@@ -638,7 +641,11 @@ object Spotify {
                     if (typeName != "PlaylistResponseWrapper" &&
                         !typeName.contains("Playlist", ignoreCase = true)
                     ) return@mapNotNull null
-                    parsePlaylistWrapper(wrapper)
+                    parsePlaylistWrapper(wrapper).also {
+                        if (it == null && wrapper.str("_uri")?.startsWith("spotify:playlist:") == true) {
+                            throw SpotifyException(502, "Spotify omitted playlist metadata")
+                        }
+                    }
                 }
 
             SpotifyPaging(
@@ -1197,6 +1204,19 @@ object Spotify {
             )
             log("D", "moveItemsInPlaylist: moved ${uids.size} items (before=$beforeUid) in $playlistId")
         }
+
+    /** Upload a cover using the active session. Spotify validates image-upload permissions. */
+    suspend fun uploadPlaylistCover(playlistId: String, jpegBase64: String): Result<Unit> = runCatching {
+        require(playlistId.matches(Regex("[A-Za-z0-9]{22}")) && jpegBase64.length in 1..256_000)
+        val token = accessToken ?: throw SpotifyException(401, "Spotify session expired")
+        val response = restClient.put("playlists/$playlistId/images") {
+            header("Authorization", "Bearer $token")
+            setBody(TextContent(jpegBase64, ContentType.parse("image/jpeg")))
+        }
+        if (response.status.value != 202) {
+            throw SpotifyException(response.status.value, "Spotify no aceptó la portada (${response.status.value}).")
+        }
+    }
 
     /** Update metadata through the same web-session endpoint as playlist creation. */
     suspend fun editPlaylistAttributes(

@@ -923,7 +923,9 @@ class Api @Inject constructor(
         remote: List<com.music.spotui.data.entity.LibraryEntry>,
         cachedOffline: List<com.music.spotui.data.preferences.OfflineCollection>,
     ): List<com.music.spotui.data.entity.LibraryEntry> {
+        val removed = LibraryCatalogCache.removedPlaylistIds(context)
         val localPlaylists = com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylists(context)
+            .filterNot { it.syncedSpotifyId in removed }
         val mirroredIds = localPlaylists.map { it.spotifyPlaylistId }.filter { it.isNotBlank() }.toSet()
         val remotePlaylists = remote.filter { it.isPlaylist }.associateBy { it.spotifyId }
         val localEntries = localPlaylists.map { playlist ->
@@ -940,6 +942,7 @@ class Api @Inject constructor(
             )
         }
         val favoriteEntries = com.music.spotui.data.preferences.FavoritePlaylistsPref.entries(context)
+            .filterNot { it.spotifyId in removed }
         val podcastEntries = com.music.spotui.data.preferences.SubscribedPodcastPref.getSubscribedPodcasts(context).map { pod ->
             com.music.spotui.data.entity.LibraryEntry(
                 spotifyId = pod.id,
@@ -960,7 +963,8 @@ class Api @Inject constructor(
         val preferred = shortcuts + localEntries + favoriteEntries + podcastEntries + remote.filterNot { it.spotifyId in mirroredIds }
         val offline = cachedOffline.filter { col ->
             val id = cleanId(col.id)
-            preferred.none { entry ->
+            !(col.isPlaylist && (id in removed ||
+                com.music.spotui.data.preferences.LocalPlaylistPref.isArchivedSpotifyPlaylist(context, id))) && preferred.none { entry ->
                 (id.isNotBlank() && id == cleanId(entry.spotifyId)) ||
                     (entry.isPlaylist == col.isPlaylist && entry.name.equals(col.name, ignoreCase = true) &&
                         (entry.isPlaylist || entry.artists.equals(col.artists, ignoreCase = true)))

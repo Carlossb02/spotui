@@ -155,6 +155,7 @@ object SpotifySync {
                 offset = next
             } while (offset < page.total)
             val complete = result.distinctBy { it.id }
+            check(complete.size == result.size) { "Playlist library changed during pagination" }
             synchronized(this) {
                 if (SpotifySession.spDc(context) == session) {
                     catalogAccount = session; catalog = complete; catalogAt = android.os.SystemClock.elapsedRealtime()
