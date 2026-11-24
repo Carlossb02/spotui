@@ -128,8 +128,11 @@ internal object LibraryContentMemory {
             }
         }
     }
+    private val seededLocalLikes = mutableSetOf<String>()
+
     fun seedLocalLikes(context: Context) {
         val songs = synchronized(lock) {
+            if (!seededLocalLikes.add(SpotifySession.spDc(context))) return
             load(context)
             collections["liked"].orEmpty().mapNotNull { tracks[it] }.filter {
                 (it.spotifyTrackId.isBlank() || it.isLocalSpotifyTrack || it.url.startsWith("yt_local:")) &&

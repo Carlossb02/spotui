@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
@@ -71,6 +72,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -111,6 +113,7 @@ import com.music.spotui.ui.components.openSpotifyPlaylist
 import com.music.spotui.ui.components.openSpotifyPlaylistTab
 import com.music.spotui.ui.components.spotifyPlaylistUrl
 import com.music.spotui.data.preferences.LocalPlaylistPref
+import com.music.spotui.data.preferences.PlaylistPresentationPref
 import com.music.spotui.data.entity.AlbumsModel
 import com.music.spotui.di.Palette
 import com.music.spotui.di.SongPlayer
@@ -183,7 +186,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     }
     val belongsToPlaylist = playlistViewModel.snapshotBelongsTo(playlistId)
     val songs=if (belongsToPlaylist) (songsResp as? Response.Success)?.data.orEmpty() else emptyList()
-    val playlist = (playlistResp as? Response.Success)?.data?.takeIf { belongsToPlaylist }
+    val basePlaylist = (playlistResp as? Response.Success)?.data?.takeIf { belongsToPlaylist }
         ?: AlbumsModel(
             id = playlistId.hashCode() and 0x7fffffff,
             artists = "",
@@ -193,6 +196,16 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         )
 
     val spotifyUrl = remember(profilePlaylistId) { spotifyPlaylistUrl(profilePlaylistId) }
+    val presentationId = spotifyUrl?.lastPathSegment?.takeUnless { isLocalPlaylist }
+    val presentationRevision by PlaylistPresentationPref.revision.collectAsState()
+    val presentation by produceState(PlaylistPresentationPref.Presentation(), presentationId, presentationRevision) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            presentationId?.let { PlaylistPresentationPref.entries(context)[it] }
+                ?: PlaylistPresentationPref.Presentation()
+        }
+    }
+    val playlist = if (presentation.alias.isNotBlank()) basePlaylist.copy(name = presentation.alias) else basePlaylist
+
     val visualCover = if (profilePlaylistId.isNotBlank()) {
         playlistAccess.coverUri.ifBlank { playlist.coverUri }
     } else playlist.coverUri
@@ -248,23 +261,22 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     }
 
 
-    LaunchedEffect(songs, playlist, songsResp, playlistResp) {
-        if (songsResp is Response.Success && playlistResp is Response.Success && songs.isNotEmpty() && playlist != null) {
+    LaunchedEffect(songs, basePlaylist, songsResp, playlistResp, downloadRefreshTrigger) {
+        if (songsResp is Response.Success && playlistResp is Response.Success && songs.isNotEmpty()) {
+            // The library already persists the full Spotify snapshot. Materialize
+            // a second copy only for collections with downloaded audio.
+            kotlinx.coroutines.delay(600)
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollectionAsync(
-                context = context,
-                id = playlistId,
-                name = playlist.name,
-                coverUri = playlist.coverUri,
-                artists = playlist.artists,
-                isPlaylist = true,
-                songs = songs
-            )
+                val downloaded = com.music.spotui.data.preferences.getDownloadedSongIds(context)
+                if (downloaded.isNotEmpty() && songs.any { it.id.toString() in downloaded }) {
+                    com.music.spotui.data.preferences.OfflineCollectionsPref.saveCollectionAsync(
+                        context, playlistId, basePlaylist.name, basePlaylist.coverUri, basePlaylist.artists,
+                        isPlaylist = true, songs = songs,
+                    )
+                }
             }
         }
     }
-
-
 
     var searchQuery by remember(playlistId) { mutableStateOf("") }
     var currentSort by remember(playlistId) { mutableStateOf(getPlaylistSortOption(context, playlistId)) }
@@ -293,39 +305,43 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         )
     }
 
-    val filteredSongs = remember(songs, searchQuery, currentSort, isDescending) {
-        val filtered = if (searchQuery.isBlank()) {
-            songs
-        } else {
-            songs.filter {
-                it.title.contains(searchQuery, ignoreCase = true) ||
-                        it.singer.contains(searchQuery, ignoreCase = true)
+    val displaySongs by produceState(emptyList<com.music.spotui.data.entity.SongsModel>() to emptyList<String>(),
+        songs, searchQuery, currentSort, isDescending) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            val filtered = if (searchQuery.isBlank()) {
+                songs
+            } else {
+                songs.filter {
+                    it.title.contains(searchQuery, ignoreCase = true) ||
+                            it.singer.contains(searchQuery, ignoreCase = true)
+                }
             }
-        }
 
-        when (currentSort) {
-            PlaylistSortOption.DATE -> if (isDescending) filtered.reversed() else filtered
-            PlaylistSortOption.TITLE -> if (isDescending) filtered.sortedByDescending { it.title.lowercase() } else filtered.sortedBy { it.title.lowercase() }
-            PlaylistSortOption.ARTIST -> if (isDescending) filtered.sortedByDescending { it.singer.lowercase() } else filtered.sortedBy { it.singer.lowercase() }
-            PlaylistSortOption.ALBUM -> if (isDescending) filtered.sortedByDescending { it.album.lowercase() } else filtered.sortedBy { it.album.lowercase() }
+            val sorted = when (currentSort) {
+                PlaylistSortOption.DATE -> if (isDescending) filtered.reversed() else filtered
+                PlaylistSortOption.TITLE -> if (isDescending) filtered.sortedByDescending { it.title.lowercase() } else filtered.sortedBy { it.title.lowercase() }
+                PlaylistSortOption.ARTIST -> if (isDescending) filtered.sortedByDescending { it.singer.lowercase() } else filtered.sortedBy { it.singer.lowercase() }
+                PlaylistSortOption.ALBUM -> if (isDescending) filtered.sortedByDescending { it.album.lowercase() } else filtered.sortedBy { it.album.lowercase() }
+            }
+            sorted to com.music.spotui.ui.utils.stableSongKeys(sorted)
         }
     }
-
-    // Keys are stable across insertions and deletions; O(n) even for long playlists.
-    val stableSongKeys=remember(filteredSongs){com.music.spotui.ui.utils.stableSongKeys(filteredSongs)}
+    val (filteredSongs, stableSongKeys) = displaySongs
 
     var menuSong by remember { mutableStateOf<com.music.spotui.data.entity.SongsModel?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
 
-    if (showRenameDialog && isLocalPlaylist && linkedSpotifyId == "") {
+    if (showRenameDialog && (isLocalPlaylist || presentationId != null)) {
         val currentName = playlist.name.ifBlank { playlistName }
         var newPlaylistNameInput by remember(currentName) { mutableStateOf(currentName) }
         AlertDialog(
             onDismissRequest = { showRenameDialog = false },
             containerColor = Color(0xFF282828),
-            title = { Text(uiLocalized("Rename Playlist"), color = Color.White, fontWeight = FontWeight.Bold) },
+            title = { Text(if (isLocalPlaylist) uiLocalized("Rename Playlist") else "Cambiar nombre en Spotui",
+                color = Color.White, fontWeight = FontWeight.Bold) },
             text = {
+                Column {
                 TextField(
                     value = newPlaylistNameInput,
                     onValueChange = { newPlaylistNameInput = it },
@@ -344,6 +360,14 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(8.dp))
                 )
+                if (presentationId != null) {
+                    Text("Este nombre solo se usa en Spotui.", color = Color.LightGray, modifier = Modifier.padding(top = 10.dp))
+                    if (presentation.alias.isNotBlank()) androidx.compose.material3.TextButton(onClick = {
+                        PlaylistPresentationPref.update(context, presentationId) { it.copy(alias = "") }
+                        showRenameDialog = false
+                    }) { Text("Usar nombre de Spotify") }
+                }
+                }
             },
             confirmButton = {
                 Text(
@@ -355,10 +379,14 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                         .clickable {
                             val name = newPlaylistNameInput.trim()
                             if (name.isNotBlank()) {
-                                com.music.spotui.data.preferences.LocalPlaylistPref.renamePlaylist(context, playlistId, name)
-                                com.music.spotui.data.api.Api.HomeCache.library = null
-                                com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(playlistId)
-                                playlistViewModel.reloadPlaylist(playlistId)
+                                if (isLocalPlaylist) {
+                                    LocalPlaylistPref.renamePlaylist(context, playlistId, name)
+                                    com.music.spotui.data.api.Api.HomeCache.library = null
+                                    com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(playlistId)
+                                    playlistViewModel.reloadPlaylist(playlistId)
+                                } else if (presentationId != null) {
+                                    PlaylistPresentationPref.update(context, presentationId) { it.copy(alias = name) }
+                                }
                             }
                             showRenameDialog = false
                         }
@@ -979,18 +1007,34 @@ com.music.spotui.ui.components.CollectionActionBar(
                             Text("Privacidad en Spotify", color = Color.White, fontSize = 16.sp)
                         }
                     }
-                    if ((isLocalPlaylist && linkedSpotifyId == "") || (spotifyUrl != null && playlistAccess.isOwner)) {
+                    if (isLocalPlaylist || presentationId != null) {
                         Row(modifier = Modifier.fillMaxWidth().clickable {
                             showPlaylistActions = false
-                            if (spotifyUrl != null) manageInSpotify = PlaylistSpotifyManagementSection.DETAILS
-                            else showRenameDialog = true
+                            showRenameDialog = true
                         }.padding(horizontal = 24.dp, vertical = 16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White)
                             Spacer(Modifier.width(20.dp))
-                            Text(if (spotifyUrl != null) "Cambiar nombre en Spotify" else uiLocalized("Cambiar nombre"),
+                            Text(if (isLocalPlaylist) uiLocalized("Cambiar nombre") else "Cambiar nombre en Spotui",
                                 color = Color.White, fontSize = 16.sp)
+                        }
+                    }
+                    if (presentationId != null) {
+                        Row(modifier = Modifier.fillMaxWidth().clickable {
+                            showPlaylistActions = false
+                            val hiding = presentation.hiddenAs.isBlank()
+                            PlaylistPresentationPref.update(context, presentationId) {
+                                it.copy(hiddenAs = if (hiding) playlist.name.ifBlank { "Playlist" } else "")
+                            }
+                            if (hiding) navController.navigateUp()
+                        }.padding(horizontal = 24.dp, vertical = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.VisibilityOff, contentDescription = null, tint = Color.White)
+                            Spacer(Modifier.width(20.dp))
+                            Text(if (presentation.hiddenAs.isBlank()) "Ocultar en tu biblioteca de Spotui"
+                                else "Mostrar en tu biblioteca de Spotui", color = Color.White, fontSize = 16.sp)
                         }
                     }
                     if (isLocalPlaylist || (spotifyUrl != null && playlistAccess.isOwner)) {

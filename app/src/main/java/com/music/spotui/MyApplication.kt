@@ -38,9 +38,6 @@ class MyApplication : Application(){
                 "playlists" to {com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylists(this@MyApplication);Unit},
                 "local tracks" to {com.music.spotui.data.preferences.getLocalTracks(this@MyApplication);Unit},
                 "downloads" to {com.music.spotui.data.preferences.downloadedPathForQuery(this@MyApplication,"");Unit},
-                "liked songs" to {com.music.spotui.data.api.LibraryContentMemory.read(this@MyApplication,"liked");Unit},
-                "local likes" to {com.music.spotui.data.api.LibraryContentMemory.seedLocalLikes(this@MyApplication)},
-                "library" to {com.music.spotui.data.api.LibraryCatalogCache.read(this@MyApplication);Unit},
             )
             tasks.forEach { (name,load)->
                 com.music.spotui.di.SongPlayer.awaitAudioStartup()

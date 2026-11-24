@@ -107,6 +107,7 @@ import com.music.spotui.data.api.Api
 import com.music.spotui.data.api.Response
 import com.music.spotui.data.entity.LibraryEntry
 import com.music.spotui.data.preferences.LocalPlaylistPref
+import com.music.spotui.data.preferences.PlaylistPresentationPref
 import com.music.spotui.data.preferences.isLibraryGridView
 import com.music.spotui.data.preferences.setLibraryGridView
 import com.music.spotui.ui.components.Snackbar
@@ -278,6 +279,34 @@ fun LibraryScreen(navController: NavController) {
     val togglePin: (String) -> Unit = { id -> pinnedIds = PinnedLibraryPref.toggle(context, id) }
     var gridView by remember { mutableStateOf(isLibraryGridView(context)) }
     var showCreateDialog by remember { mutableStateOf(false) }
+    var showHiddenPlaylists by remember { mutableStateOf(false) }
+    val presentationRevision by PlaylistPresentationPref.revision.collectAsState()
+    val presentations by produceState(emptyMap<String, PlaylistPresentationPref.Presentation>(), presentationRevision, account) {
+        value = withContext(Dispatchers.IO) { PlaylistPresentationPref.entries(context) }
+    }
+    val hiddenPlaylists = remember(presentations) { presentations.filterValues { it.hiddenAs.isNotBlank() } }
+    if (showHiddenPlaylists && hiddenPlaylists.isNotEmpty()) {
+        ModalBottomSheet(onDismissRequest = { showHiddenPlaylists = false }, containerColor = Color(0xFF202020)) {
+            LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+                item {
+                    Text("Listas ocultas en Spotui", color = Color.White, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(20.dp))
+                }
+                items(hiddenPlaylists.entries.toList(), key = { it.key }) { (id, presentation) ->
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text(presentation.alias.ifBlank { presentation.hiddenAs }, color = Color.White,
+                            modifier = Modifier.weight(1f))
+                        androidx.compose.material3.TextButton(onClick = {
+                            PlaylistPresentationPref.update(context, id) { it.copy(hiddenAs = "") }
+                            if (hiddenPlaylists.size == 1) showHiddenPlaylists = false
+                        }) { Text("Restaurar") }
+                    }
+                }
+            }
+        }
+    }
+
 
     if (showCreateDialog) {
         var playlistNameInput by remember { mutableStateOf("") }
@@ -379,6 +408,13 @@ fun LibraryScreen(navController: NavController) {
                 Icon(Icons.Default.Add, contentDescription = uiLocalized("Create Playlist"), tint = Color.White,
                     modifier = Modifier.size(27.dp))
             }
+        }
+
+        if (hiddenPlaylists.isNotEmpty()) {
+            androidx.compose.material3.TextButton(
+                onClick = { showHiddenPlaylists = true },
+                modifier = Modifier.padding(horizontal = 12.dp),
+            ) { Text("Listas ocultas") }
         }
 
         // Library Filter Chips bar
@@ -500,8 +536,17 @@ fun LibraryScreen(navController: NavController) {
             is Response.Loading -> LibrarySkeleton(PaddingValues(0.dp))
             is Response.Success -> {
                 val rawEntries = (entries as Response.Success).data
-                val filteredEntries = remember(rawEntries, selectedFilter, isDownloadedOnly, downloadedSnapshot, searchQuery, currentSort, isDescending, pinnedIds) {
-                    val filtered = rawEntries.filter { entry ->
+                val filteredEntries = remember(rawEntries, selectedFilter, isDownloadedOnly, downloadedSnapshot, searchQuery, currentSort, isDescending, pinnedIds, presentations) {
+                    val visibleEntries = rawEntries.mapNotNull { entry ->
+                        val presentation = presentations[entry.spotifyId]
+                        when {
+                            presentation == null -> entry
+                            presentation.hiddenAs.isNotBlank() -> null
+                            presentation.alias.isNotBlank() -> entry.copy(name = presentation.alias)
+                            else -> entry
+                        }
+                    }
+                    val filtered = visibleEntries.filter { entry ->
                         val matchesCategory = when (selectedFilter) {
                             LibraryFilterType.ALL -> true
                             LibraryFilterType.PLAYLISTS -> entry.isPlaylist

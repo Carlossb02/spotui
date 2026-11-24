@@ -497,7 +497,7 @@ object Spotify {
 
                 val uri = profile.str("uri") ?: ""
                 SpotifyUser(
-                    id = uri.substringAfterLast(":"),
+                    id = uri.substringAfterLast(":").ifBlank { profile.str("id").orEmpty() },
                     displayName = profile.str("name"),
                     email = null,
                     images = parseGqlImages(profile.obj("avatar")?.arr("sources")),
@@ -961,8 +961,10 @@ object Spotify {
                 response.obj("data")?.obj("playlistV2")
                     ?: throw SpotifyException(500, "Invalid fetchPlaylist response")
 
-            val ownerData = playlist.obj("ownerV2")?.obj("data")
-            val ownerUri = ownerData?.str("uri") ?: ""
+            val ownerWrapper = playlist.obj("ownerV2") ?: playlist.obj("owner")
+            val ownerData = ownerWrapper?.obj("data") ?: ownerWrapper
+            val ownerUri = ownerData?.str("uri") ?: ownerWrapper?.str("_uri") ?: ""
+            val ownerId = ownerUri.substringAfterLast(":").ifBlank { ownerData?.str("id").orEmpty() }
 
             val images = parseGqlPlaylistImages(playlist.obj("images"))
             // Spotify does not guarantee that the members array is complete. Show
@@ -992,8 +994,8 @@ object Spotify {
                 images = images,
                 owner =
                     SpotifyPlaylistOwner(
-                        id = ownerUri.substringAfterLast(":"),
-                        displayName = ownerData?.str("name"),
+                        id = ownerId,
+                        displayName = ownerData?.str("name") ?: ownerData?.str("display_name"),
                         uri = ownerUri.ifEmpty { null },
                         imageUrl = parseGqlImages(ownerData?.obj("avatar")?.arr("sources")
                             ?: ownerData?.obj("visuals")?.obj("avatarImage")?.arr("sources")).firstOrNull()?.url,
