@@ -1,0 +1,142 @@
+package com.music.spotui.ui.components
+
+import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.GroupAdd
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+
+internal fun spotifyPlaylistUrl(id: String): Uri? {
+    val realId = id.removePrefix("spotify:playlist:").removePrefix("playlist:")
+    if (!realId.matches(Regex("[A-Za-z0-9]{22}"))) return null
+    return Uri.parse("https://open.spotify.com/playlist/" + realId)
+}
+
+internal fun openSpotifyPlaylist(context: Context, url: Uri): Boolean {
+    val official = Intent(Intent.ACTION_VIEW, url).setPackage("com.spotify.music")
+    try {
+        context.startActivity(official)
+        return true
+    } catch (_: ActivityNotFoundException) {
+        // Restrict the fallback to browsers because Spotui also handles Spotify links.
+    }
+    val browser = Intent(Intent.ACTION_VIEW, url).apply {
+        selector = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_BROWSER)
+    }
+    return try {
+        context.startActivity(browser)
+        true
+    } catch (_: ActivityNotFoundException) {
+        Toast.makeText(context, "No hay una app para abrir Spotify", Toast.LENGTH_SHORT).show()
+        false
+    }
+}
+
+@Composable
+internal fun PlaylistSpotifyMenuItems(
+    url: Uri,
+    isOwner: Boolean,
+    onDismiss: () -> Unit,
+    onOpenSpotify: () -> Unit,
+    onManage: () -> Unit,
+) {
+    val context = LocalContext.current
+    PlaylistExternalAction(Icons.Default.OpenInNew, "Abrir en Spotify") {
+        onDismiss()
+        onOpenSpotify()
+    }
+    if (isOwner) {
+        PlaylistExternalAction(Icons.Default.Settings, "Gestionar en Spotify") {
+            onDismiss()
+            onManage()
+        }
+    }
+    PlaylistExternalAction(Icons.Default.Share, "Compartir enlace") {
+        onDismiss()
+        val share = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, url.toString())
+        }
+        try {
+            context.startActivity(Intent.createChooser(share, "Compartir lista"))
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(context, "No hay una app para compartir el enlace", Toast.LENGTH_SHORT).show()
+        }
+    }
+    PlaylistExternalAction(Icons.Default.ContentCopy, "Copiar enlace") {
+        val clipboard = context.getSystemService(ClipboardManager::class.java)
+        clipboard?.setPrimaryClip(ClipData.newPlainText("Lista de Spotify", url.toString()))
+        if (clipboard != null && android.os.Build.VERSION.SDK_INT < 33) {
+            Toast.makeText(context, "Enlace copiado", Toast.LENGTH_SHORT).show()
+        }
+        onDismiss()
+    }
+}
+
+private enum class PlaylistManagement(val label: String, val icon: ImageVector, val help: String) {
+    DETAILS("Nombre, descripción y portada", Icons.Default.Edit,
+        "En Spotify, abre el menú de la lista y elige Editar lista. Desde ahí puedes cambiar el nombre, la descripción y la portada."),
+    PRIVACY("Privacidad y perfil", Icons.Default.Lock,
+        "En el menú de la lista de Spotify, elige Hacer privada o Hacer pública. Para mostrarla u ocultarla en tu perfil, usa Añadir al perfil o Quitar del perfil."),
+    COLLABORATORS("Colaboradores", Icons.Default.GroupAdd,
+        "En Spotify, abre el menú de una lista privada y elige Invitar a colaboradores. Para quitar un permiso, toca las fotos de perfil bajo el nombre y abre el menú de esa persona."),
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun PlaylistSpotifyManagementSheet(onDismiss: () -> Unit, onOpenSpotify: () -> Unit) {
+    var selected by remember { mutableStateOf<PlaylistManagement?>(null) }
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color(0xFF202020)) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 12.dp)) {
+            Text("Gestionar en Spotify", color = Color.White, style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(start = 24.dp, top = 8.dp, bottom = 12.dp))
+            PlaylistManagement.entries.forEach { action ->
+                PlaylistExternalAction(action.icon, action.label) { selected = action }
+            }
+        }
+    }
+    selected?.let { action ->
+        AlertDialog(
+            onDismissRequest = { selected = null },
+            title = { Text(action.label) },
+            text = { Text(action.help) },
+            confirmButton = {
+                TextButton(onClick = { onDismiss(); onOpenSpotify() }) { Text("Abrir en Spotify") }
+            },
+            dismissButton = { TextButton(onClick = { selected = null }) { Text("Volver") } },
+        )
+    }
+}
+
+@Composable
+private fun PlaylistExternalAction(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = Color.White)
+        Spacer(Modifier.width(20.dp))
+        Text(label, color = Color.White, style = MaterialTheme.typography.bodyLarge)
+    }
+}

@@ -15,6 +15,9 @@ data class PlaylistAccessInfo(
     val ownerImage: String? = null,
     val contributors: List<SpotifyPlaylistContributor> = emptyList(),
     val available: Boolean = false,
+    val isOwner: Boolean = false,
+    val coverUri: String = "",
+    val description: String = "",
 )
 
 object PlaylistAccess {
@@ -40,13 +43,17 @@ object PlaylistAccess {
                 imageUrl = contributor.imageUrl ?: profile?.images?.firstOrNull()?.url,
             )
         }
+        val isOwner = currentId.isNotBlank() && owner?.id == currentId
         PlaylistAccessInfo(
-            canEdit = currentId.isNotBlank() && (owner?.id == currentId || members.any { it.id == currentId }),
+            canEdit = isOwner || (currentId.isNotBlank() && members.any { it.id == currentId }),
             ownerName = owner?.displayName?.takeIf { it.isNotBlank() && it != owner?.id }
                 ?: ownerProfile?.displayName.orEmpty(),
             ownerImage = owner?.imageUrl?.takeIf { it.isNotBlank() } ?: ownerProfile?.images?.firstOrNull()?.url,
             contributors = picturedMembers,
             available = true,
+            isOwner = isOwner,
+            coverUri = details.images.firstOrNull()?.url.orEmpty(),
+            description = details.description.orEmpty(),
         )
     }
 }
