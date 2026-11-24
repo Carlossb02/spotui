@@ -29,6 +29,8 @@ class PlaylistViewModel @Inject constructor(
 
     private val _songs: MutableStateFlow<Response<List<SongsModel>>> = MutableStateFlow(Response.Loading())
     val songs: StateFlow<Response<List<SongsModel>>> = _songs
+    private val _songsSettled = MutableStateFlow(false)
+    val songsSettled: StateFlow<Boolean> = _songsSettled
 
     private val _playlist: MutableStateFlow<Response<AlbumsModel>> = MutableStateFlow(Response.Loading())
     val playlist: StateFlow<Response<AlbumsModel>> = _playlist
@@ -96,6 +98,7 @@ class PlaylistViewModel @Inject constructor(
         val different=playlistKey!=playlistId
         playlistKey=playlistId
         val generation=++loadGeneration
+        _songsSettled.value = false
         metadataJob?.cancel();songsJob?.cancel()
         if(different) { rawSongs=emptyList(); _playlist.value=Response.Loading(); _songs.value=Response.Loading() }
         viewModelScope.launch(Dispatchers.IO) {
@@ -113,12 +116,14 @@ class PlaylistViewModel @Inject constructor(
             }
         }
         songsJob=viewModelScope.launch(Dispatchers.IO) {
-            repository.providePlaylistSongs(playlistId).collect {result->
+            try { repository.providePlaylistSongs(playlistId).collect {result->
                 if(generation!=loadGeneration || playlistKey!=playlistId)return@collect
                 if(result is Response.Success) {
                     rawSongs=result.data.orEmpty()
                     _songs.value=Response.Success(repository.playlistSongsForDisplay(playlistId,rawSongs))
                 } else if(_songs.value !is Response.Success)_songs.value=result
+            } } finally {
+                if (generation == loadGeneration && playlistKey == playlistId) _songsSettled.value = true
             }
         }
     }

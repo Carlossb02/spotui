@@ -38,8 +38,8 @@ fun categoryRoute(genre: String, title: String): String =
     "${Routes.Category.route}/${android.net.Uri.encode(genre)}?title=${android.net.Uri.encode(title)}"
 
 /** Builds a playlist route carrying the Spotify playlist id (and a display name). */
-fun playlistRoute(id: String, name: String = ""): String =
-    "${Routes.Playlist.route}/${android.net.Uri.encode(id)}?name=${android.net.Uri.encode(name)}"
+fun playlistRoute(id: String, name: String = "", action: String = ""): String =
+    "${Routes.Playlist.route}/${android.net.Uri.encode(id)}?name=${android.net.Uri.encode(name)}&action=${android.net.Uri.encode(action)}"
 
 /** Builds a podcast-show route carrying the Spotify show id (and a display name). */
 fun showRoute(id: String, name: String = ""): String =

@@ -279,6 +279,18 @@ fun LibraryScreen(navController: NavController) {
     val togglePin: (String) -> Unit = { id -> pinnedIds = PinnedLibraryPref.toggle(context, id) }
     var gridView by remember { mutableStateOf(isLibraryGridView(context)) }
     var showCreateDialog by remember { mutableStateOf(false) }
+    var playlistMenu by remember { mutableStateOf<LibraryEntry?>(null) }
+    playlistMenu?.let { entry ->
+        com.music.spotui.ui.components.LibraryPlaylistActions(
+            entry, entry.spotifyId in pinnedIds,
+            onTogglePin = { togglePin(entry.spotifyId) },
+            onDismiss = { playlistMenu = null },
+            onAction = { action ->
+                playlistMenu = null
+                navController.navigate(playlistRoute(entry.spotifyId, entry.name, action.name))
+            },
+        )
+    }
     var showHiddenPlaylists by remember { mutableStateOf(false) }
     val presentationRevision by PlaylistPresentationPref.revision.collectAsState()
     val presentations by produceState(emptyMap<String, PlaylistPresentationPref.Presentation>(), presentationRevision, account) {
@@ -542,8 +554,10 @@ fun LibraryScreen(navController: NavController) {
                         when {
                             presentation == null -> entry
                             presentation.hiddenAs.isNotBlank() -> null
-                            presentation.alias.isNotBlank() -> entry.copy(name = presentation.alias)
-                            else -> entry
+                            else -> entry.copy(
+                                name = presentation.alias.ifBlank { entry.name },
+                                coverUri = presentation.coverUri.ifBlank { entry.coverUri },
+                            )
                         }
                     }
                     val filtered = visibleEntries.filter { entry ->
@@ -588,6 +602,7 @@ fun LibraryScreen(navController: NavController) {
                         navController = navController,
                         pinnedIds = pinnedIds,
                         onTogglePin = togglePin,
+                        onPlaylistMenu = { playlistMenu = it },
                         onClearFilters = { libraryViewModel.clearFilters() }
                     )
                 } else {
@@ -598,6 +613,7 @@ fun LibraryScreen(navController: NavController) {
                         navController = navController,
                         pinnedIds = pinnedIds,
                         onTogglePin = togglePin,
+                        onPlaylistMenu = { playlistMenu = it },
                         onClearFilters = { libraryViewModel.clearFilters() }
                     )
                 }
@@ -640,6 +656,7 @@ fun SumUpLibraryScreen(
     navController: NavController,
     pinnedIds: Set<String> = emptySet(),
     onTogglePin: (String) -> Unit = {},
+    onPlaylistMenu: ((LibraryEntry) -> Unit)? = null,
     onClearFilters: () -> Unit = {}
 ) {
     if (entries.isEmpty() && followedArtists.isEmpty()) {
@@ -707,7 +724,13 @@ fun SumUpLibraryScreen(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                         onClick = { openLibraryEntry(entry, navController) },
-                        onLongClick = { pinMenuOpen = true }
+                        onLongClick = {
+                            val regularPlaylist = entry.isPlaylist &&
+                                entry.spotifyId != Api.HomeCache.LIKED_SONGS_ID &&
+                                entry.spotifyId != Api.HomeCache.DOWNLOADS_ID
+                            if (regularPlaylist && onPlaylistMenu != null) onPlaylistMenu(entry)
+                            else pinMenuOpen = true
+                        }
                     )
             ) {
                 if (entry.spotifyId == Api.HomeCache.DOWNLOADS_ID) {
@@ -860,6 +883,7 @@ fun LibraryGridScreen(
     navController: NavController,
     pinnedIds: Set<String> = emptySet(),
     onTogglePin: (String) -> Unit = {},
+    onPlaylistMenu: ((LibraryEntry) -> Unit)? = null,
     onClearFilters: () -> Unit = {}
 ) {
     if (entries.isEmpty() && followedArtists.isEmpty()) {
@@ -923,7 +947,13 @@ fun LibraryGridScreen(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                     onClick = { openLibraryEntry(entry, navController) },
-                    onLongClick = { pinMenuOpen = true }
+                    onLongClick = {
+                            val regularPlaylist = entry.isPlaylist &&
+                                entry.spotifyId != Api.HomeCache.LIKED_SONGS_ID &&
+                                entry.spotifyId != Api.HomeCache.DOWNLOADS_ID
+                            if (regularPlaylist && onPlaylistMenu != null) onPlaylistMenu(entry)
+                            else pinMenuOpen = true
+                        }
                 )
             ) {
                 DropdownMenu(expanded = pinMenuOpen, onDismissRequest = { pinMenuOpen = false }) {

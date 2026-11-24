@@ -219,12 +219,13 @@ fun MyNavHost(
         }
 
         composable(
-            "${Routes.Playlist.route}/{pId}?name={name}",
-            arguments = listOf(navArgument("name") { defaultValue = "" }),
+            "${Routes.Playlist.route}/{pId}?name={name}&action={action}",
+            arguments = listOf(navArgument("name") { defaultValue = "" }, navArgument("action") { defaultValue = "" }),
         ) { navBackStackEntry ->
             val pId = navBackStackEntry.arguments?.getString("pId")
             val name = navBackStackEntry.arguments?.getString("name").orEmpty()
-            pId?.let { PlaylistScreen(navHostController, playlistId = it, playlistName = name) }
+            pId?.let { PlaylistScreen(navHostController, playlistId = it, playlistName = name,
+                initialAction = navBackStackEntry.arguments?.getString("action").orEmpty()) }
         }
 
         composable(
