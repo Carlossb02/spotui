@@ -914,10 +914,15 @@ class Api @Inject constructor(
      * playlists (followed + created), merged into one list. Uses the libraryV3
      * GQL endpoint (not rate-limited). Process-cached for instant re-entry.
      */
-    fun cachedLibraryEntries(): List<com.music.spotui.data.entity.LibraryEntry>? =
-        liveLibrary(LibraryCatalogCache.peek(context).orEmpty())
+    @Volatile private var offlineLibrary = emptyList<com.music.spotui.data.preferences.OfflineCollection>()
 
-    private fun liveLibrary(remote: List<com.music.spotui.data.entity.LibraryEntry>): List<com.music.spotui.data.entity.LibraryEntry> {
+    fun cachedLibraryEntries(): List<com.music.spotui.data.entity.LibraryEntry>? =
+        liveLibrary(LibraryCatalogCache.peek(context).orEmpty(), offlineLibrary)
+
+    private fun liveLibrary(
+        remote: List<com.music.spotui.data.entity.LibraryEntry>,
+        cachedOffline: List<com.music.spotui.data.preferences.OfflineCollection>,
+    ): List<com.music.spotui.data.entity.LibraryEntry> {
         val localPlaylists = com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylists(context)
         val mirroredIds = localPlaylists.map { it.spotifyPlaylistId }.filter { it.isNotBlank() }.toSet()
         val remotePlaylists = remote.filter { it.isPlaylist }.associateBy { it.spotifyId }
@@ -953,7 +958,7 @@ class Api @Inject constructor(
             com.music.spotui.data.entity.LibraryEntry(DOWNLOADS_ID, "Downloaded", "Available offline", "", true),
         )
         val preferred = shortcuts + localEntries + favoriteEntries + podcastEntries + remote.filterNot { it.spotifyId in mirroredIds }
-        val offline = com.music.spotui.data.preferences.OfflineCollectionsPref.getOfflineCollections(context).filter { col ->
+        val offline = cachedOffline.filter { col ->
             val id = cleanId(col.id)
             preferred.none { entry ->
                 (id.isNotBlank() && id == cleanId(entry.spotifyId)) ||
@@ -975,9 +980,17 @@ class Api @Inject constructor(
         val session = SpotifySession.spDc(context)
         if (HomeCache.libraryAccount != session) { HomeCache.library = null; HomeCache.libraryAccount = session }
         val seed = LibraryCatalogCache.peek(context) ?: LibraryCatalogCache.read(context)
-        val initial = liveLibrary(seed)
+        val initial = liveLibrary(seed, cachedOffline = emptyList())
         HomeCache.library = initial
         emit(Response.Success(initial))
+        com.music.spotui.di.SongPlayer.awaitAudioStartup()
+        val offline = com.music.spotui.data.preferences.OfflineCollectionsPref.getOfflineCollections(context)
+        offlineLibrary = offline
+        if (offline.isNotEmpty() && SpotifySession.spDc(context) == session) {
+            val complete = liveLibrary(seed, offline)
+            HomeCache.library = complete
+            if (complete != initial) emit(Response.Success(complete))
+        }
         if (!SpotifyTokenProvider.ensureToken(context)) return@flow
         try {
             val remote = coroutineScope {
@@ -994,7 +1007,7 @@ class Api @Inject constructor(
             }
             if (SpotifySession.spDc(context) != session) return@flow
             LibraryCatalogCache.replace(context, session, remote)
-            val fresh = liveLibrary(remote)
+            val fresh = liveLibrary(remote, offline)
             HomeCache.library = fresh
             emit(Response.Success(fresh))
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -1075,6 +1088,7 @@ class Api @Inject constructor(
     /** The user's Spotify "Liked Songs" (saved tracks) as playable songs. */
     suspend fun getLikedSongs(): Flow<Response<List<SongsModel>>> = flow {
         val session = SpotifySession.spDc(context)
+        LibraryContentMemory.seedLocalLikes(context)
         val stored = LibraryContentMemory.read(context, "liked")
         val local = withLocalLikes(stored.orEmpty())
         val cached = local.takeIf { stored != null || it.isNotEmpty() }?.let(::libraryOverrides)

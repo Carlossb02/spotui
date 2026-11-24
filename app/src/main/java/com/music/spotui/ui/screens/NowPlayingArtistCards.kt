@@ -156,8 +156,14 @@ internal fun NowPlayingArtistCards(
 @Composable
 private fun ArtistFollowPill(id: String, name: String) {
     val context = LocalContext.current
-    var following by remember(id) { mutableStateOf(isArtistFollowed(context, id) ||
-        com.music.spotui.data.api.LibraryContentMemory.artists(context)?.any { it.id==id }==true) }
+    var following by remember(id) { mutableStateOf(isArtistFollowed(context, id)) }
+    var changedHere by remember(id) { mutableStateOf(false) }
+    LaunchedEffect(context, id) {
+        val cachedFollow = withContext(Dispatchers.IO) {
+            com.music.spotui.data.api.LibraryContentMemory.artists(context)?.any { it.id == id } == true
+        }
+        if (!changedHere) following = isArtistFollowed(context, id) || cachedFollow
+    }
     DisposableEffect(context, id) {
         val prefs = context.getSharedPreferences("FollowedArtists", 0)
         val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
@@ -172,6 +178,7 @@ private fun ArtistFollowPill(id: String, name: String) {
             .background(if(following)Color(0xFF1ED760) else Color.Transparent)
             .border(1.dp, if(following)Color(0xFF1ED760) else Color(0xFF888888), RoundedCornerShape(50))
             .clickable(enabled = id.isNotBlank()) {
+                changedHere = true
                 val next = !following
                 if (next) addFollowedArtist(context, id, name) else removeFollowedArtist(context, id)
                 following = next
