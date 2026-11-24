@@ -279,6 +279,32 @@ object LocalPlaylistPref {
         com.music.spotui.util.BackupHelper.scheduleAutoBackup(context)
     }
 
+    /** Remove a confirmed Spotify deletion from the active library, preserving the last local copy. */
+    internal suspend fun archiveRemovedPlaylist(context: Context, expected: LocalPlaylist) {
+        val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        val raw = prefs.getString(expected.id, null) ?: return
+        check(getLocalPlaylist(context, expected.id) == expected) { "La lista local cambió; se reintentará" }
+        check(archivedSpotifyPlaylists(context).edit().putString(expected.id, raw).commit()) {
+            "No se pudo archivar la copia de la lista"
+        }
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+            check(prefs.getString(expected.id, null) == raw) { "La lista local cambió; se reintentará" }
+            val ids = getPlaylistIds(context).filterNot { it == expected.id }
+            prefs.edit()
+                .putString(KEY_PLAYLIST_IDS, JSONArray(ids).toString())
+                .remove(expected.id)
+                .apply()
+        }
+        com.music.spotui.data.api.SavedTrackLibrary.localChanged(context)
+        com.music.spotui.util.BackupHelper.scheduleAutoBackup(context)
+    }
+
+    private fun archivedSpotifyPlaylists(context: Context) =
+        context.getSharedPreferences("spotify_removed_local_playlists", Context.MODE_PRIVATE)
+
+    internal fun isArchivedSpotifyPlaylist(context: Context, id: String): Boolean =
+        id.startsWith("local_pl_") && archivedSpotifyPlaylists(context).contains(id)
+
     fun updateSongInPlaylists(context: Context, targetSong: SongsModel, newTitle: String, newArtist: String, newAlbum: String, newCoverUri: String) {
         getLocalPlaylists(context).forEach { playlist ->
             val hasSong = playlist.songs.any { isSongMatch(it, targetSong) }

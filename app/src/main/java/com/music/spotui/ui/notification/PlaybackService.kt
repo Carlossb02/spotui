@@ -1453,7 +1453,9 @@ class PlaybackService : MediaLibraryService() {
                 if (response is Response.Success) remote = response.data
             }
         }
-        val localPlaylists = com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylists(applicationContext).map { pl ->
+        val local = com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylists(applicationContext)
+        val removed = com.music.spotui.data.api.LibraryCatalogCache.removedPlaylistIds(applicationContext)
+        val localPlaylists = local.filterNot { it.syncedSpotifyId in removed }.map { pl ->
             com.music.spotui.data.entity.LibraryEntry(
                 spotifyId = pl.id,
                 name = pl.name,
@@ -1473,9 +1475,13 @@ class PlaybackService : MediaLibraryService() {
                 artists = col.artists,
             )
         }
-        val mirroredIds = com.music.spotui.data.preferences.LocalPlaylistPref
-            .getLocalPlaylists(applicationContext).mapNotNull { it.spotifyPlaylistId }.toSet()
-        val merged = localPlaylists + (remote + offlineCollections).filterNot { it.spotifyId in mirroredIds }
+        val mirroredIds = local.map { it.spotifyPlaylistId }.filter { it.isNotBlank() }.toSet()
+        val merged = localPlaylists + (remote + offlineCollections).filterNot {
+            it.spotifyId in mirroredIds || (it.isPlaylist && (
+                it.spotifyId in removed ||
+                    com.music.spotui.data.preferences.LocalPlaylistPref.isArchivedSpotifyPlaylist(applicationContext, it.spotifyId)
+                ))
+        }
         return merged.distinctBy { entry ->
             val cleanId = entry.spotifyId.removePrefix("playlist/").removePrefix("album/").trim()
             if (cleanId.isNotBlank()) cleanId else entry.name.trim().lowercase()

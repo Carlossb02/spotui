@@ -67,6 +67,7 @@ object LocalSpotifyMirror {
         require(me.isNotBlank()) {"Spotify no devolvió la cuenta"}
         if(identitySession!=session){identitySession=session;identity=me;detailsCache.clear();checked.clear()}
         check(identity==me && SpotifySession.spDc(c)==session)
+        var catalog: Set<String>? = null
         for(local in locals) {
             if(SpotifySession.spDc(c)!=session)return@withLock
             if(local.spotifyOwnerId.isNotBlank() && local.spotifyOwnerId!=me) {status(local.id,Phase.FAILED,"Esta lista está vinculada a otra cuenta de Spotify");continue}
@@ -78,6 +79,25 @@ object LocalSpotifyMirror {
             if(unchanged && st.optJSONObject("pending")==null && st.optJSONObject("pendingName")==null && !force && System.currentTimeMillis()-(checked[local.id]?:0)<300_000)continue
             status(local.id,Phase.SYNCING)
             try {
+                if (local.spotifyOwnerId == me && local.syncedSpotifyId.isNotBlank() && !st.optBoolean("initializing")) {
+                    val listings = catalog ?: SpotifySync.allLibraryPlaylists(c).map { it.id }.toSet()
+                        .also { catalog = it }
+                    if (local.syncedSpotifyId !in listings) {
+                        // One complete omission may be stale. Confirm with a fresh account scan.
+                        val fresh = SpotifySync.allLibraryPlaylists(c, forceRefresh = true).map { it.id }.toSet()
+                        catalog = fresh
+                        guard(c, session)
+                        if (local.syncedSpotifyId !in fresh) {
+                            st.put("remote", local.syncedSpotifyId).put("retired", true)
+                            save(c, me, local.id, st)
+                            LocalPlaylistPref.archiveRemovedPlaylist(c, local)
+                            Api.HomeCache.invalidatePlaylist(local.syncedSpotifyId)
+                            Api.HomeCache.library = null
+                            statuses.update { it - local.id }
+                            continue
+                        }
+                    }
+                }
                 sync(c,me,session,local,st)
                 if (st.has("retryAt")) { st.remove("retryAt"); save(c,me,local.id,st) }
                 checked[local.id]=System.currentTimeMillis()

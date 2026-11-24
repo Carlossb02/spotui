@@ -3,57 +3,59 @@ package com.music.spotui.ui.components
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.music.spotui.data.api.SpotifyPlaylistEditorApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
-import org.json.JSONObject
 
 @Composable
 internal fun SpotifyPlaylistEditor(
     id: String,
     ownerId: String,
-    onSaved: suspend (name: String?, descriptionChanged: Boolean, coverChanged: Boolean) -> Unit,
+    localId: String?,
+    onSaved: suspend (name: String?, description: String?, changedCover: Boolean) -> Unit,
+    onOpenSpotify: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val auth by SpotifyPlaylistEditorApi.status.collectAsState()
-    var clientId by rememberSaveable { mutableStateOf(SpotifyPlaylistEditorApi.clientId(context)) }
-    var connecting by remember { mutableStateOf(!SpotifyPlaylistEditorApi.isConfigured(context)) }
-    var details by remember(id) { mutableStateOf<SpotifyPlaylistEditorApi.Details?>(null) }
-    var name by rememberSaveable(id) { mutableStateOf("") }
-    var description by rememberSaveable(id) { mutableStateOf("") }
-    var editedPublic by rememberSaveable(id) { mutableStateOf<Boolean?>(null) }
-    var initialized by rememberSaveable(id) { mutableStateOf(false) }
-    var cover by rememberSaveable(id) { mutableStateOf<Uri?>(null) }
+    var details by remember(id, ownerId) { mutableStateOf<SpotifyPlaylistEditorApi.Details?>(null) }
+    var name by rememberSaveable(id, ownerId) { mutableStateOf<String?>(null) }
+    var description by rememberSaveable(id, ownerId) { mutableStateOf<String?>(null) }
+    var cover by rememberSaveable(id, ownerId) { mutableStateOf<Uri?>(null) }
+    val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { picked ->
+        if (picked != null) cover = picked
+    }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { cover = it }
+    var loadAttempt by remember { mutableStateOf(0) }
 
-    LaunchedEffect(auth) {
-        if (auth == SpotifyPlaylistEditorApi.AuthStatus.Connected) connecting = false
-    }
-    LaunchedEffect(id, ownerId, connecting) {
-        if (connecting || details != null) return@LaunchedEffect
+    LaunchedEffect(id, ownerId, localId, loadAttempt) {
+        error = null
         try {
-            val remote = SpotifyPlaylistEditorApi.details(context, id, ownerId)
-            if (!initialized) {
-                name = remote.name
-                description = remote.description
-                initialized = true
-            }
-            details = remote
-            error = null
+            details = SpotifyPlaylistEditorApi.load(context, id, ownerId, localId)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -61,96 +63,63 @@ internal fun SpotifyPlaylistEditor(
         }
     }
     val original = details
-    val nameChanged = original != null && name.trim() != original.name
-    val descriptionChanged = original != null && description != original.description
-    val publicChanged = editedPublic != null && editedPublic != original?.public
-    val hasChanges = nameChanged || descriptionChanged || publicChanged || cover != null
-
+    val newName = name?.trim()?.takeIf { it != original?.name }
+    val newDescription = description?.takeIf { it != original?.description }
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
         title = { Text("Editar lista sincronizada") },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (connecting) {
-                    Text("Registra la URI de retorno en el panel de Spotify y autoriza tu cuenta.")
-                    SelectionContainerForRedirect()
-                    OutlinedTextField(clientId, { clientId = it }, label = { Text("Client ID") }, singleLine = true,
-                        modifier = Modifier.fillMaxWidth())
-                    TextButton(onClick = { SpotifyPlaylistEditorApi.connect(context, clientId) }) {
-                        Text(if (auth == SpotifyPlaylistEditorApi.AuthStatus.Connecting) "Reabrir autorización" else "Autorizar en Spotify")
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (original == null && error == null) LinearProgressIndicator(Modifier.fillMaxWidth())
+                if (original != null) {
+                    OutlinedTextField(
+                        name ?: original.name, { name = it }, label = { Text("Nombre") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = !saving,
+                    )
+                    OutlinedTextField(
+                        description ?: original.description, { description = it }, label = { Text("Descripción") },
+                        modifier = Modifier.fillMaxWidth(), minLines = 2, maxLines = 5, enabled = !saving,
+                    )
+                    TextButton(enabled = !saving, onClick = { coverPicker.launch("image/*") }) {
+                        Text(if (cover == null) "Elegir portada" else "Cambiar portada seleccionada")
                     }
-                    (auth as? SpotifyPlaylistEditorApi.AuthStatus.Failed)?.let {
-                        Text(it.message, color = MaterialTheme.colorScheme.error)
+                    if (cover != null) {
+                        TextButton(enabled = !saving, onClick = { cover = null }) { Text("Quitar selección") }
                     }
-                } else if (original == null && error == null) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                } else if (original != null) {
-                    OutlinedTextField(name, { name = it }, label = { Text("Nombre") }, singleLine = true,
-                        modifier = Modifier.fillMaxWidth(), enabled = !saving)
-                    OutlinedTextField(description, { description = it }, label = { Text("Descripción") },
-                        modifier = Modifier.fillMaxWidth(), minLines = 2, maxLines = 5, enabled = !saving)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically) {
-                        Text("Mostrar en el perfil público", modifier = Modifier.weight(1f))
-                        Switch(
-                            checked = editedPublic ?: (original.public == true),
-                            onCheckedChange = { editedPublic = it },
-                            enabled = !saving && !original.collaborative && original.public != null,
-                        )
-                    }
-                    Text("El acceso mediante enlace se gestiona en Spotify.", style = MaterialTheme.typography.bodySmall)
-                    if (original.collaborative) Text("La lista es colaborativa. Gestiona la colaboración en Spotify.")
-                    TextButton(onClick = { picker.launch("image/*") }, enabled = !saving) {
-                        Text(if (cover == null) "Elegir una portada" else "Cambiar imagen seleccionada")
-                    }
-                    if (cover != null) TextButton(onClick = { cover = null }, enabled = !saving) { Text("Quitar selección") }
                 }
+                TextButton(onClick = onOpenSpotify, enabled = !saving) { Text("Portada y privacidad en Spotify") }
                 if (saving) LinearProgressIndicator(Modifier.fillMaxWidth())
-                if (!connecting) error?.let {
+                error?.let {
                     Text(it, color = MaterialTheme.colorScheme.error)
-                    if (original == null) TextButton(onClick = {
-                        error = null
-                        SpotifyPlaylistEditorApi.prepareConnection()
-                        connecting = true
-                    }) { Text("Conectar otra vez") }
+                    if (original == null) TextButton(onClick = { loadAttempt++ }) { Text("Reintentar") }
                 }
             }
         },
         confirmButton = {
             if (original != null) TextButton(
-                enabled = !saving && hasChanges && name.isNotBlank(),
+                enabled = !saving && newName?.isBlank() != true && (newName != null || newDescription != null || cover != null),
                 onClick = {
                     saving = true
                     error = null
-                    val newName = name.trim().takeIf { nameChanged }
-                    val pickedCover = cover
-                    val changes = JSONObject().apply {
-                        newName?.let { put("name", it) }
-                        if (descriptionChanged) put("description", description)
-                        if (publicChanged) put("public", editedPublic)
-                    }
+                    val selectedCover = cover
                     scope.launch {
                         try {
-                            SpotifyPlaylistEditorApi.save(context, id, ownerId, changes, pickedCover)
-                            onSaved(newName, descriptionChanged, pickedCover != null)
+                            SpotifyPlaylistEditorApi.save(context, id, ownerId, localId, newName, newDescription, selectedCover)
+                            onSaved(newName, newDescription, selectedCover != null)
                         } catch (cancelled: CancellationException) {
                             throw cancelled
-                        } catch (failed: Exception) {
-                            error = failed.message ?: "No se pudieron guardar los cambios."
+                        } catch (failure: Exception) {
+                            error = failure.message ?: "No se pudieron guardar los cambios."
                         } finally {
                             saving = false
                         }
                     }
                 },
-            ) { Text("Guardar en Spotify") }
+            ) { Text("Guardar") }
         },
         dismissButton = { TextButton(enabled = !saving, onClick = onDismiss) { Text("Cerrar") } },
     )
-}
-
-@Composable
-private fun SelectionContainerForRedirect() {
-    androidx.compose.foundation.text.selection.SelectionContainer {
-        Text(SpotifyPlaylistEditorApi.REDIRECT_URI, style = MaterialTheme.typography.bodySmall)
-    }
 }

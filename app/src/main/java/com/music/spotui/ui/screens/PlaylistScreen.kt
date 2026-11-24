@@ -227,32 +227,6 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     val remotePlaylistId = spotifyUrl?.lastPathSegment
     val canEditRemoteDetails = remotePlaylistId != null && playlistAccess.isOwner && playlistAccess.ownerId.isNotBlank()
     var showSpotifyEditor by androidx.compose.runtime.saveable.rememberSaveable(playlistId) { mutableStateOf(false) }
-    if (showSpotifyEditor && remotePlaylistId != null && canEditRemoteDetails) {
-        SpotifyPlaylistEditor(
-            id = remotePlaylistId,
-            ownerId = playlistAccess.ownerId,
-            onSaved = { newName, descriptionChanged, coverChanged ->
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    if (presentationId != null && (newName != null || descriptionChanged || coverChanged)) {
-                        PlaylistPresentationPref.update(context, presentationId) {
-                            it.copy(
-                                alias = if (newName == null) it.alias else "",
-                                description = if (descriptionChanged) null else it.description,
-                                coverUri = if (coverChanged) "" else it.coverUri,
-                            )
-                        }
-                    }
-                    com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(remotePlaylistId)
-                    com.music.spotui.data.api.Api.HomeCache.library = null
-                    if (isLocalPlaylist) com.music.spotui.data.api.LocalSpotifyMirror.refresh(context, playlistId)
-                }
-                showSpotifyEditor = false
-                refreshProfile++
-                playlistViewModel.reloadPlaylist(playlistId)
-            },
-            onDismiss = { showSpotifyEditor = false },
-        )
-    }
     var showPresentationEditor by androidx.compose.runtime.saveable.rememberSaveable(playlistId) { mutableStateOf(false) }
     if (showPresentationEditor && presentationId != null && loadedPresentation != null) {
         PlaylistPresentationEditor(presentationId, presentation, originalDescription) { showPresentationEditor = false }
@@ -278,6 +252,37 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     }
     val openInSpotify: () -> Unit = {
         spotifyUrl?.let { awaitingSpotifyReturn = openSpotifyPlaylist(context, it) }
+    }
+    if (showSpotifyEditor && remotePlaylistId != null && canEditRemoteDetails) {
+        SpotifyPlaylistEditor(
+            id = remotePlaylistId,
+            ownerId = playlistAccess.ownerId,
+            localId = playlistId.takeIf { isLocalPlaylist },
+            onSaved = { newName, newDescription, changedCover ->
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    if (presentationId != null) {
+                        PlaylistPresentationPref.update(context, presentationId) {
+                            it.copy(
+                                alias = if (newName == null) it.alias else "",
+                                description = if (newDescription == null) it.description else null,
+                                coverUri = if (changedCover) "" else it.coverUri,
+                            )
+                        }
+                    }
+                    com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(remotePlaylistId)
+                    com.music.spotui.data.api.Api.HomeCache.library = null
+                }
+                playlistAccess = playlistAccess.copy(
+                    playlistName = newName ?: playlistAccess.playlistName,
+                    description = newDescription ?: playlistAccess.description,
+                )
+                showSpotifyEditor = false
+                refreshProfile++
+                playlistViewModel.reloadPlaylist(playlistId)
+            },
+            onOpenSpotify = { showSpotifyEditor = false; openInSpotify() },
+            onDismiss = { showSpotifyEditor = false },
+        )
     }
     if (showSpotifyCollaborators) {
         PlaylistSpotifyCollaboratorsDialog(
@@ -416,8 +421,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                 if (playlistAccess.isOwner) showSpotifyCollaborators = true
                 else message("Solo el propietario puede invitar a colaboradores")
             LibraryPlaylistAction.PRIVACY ->
-                if (canEditRemoteDetails) showSpotifyEditor = true
-                else message("Solo el propietario puede cambiar la visibilidad")
+                if (canEditRemoteDetails) openInSpotify()
+                else message("Solo el propietario puede cambiar la privacidad")
         }
     }
 

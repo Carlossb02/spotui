@@ -81,7 +81,7 @@ internal fun LibraryPlaylistActions(
             MenuRow(Icons.Default.Add, "Añadir a otra lista") { onAction(LibraryPlaylistAction.COPY) }
             if (url != null) {
                 MenuRow(Icons.Default.GroupAdd, "Colaboradores en Spotify") { onAction(LibraryPlaylistAction.COLLABORATORS) }
-                MenuRow(Icons.Default.Lock, "Visibilidad en el perfil") { onAction(LibraryPlaylistAction.PRIVACY) }
+                MenuRow(Icons.Default.Lock, "Privacidad en Spotify") { onAction(LibraryPlaylistAction.PRIVACY) }
             }
             Spacer(Modifier.height(12.dp))
         }
