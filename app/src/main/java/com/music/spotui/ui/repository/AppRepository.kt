@@ -40,7 +40,7 @@ class AppRepository @Inject constructor(private val api : Api) {
 
     fun cachedLibraryEntries() = api.cachedLibraryEntries()
 
-    suspend fun provideLibrary() = api.getLibrary()
+    suspend fun provideLibrary(waitForAudioStartup: Boolean = true) = api.getLibrary(waitForAudioStartup)
 
     suspend fun provideFollowedArtists() = api.getFollowedArtists()
 

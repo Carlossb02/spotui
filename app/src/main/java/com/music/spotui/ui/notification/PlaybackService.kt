@@ -99,7 +99,6 @@ class PlaybackService : MediaLibraryService() {
         private const val NODE_HOME = "auto_home"
         private const val NODE_PINNED = "auto_pinned"
         private const val NODE_RECENTS = "auto_recents"
-        private const val NODE_BROWSE = "auto_browse"
         private const val NODE_LIBRARY = "auto_library"
         private const val NODE_PODCASTS = "auto_podcasts"
         private const val NODE_LOCAL = "auto_local"
@@ -251,13 +250,14 @@ class PlaybackService : MediaLibraryService() {
             .onFailure { android.util.Log.e("SpotuiLifecycle", "onUpdateNotification failed", it) }
     }
 
-    // Android Auto browse cache: mediaId → track, and mediaId → the list it was
-    // browsed from (so playing a track queues its whole playlist/album).
-    private val trackById = java.util.concurrent.ConcurrentHashMap<String, SongsModel>()
+    // Keep each media ID attached to the queue it came from.
+    private data class BrowseTrack(val queue: List<SongsModel>, val index: Int) {
+        val song get() = queue[index]
+    }
+    private val trackById = java.util.concurrent.ConcurrentHashMap<String, BrowseTrack>()
     private val folderById = java.util.concurrent.ConcurrentHashMap<String, MediaItem>()
     private val podcastById = java.util.concurrent.ConcurrentHashMap<String, com.music.spotui.data.entity.PodcastModel>()
-    private val queueByTrackId = java.util.concurrent.ConcurrentHashMap<String, List<SongsModel>>()
-    private val searchCache = java.util.concurrent.ConcurrentHashMap<String, List<SongsModel>>()
+    private val searchCache = java.util.concurrent.ConcurrentHashMap<String, List<MediaItem>>()
     private var webPlayer: WebMediaPlayer? = null
     private var showingWeb = false
 
@@ -877,7 +877,6 @@ class PlaybackService : MediaLibraryService() {
     private fun currentSong(): SongsModel? {
         val id = currentSongState.songId.value
         return currentSongState.queue.value.firstOrNull { it.id == id }
-            ?: trackById["song/$id"]
     }
 
     /** Completa los metadatos del item actual con título/artista y los bytes de la carátula. */
@@ -1129,7 +1128,7 @@ class PlaybackService : MediaLibraryService() {
             browser: MediaSession.ControllerInfo,
             mediaId: String,
         ): ListenableFuture<LibraryResult<MediaItem>> = Futures.immediateFuture(
-            trackById[mediaId]?.let { LibraryResult.ofItem(playable(it), null) }
+            trackById[mediaId]?.let { LibraryResult.ofItem(playable(it.song, mediaId), null) }
                 ?: folderById[mediaId]?.let { LibraryResult.ofItem(it, null) }
                 ?: LibraryResult.ofError(androidx.media3.session.SessionError.ERROR_BAD_VALUE),
         )
@@ -1145,17 +1144,21 @@ class PlaybackService : MediaLibraryService() {
             startPositionMs: Long,
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
             val requested = mediaItems.getOrNull(startIndex) ?: mediaItems.firstOrNull()
-            val song = requested?.let { trackById[it.mediaId] }
+            val selection = requested?.let { trackById[it.mediaId] }
             val resolvedQueue: List<MediaItem>
             val resolvedIndex: Int
-            if (song != null) {
-                val queue = queueByTrackId[requested?.mediaId] ?: listOf(song)
-                currentSongState.updateQueue(queue, startSongId = song.id)
-                val idx = queue.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
+            if (selection != null) {
+                val song = selection.song
+                currentSongState.updateQueue(selection.queue, startSongId = song.id)
+                val queue = currentSongState.queue.value
+                val idx = queue.indexOfFirst { it === song }.coerceAtLeast(0)
                 currentSongState.updateSongState(
                     song.coverUri, song.title, song.singer, true,
                     song.id, idx, song.album,
                 )
+                if (com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(song.url)) {
+                    PodcastCover.preserve(applicationContext, song)
+                }
                 ensureCurrentArtwork()
                 SongPlayer.playSong(song.url, applicationContext, "song/${song.id}")
                 resolvedQueue = queue.map { playable(it) }
@@ -1219,8 +1222,7 @@ class PlaybackService : MediaLibraryService() {
             if (query.isNotBlank()) {
                 try {
                     val songs = lastSuccess(repository.searchSongs(query)).orEmpty()
-                    searchCache[query] = songs
-                    registerTracks("search/$query", songs)
+                    searchCache[query] = registerTracks("search/$query", songs)
                     session.notifySearchResultChanged(browser, query, songs.size, params)
                 } catch (e: Exception) {
                     android.util.Log.e("PlaybackService", "Error in onSearch for query: $query", e)
@@ -1237,8 +1239,7 @@ class PlaybackService : MediaLibraryService() {
             pageSize: Int,
             params: LibraryParams?,
         ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
-            val songs = searchCache[query].orEmpty()
-            val all = songs.map { playable(it) }
+            val all = searchCache[query].orEmpty()
             val from = page.toLong().coerceAtLeast(0) * pageSize.coerceAtLeast(1)
             val items = if (page < 0 || pageSize <= 0 || from >= all.size) {
                 emptyList()
@@ -1258,9 +1259,9 @@ class PlaybackService : MediaLibraryService() {
                 // Four tabs maximum is widely supported by Android Auto.
                 parentId == ROOT -> listOf(
                     folder(NODE_HOME, "Inicio"),
-                    folder(NODE_RECENTS, "Recientes"),
-                    folder(NODE_BROWSE, "Explorar"),
-                    folder(NODE_LIBRARY, "Tu biblioteca")
+                    folder(NODE_PLAYLISTS, "Listas"),
+                    folder(NODE_PODCASTS, "Pódcasts", mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_PODCASTS),
+                    folder(NODE_LIBRARY, "Biblioteca")
                 )
 
                 parentId == NODE_HOME -> listOf(
@@ -1270,14 +1271,6 @@ class PlaybackService : MediaLibraryService() {
                     folder(NODE_PLAYLISTS, "Tus playlists"),
                     folder(NODE_DOWNLOADS, "Descargas"),
                     folder(NODE_PODCASTS, "Podcasts", mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_PODCASTS)
-                )
-
-                parentId == NODE_BROWSE -> listOf(
-                    folder(NODE_PLAYLISTS, "Playlists"),
-                    folder(NODE_ALBUMS, "Álbumes", mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_ALBUMS),
-                    folder(NODE_ARTISTS, "Artistas", mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_ARTISTS),
-                    folder(NODE_PODCASTS, "Podcasts y programas", mediaType = MediaMetadata.MEDIA_TYPE_FOLDER_PODCASTS),
-                    folder(NODE_SONGS, "Toda la música")
                 )
 
                 parentId == NODE_LIBRARY -> listOf(
@@ -1333,7 +1326,9 @@ class PlaybackService : MediaLibraryService() {
 
                 parentId.startsWith("podcast/") -> {
                     val id = parentId.removePrefix("podcast/")
-                    val show = podcastById[id]
+                    val show = podcastById[id] ?: com.music.spotui.data.preferences.SubscribedPodcastPref
+                        .getSubscribedPodcasts(applicationContext)
+                        .firstOrNull { it.id == android.net.Uri.decode(id) }
                     if (show == null) emptyList()
                     else {
                         // Return the first YouTube page quickly. Do not wait for all
@@ -1414,6 +1409,7 @@ class PlaybackService : MediaLibraryService() {
                         com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylist(applicationContext, playlistId)?.songs
                     } else {
                         lastSuccess(repository.providePlaylistSongs(playlistId))
+                            .takeUnless { it.isNullOrEmpty() }
                             ?: com.music.spotui.data.preferences.OfflineCollectionsPref.getCollection(applicationContext, playlistId)?.songs
                     }
                     registerTracks(parentId, songs.orEmpty())
@@ -1440,13 +1436,23 @@ class PlaybackService : MediaLibraryService() {
                 else -> emptyList()
             }
         } ?: emptyList()
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
     } catch (e: Exception) {
         android.util.Log.e("PlaybackService", "Error retrieving children for $parentId", e)
         emptyList()
     }
 
     private suspend fun libraryEntries(): List<com.music.spotui.data.entity.LibraryEntry> {
-        val remote = lastSuccess(repository.provideLibrary()).orEmpty()
+        // The first emission may be an empty catalog or contain only local lists.
+        // Accept the refreshed catalog as well, retaining the cached one on timeout.
+        var remote = emptyList<com.music.spotui.data.entity.LibraryEntry>()
+        kotlinx.coroutines.withTimeoutOrNull(5_000L) {
+            // The legacy Auto browser can block Main until this callback returns.
+            repository.provideLibrary(waitForAudioStartup = false).collect { response ->
+                if (response is Response.Success) remote = response.data
+            }
+        }
         val localPlaylists = com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylists(applicationContext).map { pl ->
             com.music.spotui.data.entity.LibraryEntry(
                 spotifyId = pl.id,
@@ -1467,7 +1473,9 @@ class PlaybackService : MediaLibraryService() {
                 artists = col.artists,
             )
         }
-        val merged = remote + localPlaylists + offlineCollections
+        val mirroredIds = com.music.spotui.data.preferences.LocalPlaylistPref
+            .getLocalPlaylists(applicationContext).mapNotNull { it.spotifyPlaylistId }.toSet()
+        val merged = localPlaylists + (remote + offlineCollections).filterNot { it.spotifyId in mirroredIds }
         return merged.distinctBy { entry ->
             val cleanId = entry.spotifyId.removePrefix("playlist/").removePrefix("album/").trim()
             if (cleanId.isNotBlank()) cleanId else entry.name.trim().lowercase()
@@ -1500,17 +1508,16 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun registerTracks(parentId: String, songs: List<SongsModel>): List<MediaItem> {
-        songs.forEach { song ->
-            trackById["song/${song.id}"] = song
-            queueByTrackId["song/${song.id}"] = songs
+        return songs.mapIndexed { index, song ->
+            // The same track can appear in a playlist, downloads and search.
+            // Keep each browse result attached to its own queue.
+            val id = "browse/${android.net.Uri.encode(parentId)}/$index/${song.id}"
+            trackById[id] = BrowseTrack(songs, index)
+            if (index < 36) {
+                com.music.spotui.util.ArtworkHelper.ensureDownloadedCover(applicationContext, song)
+            }
+            playable(song, id)
         }
-        // Do not queue artwork network requests for the entire library at once:
-        // Android Auto renders only a window of visible rows. Keep background
-        // cover prefetch bounded; never hold browse callbacks waiting for it.
-        songs.take(36).forEach { song ->
-            com.music.spotui.util.ArtworkHelper.ensureDownloadedCover(applicationContext, song)
-        }
-        return songs.map { playable(it) }
     }
 
     private fun folder(
@@ -1551,7 +1558,7 @@ class PlaybackService : MediaLibraryService() {
             .build().also { folderById[id] = it }
     }
 
-    private fun playable(song: SongsModel): MediaItem {
+    private fun playable(song: SongsModel, mediaId: String = "song/${song.id}"): MediaItem {
         val builder = MediaMetadata.Builder()
             .setTitle(song.title)
             .setArtist(song.singer)
@@ -1559,7 +1566,7 @@ class PlaybackService : MediaLibraryService() {
             .setIsBrowsable(false)
             .setIsPlayable(true)
             .setMediaType(
-                if (song.url.startsWith("yt_ep:") || song.url.startsWith("episode:"))
+                if (com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(song.url))
                     MediaMetadata.MEDIA_TYPE_PODCAST_EPISODE
                 else MediaMetadata.MEDIA_TYPE_MUSIC
             )
@@ -1570,7 +1577,7 @@ class PlaybackService : MediaLibraryService() {
             builder.setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
         }
         return MediaItem.Builder()
-            .setMediaId("song/${song.id}")
+            .setMediaId(mediaId)
             .setMediaMetadata(builder.build())
             .build()
     }

@@ -976,14 +976,14 @@ class Api @Inject constructor(
         }
     }
 
-    suspend fun getLibrary(): Flow<Response<List<com.music.spotui.data.entity.LibraryEntry>>> = flow {
+    suspend fun getLibrary(waitForAudioStartup: Boolean = true): Flow<Response<List<com.music.spotui.data.entity.LibraryEntry>>> = flow {
         val session = SpotifySession.spDc(context)
         if (HomeCache.libraryAccount != session) { HomeCache.library = null; HomeCache.libraryAccount = session }
         val seed = LibraryCatalogCache.peek(context) ?: LibraryCatalogCache.read(context)
         val initial = liveLibrary(seed, cachedOffline = emptyList())
         HomeCache.library = initial
         emit(Response.Success(initial))
-        com.music.spotui.di.SongPlayer.awaitAudioStartup()
+        if (waitForAudioStartup) com.music.spotui.di.SongPlayer.awaitAudioStartup()
         val offline = com.music.spotui.data.preferences.OfflineCollectionsPref.getOfflineCollections(context)
         offlineLibrary = offline
         if (offline.isNotEmpty() && SpotifySession.spDc(context) == session) {
