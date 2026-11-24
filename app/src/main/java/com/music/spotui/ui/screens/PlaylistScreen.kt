@@ -553,7 +553,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                     Icon(Icons.Default.PhoneAndroid, contentDescription = null,
                                         tint = Color(0xFF1ED760), modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(5.dp))
-                                    Text("Lista local · Solo en Spotui", color = Color.White,
+                                    Text("Lista de Spotui", color = Color.White,
                                         fontWeight = FontWeight.Medium, fontSize = 13.sp)
                                 } else {
                                     // Only identities reported by Spotify are shown. Unknown
@@ -601,8 +601,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                             Spacer(modifier = Modifier.height(7.dp))
                             Text(
                                 modifier = Modifier.padding(horizontal = 20.dp),
-                                text = "${songs.size} canciones" +
-                                    if (playlist.time.isNotBlank()) " • ${playlist.time}" else "",
+                                text = (if (songs.size == 1) "1 canción" else "${songs.size} canciones") +
+                                    if (!isLocalPlaylist && playlist.time.isNotBlank()) " • ${playlist.time}" else "",
                                 color = Color(0xFFB3B3B3),
                                 fontSize = 12.sp,
                             )

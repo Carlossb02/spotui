@@ -135,10 +135,10 @@ object SpotifySync {
     private var catalog = emptyList<com.metrolist.spotify.models.SpotifyPlaylist>()
 
     /** Shared complete catalog: membership and Library never repeat the same concurrent scan. */
-    suspend fun allLibraryPlaylists(context: Context): List<com.metrolist.spotify.models.SpotifyPlaylist> {
+    suspend fun allLibraryPlaylists(context: Context, forceRefresh: Boolean = false): List<com.metrolist.spotify.models.SpotifyPlaylist> {
         val session = SpotifySession.spDc(context)
         synchronized(this) {
-            if (catalogAccount == session && android.os.SystemClock.elapsedRealtime() - catalogAt in 0..30_000L) return catalog
+            if (!forceRefresh && catalogAccount == session && android.os.SystemClock.elapsedRealtime() - catalogAt in 0..30_000L) return catalog
         }
         return catalogWork.await(session) {
             check(SpotifyTokenProvider.ensureToken(context.applicationContext)) { "Spotify session unavailable" }
