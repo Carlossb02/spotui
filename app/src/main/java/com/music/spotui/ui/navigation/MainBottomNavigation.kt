@@ -101,6 +101,7 @@ fun MainBottomNavigation(
                     contentAlignment = Alignment.Center
                 ) {
                     val miniVisible = bottomBarPlayerState.value && showMiniPlayer
+                    val dockHeight = 72.dp
                     val gap = 10.dp
                     val usableWidth = maxWidth
                     val miniWidth = minOf(338.dp, usableWidth * 0.44f)
@@ -113,7 +114,7 @@ fun MainBottomNavigation(
                     ) {
                         NavigationTabs(
                             navController = navController,
-                            modifier = Modifier.width(navWidth).height(72.dp)
+                            modifier = Modifier.width(navWidth).height(dockHeight)
                                 .background(Color(0xFF202020), androidx.compose.foundation.shape.RoundedCornerShape(14.dp)),
                             onSearchReselected = onSearchReselected
                         )
@@ -125,7 +126,7 @@ fun MainBottomNavigation(
                             Box(Modifier.width(miniWidth)) {
                                 // The dock and miniplayer are a single centered group.
                                 MiniPlayer(navController, onExpandPlayer = onExpandTabletPlayer,
-                                    tabletLayout = true)
+                                    tabletLayout = true, modifier = Modifier.height(dockHeight))
                             }
                         }
                     }
