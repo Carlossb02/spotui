@@ -31,6 +31,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -664,7 +665,7 @@ fun PlayerScreen(
         }
     }
     val canvasUrl = playerViewModel.canvasUrl.value.takeIf { currentEpisode == null }
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .then(if (embedded) Modifier else Modifier.nestedScroll(nestedScrollConnection))
@@ -725,6 +726,9 @@ fun PlayerScreen(
         val lyricsPosition = rememberPlaybackPositionMs()
         val trackCredits by rememberTrackCredits(if (currentEpisode == null) lyricsTrack?.spotifyTrackId.orEmpty() else "")
         val playerScroll=androidx.compose.foundation.lazy.rememberLazyListState()
+        // Match the lyrics card's top margin, padding, and single heading.
+        val lyricsPeek = 30.dp + with(androidx.compose.ui.platform.LocalDensity.current) { 24.sp.toDp() }
+        val musicControlsHeight = (maxHeight - lyricsPeek).coerceAtLeast(0.dp)
         androidx.compose.foundation.lazy.LazyColumn(
             state=playerScroll,
             modifier = Modifier.fillMaxSize(),
@@ -734,7 +738,8 @@ fun PlayerScreen(
                     Column(
                         verticalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier
-                            .fillParentMaxHeight(if (currentEpisode == null) .90f else 1f)
+                            .then(if (currentEpisode == null) Modifier.height(musicControlsHeight)
+                                else Modifier.fillParentMaxHeight())
                             .fillMaxWidth()
                             .then(if (embedded) Modifier else Modifier.navigationBarsPadding()),
                         horizontalAlignment = Alignment.CenterHorizontally

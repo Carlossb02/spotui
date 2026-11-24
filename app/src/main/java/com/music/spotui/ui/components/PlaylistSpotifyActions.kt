@@ -13,15 +13,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.GroupAdd
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.OpenInNew
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -86,7 +82,7 @@ internal fun PlaylistSpotifyMenuItems(
         onOpenSpotify()
     }
     if (isOwner) {
-        PlaylistExternalAction(Icons.Default.Settings, "Gestionar en Spotify") {
+        PlaylistExternalAction(Icons.Default.GroupAdd, "Colaboradores en Spotify") {
             onDismiss()
             onManage()
         }
@@ -113,41 +109,16 @@ internal fun PlaylistSpotifyMenuItems(
     }
 }
 
-internal enum class PlaylistSpotifyManagementSection(val label: String, val icon: ImageVector, val help: String) {
-    DETAILS("Nombre, descripción y portada", Icons.Default.Edit,
-        "En Spotify, abre el menú de la lista y elige Editar lista. Desde ahí puedes cambiar el nombre, la descripción y la portada."),
-    PRIVACY("Privacidad y perfil", Icons.Default.Lock,
-        "En el menú de la lista de Spotify, elige Hacer privada o Hacer pública. Para mostrarla u ocultarla en tu perfil, usa Añadir al perfil o Quitar del perfil."),
-    DELETE("Eliminar lista", Icons.Default.Delete,
-        "En Spotify, abre los tres puntos de la lista y elige Eliminar lista."),
-    COLLABORATORS("Colaboradores", Icons.Default.GroupAdd,
-        "En Spotify, abre el menú de una lista privada y elige Invitar a colaboradores. Para quitar un permiso, toca las fotos de perfil bajo el nombre y abre el menú de esa persona."),
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun PlaylistSpotifyManagementSheet(
-    initialSection: PlaylistSpotifyManagementSection? = null,
+internal fun PlaylistSpotifyCollaboratorsDialog(
     onDismiss: () -> Unit,
     onOpenSpotify: () -> Unit,
     onOpenTab: () -> Unit,
 ) {
-    var selected by remember(initialSection) { mutableStateOf(initialSection) }
-    if (selected == null) ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color(0xFF202020)) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 12.dp)) {
-            Text("Gestionar en Spotify", color = Color.White, style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(start = 24.dp, top = 8.dp, bottom = 12.dp))
-            PlaylistSpotifyManagementSection.entries.forEach { action ->
-                PlaylistExternalAction(action.icon, action.label) { selected = action }
-            }
-        }
-    }
-    selected?.let { action ->
-        val back = { if (initialSection == null) selected = null else onDismiss() }
-        AlertDialog(
-            onDismissRequest = back,
-            title = { Text(action.label) },
-            text = { Text(action.help) },
+    AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Colaboradores") },
+            text = { Text("En Spotify, abre el menú de la lista y elige Invitar a colaboradores. Para quitar un permiso, toca las fotos de perfil bajo el nombre y abre el menú de esa persona.") },
             confirmButton = {
                 TextButton(onClick = {
                     onDismiss()
@@ -160,8 +131,7 @@ internal fun PlaylistSpotifyManagementSheet(
                     onOpenSpotify()
                 }) { Text("Usar app de Spotify") }
             },
-        )
-    }
+    )
 }
 
 @Composable

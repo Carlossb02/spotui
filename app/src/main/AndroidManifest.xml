@@ -98,6 +98,18 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".data.api.SpotifyPlaylistOAuthActivity"
+            android:exported="true"
+            android:noHistory="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.music.spotidroid.playlists" android:host="callback" />
+            </intent-filter>
+        </activity>
+
         <meta-data
             android:name="androidx.car.app.TintableAttributionIcon"
             android:resource="@drawable/ic_spotui_notification_monochrome" />
