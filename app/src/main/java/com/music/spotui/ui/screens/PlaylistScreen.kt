@@ -62,6 +62,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -101,6 +103,10 @@ import com.music.spotui.R
 import com.music.spotui.data.api.Response
 import com.music.spotui.data.api.PlaylistAccess
 import com.music.spotui.data.api.PlaylistAccessInfo
+import com.music.spotui.ui.components.PlaylistSpotifyManagementSheet
+import com.music.spotui.ui.components.PlaylistSpotifyMenuItems
+import com.music.spotui.ui.components.openSpotifyPlaylist
+import com.music.spotui.ui.components.spotifyPlaylistUrl
 import com.music.spotui.data.preferences.LocalPlaylistPref
 import com.music.spotui.data.entity.AlbumsModel
 import com.music.spotui.di.Palette
@@ -154,7 +160,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     val profilePlaylistId = if (isLocalPlaylist) linkedSpotifyId.orEmpty() else playlistId
     var playlistAccess by remember(profilePlaylistId) { mutableStateOf(PlaylistAccessInfo()) }
     LaunchedEffect(playlistId) { playlistViewModel.loadPlaylist(playlistId) }
-    LaunchedEffect(context, profilePlaylistId) {
+    var refreshProfile by remember(profilePlaylistId) { mutableStateOf(0) }
+    LaunchedEffect(context, profilePlaylistId, refreshProfile) {
         if (profilePlaylistId.isNotBlank()) playlistAccess = PlaylistAccess.load(context, profilePlaylistId)
     }
     val spotifyMirrorStatuses by com.music.spotui.data.api.LocalSpotifyMirror.statuses.collectAsState()
@@ -174,6 +181,42 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             name = playlistName,
             time = "",
         )
+
+    val spotifyUrl = remember(profilePlaylistId) { spotifyPlaylistUrl(profilePlaylistId) }
+    val visualCover = if (!linkedSpotifyId.isNullOrBlank()) {
+        playlistAccess.coverUri.ifBlank { playlist.coverUri }
+    } else playlist.coverUri
+    val spotifyDescription = remember(playlistAccess.description, playlistId, linkedSpotifyId) {
+        if (linkedSpotifyId.isNullOrBlank()) ""
+        else androidx.core.text.HtmlCompat.fromHtml(playlistAccess.description,
+            androidx.core.text.HtmlCompat.FROM_HTML_MODE_COMPACT).toString()
+            .replace("Spotui-ID: " + playlistId, "").trim()
+    }
+    var manageInSpotify by remember(profilePlaylistId) { mutableStateOf(false) }
+    var awaitingSpotifyReturn by remember(profilePlaylistId) { mutableStateOf(false) }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle, playlistId, profilePlaylistId) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME && awaitingSpotifyReturn) {
+                awaitingSpotifyReturn = false
+                refreshProfile++
+                if (isLocalPlaylist) {
+                    com.music.spotui.data.api.LocalSpotifyMirror.refresh(context, playlistId)
+                } else {
+                    com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(playlistId)
+                    playlistViewModel.reloadPlaylist(playlistId)
+                }
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    val openInSpotify: () -> Unit = {
+        spotifyUrl?.let { awaitingSpotifyReturn = openSpotifyPlaylist(context, it) }
+    }
+    if (manageInSpotify) {
+        PlaylistSpotifyManagementSheet(onDismiss = { manageInSpotify = false }, onOpenSpotify = openInSpotify)
+    }
 
     val togglePlaylistFavorite: () -> Unit = {
         favoritePlaylist = com.music.spotui.data.preferences.FavoritePlaylistsPref.toggle(
@@ -401,8 +444,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         }
 
         var dominentColor by remember { mutableStateOf(Color(AppBackground.toArgb())) }
-        LaunchedEffect(playlist.coverUri) {
-            Palette().extractSecondColorFromCoverUrl(context = context, playlist.coverUri) { color ->
+        LaunchedEffect(visualCover) {
+            Palette().extractSecondColorFromCoverUrl(context = context, visualCover) { color ->
                 dominentColor = color
             }
         }
@@ -418,7 +461,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         Scaffold(
             modifier = Modifier.fillMaxSize().scrollingCollectionBackground(
                 topColor = dominentColor, baseColor = Color(AppBackground.toArgb()),
-                listState = listState, headerKey = "playlist_header", coverUri = playlist.coverUri),
+                listState = listState, headerKey = "playlist_header", coverUri = visualCover),
             containerColor = Color.Transparent,
             topBar = {
                 CenterAlignedTopAppBar(
@@ -522,12 +565,12 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 modifier = Modifier.fillMaxWidth(),
                                 contentAlignment = Alignment.Center
                             ) {
-                                androidx.compose.runtime.key(playlistId, playlist.coverUri) {
+                                androidx.compose.runtime.key(playlistId, visualCover) {
                                     GlideImage(
                                         modifier = Modifier
                                             .size(com.music.spotui.ui.components.collectionCoverSize())
                                             .shadow(16.dp, RoundedCornerShape(18.dp)).clip(RoundedCornerShape(18.dp)),
-                                        model = playlist.coverUri,
+                                        model = visualCover,
                                         contentScale = ContentScale.Crop,
                                         failure = placeholder(R.drawable.placeholder),
                                         contentDescription = "Carátula de ${playlist.name}",
@@ -547,6 +590,11 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                     maxLines = 2,
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
+                            }
+                            if (spotifyDescription.isNotBlank()) {
+                                Text(spotifyDescription, color = Color.LightGray, fontSize = 13.sp, maxLines = 3,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 20.dp).padding(top = 6.dp))
                             }
                             Spacer(modifier = Modifier.height(13.dp))
                             Row(
@@ -636,7 +684,7 @@ Spacer(Modifier.height(8.dp))
 val playing = playlistViewModel.currentSongPlayingState.value
 val currentInList = songs.any { it.id == playlistViewModel.currentSongId.value }
 com.music.spotui.ui.components.CollectionActionBar(
- coverUri = playlist.coverUri,
+ coverUri = visualCover,
  accent = dominentColor,
  sortMode = currentSort.name, sortDescending = isDescending,
  modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -840,10 +888,17 @@ com.music.spotui.ui.components.CollectionActionBar(
                 onDismissRequest = { showPlaylistActions = false },
                 containerColor = Color(0xFF202020)
             ) {
-                Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding()) {
+                Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding().verticalScroll(rememberScrollState())) {
                     Text(uiLocalized("Opciones de la lista"), color = Color.White,
                         fontWeight = FontWeight.Bold, fontSize = 20.sp,
                         modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 18.dp))
+                    spotifyUrl?.let { url ->
+                        PlaylistSpotifyMenuItems(url, playlistAccess.isOwner,
+                            onDismiss = { showPlaylistActions = false },
+                            onOpenSpotify = openInSpotify,
+                            onManage = { manageInSpotify = true },
+                        )
+                    }
                     if (externalReadOnly) {
                         Row(
                             modifier = Modifier.fillMaxWidth().clickable {
