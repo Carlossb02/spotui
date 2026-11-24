@@ -497,8 +497,10 @@ object GoogleDeviceSync {
         private fun updatePeerConnection() {
             val peers=runtimeActive && connected && hasSyncPeer(mutable.value.devices,actor)
             val knownPeers=runtimeActive && connected && hasKnownSyncPeer(mutable.value.devices,actor)
-            if (knownPeers && releaseChecks == null) releaseChecks = ReleaseChecksSync(context, root.child("playback").child("releaseChecks"))
-            if (!knownPeers) { releaseChecks?.close(); releaseChecks = null }
+            // Subscribe as soon as this authorized session connects, independently of device presence.
+            if (connected && releaseChecks == null) {
+                releaseChecks = ReleaseChecksSync(context, root.child("playback").child("releaseChecks"))
+            }
             val enabled=SyncOptions.enabled(SyncOptions.Category.PLAYER)
             if(peers!=hadPeers) {
                 hadPeers=peers;discoveryWake?.cancel()

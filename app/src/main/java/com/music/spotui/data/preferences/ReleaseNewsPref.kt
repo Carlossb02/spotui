@@ -21,7 +21,7 @@ internal fun resetReleaseChecks(context:Context) {
 @Synchronized
 internal fun markReleasesChecked(context: Context, kind: ReleaseKind, checkedAt: Long) {
     val prefs = context.getSharedPreferences(RELEASE_NEWS_PREFS, 0)
-    val latest = maxOf(prefs.getLong(kind.key, 0), checkedAt)
+    val latest = maxOf(prefs.getLong(kind.key, 0), prefs.getLong(kind.key + "_reset", 0), checkedAt)
     if (latest != prefs.getLong(kind.key, 0)) {
         check(prefs.edit().putLong(kind.key, latest).commit())
         com.music.spotui.sync.GoogleDeviceSync.requestSync()

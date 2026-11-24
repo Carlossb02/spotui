@@ -90,6 +90,7 @@ object CloudPlayback {
         private var ready=false
         @Volatile private var closed=false
         private var rulesBlocked=false
+        private var checkpointWritable = true
         @Volatile private var applying=false
         private var acceptedEpoch=""
         private val commandPrefs=context.getSharedPreferences("google_playback_commands",0)
@@ -112,17 +113,28 @@ object CloudPlayback {
         fun now()=System.currentTimeMillis()+offset
         fun isApplying() = applying
         fun remote()=current?.takeIf { GoogleDeviceSync.canSyncPlayer(actor) && connected && !rulesBlocked && SyncOptions.enabled(SyncOptions.Category.PLAYER) && it.owner !in mutable.value.disabledDevices && !applying && it.owner!=actor && playbackOwnerLive(it, GoogleDeviceSync.status.value.devices) }
+        private class PlaybackPermissionDenied(path: String) :
+            IllegalStateException("Firebase no permite acceder a " + path + " para esta cuenta.")
+
         private fun report(t:Throwable) {
             if(t is CancellationException)throw t
             if(t is DriveConsentRequired)return
-            if(!closed)mutable.update { it.copy(error=t.message?:"No se pudo conectar con el reproductor.",transferring="",remote=if(rulesBlocked)false else it.remote) }
+            val message = if (t.message.orEmpty().contains("Permission denied", ignoreCase = true))
+                "Firebase ha denegado el acceso al reproductor de esta cuenta." else t.message
+            if(!closed)mutable.update { it.copy(error=message?:"No se pudo conectar con el reproductor.",transferring="",remote=if(rulesBlocked)false else it.remote) }
         }
         private fun ref(key:String)=root.child("playback").child(key)
         private fun decode(raw:String?)=raw?.let {val o=JSONObject(it);if(o.has("tree"))JSONObject(o.getString("tree"))else o}
-        private fun listen(reference:DatabaseReference,body:suspend (DataSnapshot)->Unit) {
+        private fun listen(reference:DatabaseReference,required:Boolean = true,body:suspend (DataSnapshot)->Unit) {
             val listener=object:ValueEventListener {
                 override fun onDataChange(snapshot:DataSnapshot){if(!closed)events.trySend {if(!closed && GoogleDeviceSync.canSyncPlayer(actor))body(snapshot)}}
-                override fun onCancelled(error:DatabaseError){if(error.code==DatabaseError.PERMISSION_DENIED)rulesBlocked=true;report(error.toException())}
+                override fun onCancelled(error: DatabaseError) {
+                    if (!required) return
+                    if (error.code == DatabaseError.PERMISSION_DENIED) {
+                        rulesBlocked = true
+                        report(PlaybackPermissionDenied(reference.key.orEmpty()))
+                    } else report(error.toException())
+                }
             }
             listeners+=reference to listener;reference.addValueEventListener(listener)
         }
@@ -138,7 +150,7 @@ object CloudPlayback {
                 }
                 publishStatus();drainCommand()
             }
-            listen(ref("queue")){snapshot->decode(snapshot.getValue(String::class.java))?.let(::loadQueue)}
+            listen(ref("queue"), required = false){snapshot->decode(snapshot.getValue(String::class.java))?.let(::loadQueue)}
             listen(ref("session")){snapshot->
                 val decoded=withContext(Dispatchers.IO){decode(snapshot.getValue(String::class.java))?.let(DevicePlaybackState::parse)}
                 val next=decoded?.let(::withCheckpoint)
@@ -154,7 +166,7 @@ object CloudPlayback {
                 publishStatus();mirror();acceptTransfer();drainCommand()
                 playbackChanged()
             }
-            listen(ref("checkpoint")) { snapshot ->
+            listen(ref("checkpoint"), required = false) { snapshot ->
                 checkpoint = decode(snapshot.getValue(String::class.java))
                 current = current?.let(::withCheckpoint)
                 mirror()
@@ -163,13 +175,18 @@ object CloudPlayback {
                 while (isActive) {
                     delay(30_000)
                     val owner = current ?: continue
-                    if (!connected || !GoogleDeviceSync.canSyncPlayer(actor) || owner.owner != actor ||
+                    if (!checkpointWritable || !connected || !GoogleDeviceSync.canSyncPlayer(actor) || owner.owner != actor ||
                         !SongPlayer.isPlaying() || !SongPlayer.isPrepared()) continue
                     val value = JSONObject().put("epoch", owner.epoch).put("owner", actor)
                         .put("position", SongPlayer.getCurrentPosition().coerceAtLeast(0)).put("at", now()).put("playing", true)
                     try { ref("checkpoint").setValue(value.toString()).await() }
                     catch (cancelled: CancellationException) { throw cancelled }
-                    catch (failure: Exception) { report(failure) }
+                    catch (failure: Exception) {
+                        if (failure.message.orEmpty().contains("Permission denied", ignoreCase = true)) {
+                            checkpointWritable = false
+                            android.util.Log.w("CloudPlayback", "Optional checkpoint write denied", failure)
+                        } else report(failure)
+                    }
                 }
             }
             commandListener=object:ChildEventListener {
@@ -187,7 +204,7 @@ object CloudPlayback {
                 override fun onChildMoved(s:DataSnapshot,p:String?){}
                 override fun onCancelled(error:DatabaseError){if(error.code==DatabaseError.PERMISSION_DENIED)rulesBlocked=true;report(error.toException())}
             }.also {ref("commands").child(actor).addChildEventListener(it)}
-            listen(ref("capabilities")){snapshot->
+            listen(ref("capabilities"), required = false){snapshot->
                 val disabled=snapshot.children.filter {it.child("enabled").getValue(Boolean::class.java)==false}.mapNotNull {it.key}.toSet()
                 mutable.update {it.copy(disabledDevices=disabled)};publishStatus()
             }
@@ -366,7 +383,7 @@ object CloudPlayback {
             check(!closed && GoogleDeviceSync.canSyncPlayer(actor)){"No hay otro dispositivo disponible."}
             val pointer = JSONObject().put("id",id).put("blob",blob).put("hash", SyncTree.digest(q.textJson().toString()))
             queuePointers[id] = pointer
-            ref("queue").setValue(pointer.toString()).await()
+            // The session carries this pointer atomically with ownership.
             lastQueue=q;lastQueueId=id;queue=q;queueId=id
             return id
         }
@@ -383,7 +400,10 @@ object CloudPlayback {
                     data.value=raw;Transaction.success(data)
                 }.getOrElse {Transaction.abort()}
                 override fun onComplete(error:DatabaseError?,committed:Boolean,snapshot:DataSnapshot?){
-                    if(error!=null)result.completeExceptionally(error.toException())else result.complete(committed)
+                    if (error?.code == DatabaseError.PERMISSION_DENIED) {
+                        result.completeExceptionally(PlaybackPermissionDenied("playback/session"))
+                    } else if (error != null) result.completeExceptionally(error.toException())
+                    else result.complete(committed)
                 }
             },false)
             return withTimeout(15_000){result.await()}
@@ -503,6 +523,10 @@ object CloudPlayback {
             send("volume",(value*1000).toLong())
         }
         fun requestTransfer(target:String) {
+            if (rulesBlocked) {
+                report(PlaybackPermissionDenied("playback"))
+                return
+            }
             if(target.isBlank() || !SyncOptions.enabled(SyncOptions.Category.PLAYER))return
             val owner=current
             if(owner==null){mutable.update { it.copy(error="Reproduce una canción o un episodio para conectar el reproductor.") };return}
@@ -595,7 +619,7 @@ object CloudPlayback {
         fun close() {
             val owner = current
             val localAt = com.music.spotui.data.preferences.lastPlaybackActivity(context)
-            if (!rulesBlocked && connected && owner?.owner == actor && localAt > owner.updated &&
+            if (!rulesBlocked && checkpointWritable && connected && owner?.owner == actor && localAt > owner.updated &&
                 GoogleDeviceSync.status.value.authorized && SyncOptions.enabled(SyncOptions.Category.PLAYER)) {
                 val position = com.music.spotui.data.preferences.loadLastPlayback(context)?.second ?: owner.position
                 ref("checkpoint").setValue(JSONObject().put("epoch", owner.epoch).put("owner", actor)

@@ -45,6 +45,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -120,13 +122,7 @@ private fun ArtistOverviewContent(
     artistName: String,
 ) {
     val context = LocalContext.current
-    var orderByTitle by remember(overview.id) { mutableStateOf(false) }
-    var artistSortDescending by remember(overview.id) { mutableStateOf(true) }
-    var showCollectionSort by remember { mutableStateOf(false) }
-    val tracks = remember(overview.topTracks, orderByTitle, artistSortDescending) {
-        if (orderByTitle) { val ordered=overview.topTracks.sortedBy { it.song.title.lowercase() }; if (artistSortDescending) ordered.reversed() else ordered }
-        else if (artistSortDescending) overview.topTracks else overview.topTracks.reversed()
-    }
+    val tracks = overview.topTracks
     val displayName = overview.name.ifBlank { artistName }
 
     // Warm the stream cache for the top tracks so the first tap plays instantly.
@@ -165,6 +161,8 @@ private fun ArtistOverviewContent(
         tracks.take(5).mapIndexed { i, track -> "artist_song_$i" to track.song }
     })
     com.music.spotui.ui.components.CollectionContentViewport(modifier = Modifier.fillMaxSize()) {
+        val inset = com.music.spotui.ui.components.LocalCollectionInset.current
+        val headerHeight = (LocalConfiguration.current.screenHeightDp.dp * .62f).coerceIn(420.dp, 680.dp)
         LazyColumn(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(
                 start = com.music.spotui.ui.components.LocalCollectionInset.current,
@@ -178,7 +176,13 @@ private fun ArtistOverviewContent(
         item {
             Box(modifier = Modifier
                 .fillMaxWidth()
-                .height(340.dp)
+                .layout { measurable, constraints ->
+                    val side = inset.roundToPx()
+                    val fullWidth = constraints.maxWidth + 2 * side
+                    val header = measurable.measure(constraints.copy(minWidth = fullWidth, maxWidth = fullWidth))
+                    layout(constraints.maxWidth, header.height) { header.place(-side, 0) }
+                }
+                .height(headerHeight)
             ) {
                 GlideImage(
                     modifier = Modifier.fillMaxSize(),
@@ -215,7 +219,8 @@ private fun ArtistOverviewContent(
                 Text(
                     text = displayName,
                     color = Color.White,
-                    fontSize = 42.sp,
+                    fontSize = 58.sp,
+                    lineHeight = 62.sp,
                     fontWeight = FontWeight.ExtraBold,
                     maxLines = 2,
                     modifier = Modifier
@@ -235,13 +240,13 @@ private fun ArtistOverviewContent(
                     Box(modifier = Modifier
                         .size(18.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF4A90E2)),
+                        .background(Color(0xFFC4F0C8)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(androidx.compose.material.icons.Icons.Default.Check, "Artista verificado", tint = Color.White, modifier = Modifier.size(12.dp))
+                        Icon(androidx.compose.material.icons.Icons.Default.Check, null, tint = Color(0xFF143222), modifier = Modifier.size(12.dp))
                     }
                     Spacer(Modifier.width(6.dp))
-                    Text(uiLocalized("Verified Artist"), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Text("Verificado/a por Spotify", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                 }
             }
             overview.monthlyListeners?.let {
@@ -256,8 +261,8 @@ private fun ArtistOverviewContent(
 
         // ── Action row: Follow + shuffle + play ──
         item {
-            Column(Modifier.fillMaxWidth()) {
-Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                     Box(modifier = Modifier
                         .clip(RoundedCornerShape(20.dp))
                         .border(1.dp, Color.Gray, RoundedCornerShape(20.dp))
@@ -282,39 +287,21 @@ Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = A
                         )
                     }
 
+                if (tracks.isNotEmpty()) {
+                    val active = tracks.any { it.song.id == artistViewModel.currentSongId.value }
+                    val playing = active && artistViewModel.currentSongPlayingState.value
+                    androidx.compose.material3.FilledIconButton(
+                        modifier = Modifier.size(52.dp),
+                        colors = androidx.compose.material3.IconButtonDefaults.filledIconButtonColors(
+                            containerColor = SpotifyGreen, contentColor = Color.Black
+                        ),
+                        onClick = { if (active) artistViewModel.setPlaying(!playing) else playTrackAt(0) },
+                    ) {
+                        Icon(painterResource(if (playing) R.drawable.collection_pause else R.drawable.collection_play),
+                            if (playing) "Pausar" else "Reproducir", modifier = Modifier.size(22.dp))
+                    }
                 }
-                    val collectionSongs = tracks.map { it.song }
-                    com.music.spotui.ui.components.CollectionActionBar(
- coverUri = overview.headerImage.ifBlank { overview.avatarImage },
- accent = com.music.spotui.ui.components.rememberCollectionAccent(overview.headerImage.ifBlank { overview.avatarImage }),
- sortMode = if (orderByTitle) "TITLE" else "POPULARITY", sortDescending = artistSortDescending,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                        enabled = collectionSongs.isNotEmpty(),
-                        playing = collectionSongs.any { it.id == artistViewModel.currentSongId.value } && artistViewModel.currentSongPlayingState.value,
-                        download = { com.music.spotui.ui.components.CollectionDownloadButton(collectionSongs, "Descargar") { complete ->
-                            if (!complete) SongPlayer.downloadAll(collectionSongs, context)
-                        } },
-                        onSort = { showCollectionSort = true },
-                        onQueue = { artistViewModel.addAllToQueue(collectionSongs) },
-                        onShuffle = { artistViewModel.startShuffled(collectionSongs, overview.name)?.let { first ->
-                            artistViewModel.updateSongState(first.coverUri, first.title, first.singer, true, first.id, 0, first.album)
-                            SongPlayer.playSong(first.url, context, "song/" + first.id)
-                        } },
-                        onPlay = { if (collectionSongs.any { it.id == artistViewModel.currentSongId.value }) artistViewModel.setPlaying(!artistViewModel.currentSongPlayingState.value) else playTrackAt(0) }
-                    )
-                    if (showCollectionSort) com.music.spotui.ui.components.CollectionSortSheet(
-                        selected = if (orderByTitle) "TITLE" else "POPULARITY",
-                        descending = artistSortDescending,
-                        choices = listOf("POPULARITY" to "Popularidad", "TITLE" to "Título"),
-                        onDismiss = { showCollectionSort = false },
-                        onSelected = { selected ->
-                            val title = selected == "TITLE"
-                            artistSortDescending = if (orderByTitle == title) !artistSortDescending else !title
-                            orderByTitle = title
-                            showCollectionSort = false
-                        }
-                    )
-                }
+            }
         }
 
         // ── Popular tracks ──

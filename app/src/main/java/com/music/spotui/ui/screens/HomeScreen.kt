@@ -382,7 +382,7 @@ private fun HomeHeaderRow(
     val newsLifecycle=androidx.lifecycle.compose.LocalLifecycleOwner.current
     LaunchedEffect(newsLifecycle) {
         newsLifecycle.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
-            while(true) {homeViewModel.refreshFollowedReleases();kotlinx.coroutines.delay(10*60_000L)}
+            while(true) {homeViewModel.refreshFollowedReleases();kotlinx.coroutines.delay(2*60_000L)}
         }
     }
     androidx.compose.runtime.LaunchedEffect(Unit) {
@@ -631,10 +631,11 @@ private fun HomeMusicFeedContent(
         if(isFollowingOnly && !homeViewModel.followedMusicReleases.value.loading)
             homeViewModel.refreshFollowedReleases(force=true,kind=ReleaseKind.MUSIC)
     }
-    LaunchedEffect(isFollowingOnly,followingMusic.complete,followingMusic.loading,followingMusic.checkedAt) {
-        if(isFollowingOnly && followingMusic.complete && !followingMusic.loading && followingMusic.checkedAt>0)
+    LaunchedEffect(isFollowingOnly, followingMusic.items) {
+        if (isFollowingOnly && followingMusic.items.isNotEmpty())
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                com.music.spotui.data.preferences.markReleasesChecked(context,ReleaseKind.MUSIC,followingMusic.checkedAt)
+                com.music.spotui.data.preferences.markReleasesChecked(context, ReleaseKind.MUSIC,
+                    followingMusic.items.maxOf { it.publishedAt })
             }
     }
 

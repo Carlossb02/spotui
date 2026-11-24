@@ -6,7 +6,6 @@ import com.music.spotui.data.entity.*
 import com.music.spotui.data.preferences.ReleaseKind
 import com.music.spotui.data.publicationTime
 import com.music.spotui.data.withinLastMonth
-import com.music.spotui.di.SongPlayer
 import com.music.spotui.providers.PodcastProvider
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,7 +31,6 @@ internal class FollowingReleaseFeed(private val context: Context, private val sc
             context.applicationContext,CoroutineScope(SupervisorJob()+Dispatchers.IO)).also {feed->
             shared=feed
             feed.scope.launch {
-                delay(1800)
                 com.music.spotui.data.preferences.SubscribedPodcastPref.revision.collect {
                     feed.refresh(com.music.spotui.data.preferences.SubscribedPodcastPref.getSubscribedPodcasts(feed.context),
                         emptyList(),kind=ReleaseKind.PODCASTS)
@@ -54,8 +52,9 @@ internal class FollowingReleaseFeed(private val context: Context, private val sc
     private var musicKey = ""
     private var podcastAttempt = 0L
     private var musicAttempt = 0L
-    private val cooldown = 10 * 60_000L
+    private val cooldown = 2 * 60_000L
 
+    @Synchronized
     fun refresh(shows: List<PodcastModel>, artists: List<ArtistsModel>, force: Boolean = false, kind:ReleaseKind?=null) {
         val now = System.currentTimeMillis()
         val forcePodcasts=force && (kind==null || kind==ReleaseKind.PODCASTS)
@@ -97,7 +96,6 @@ internal class FollowingReleaseFeed(private val context: Context, private val sc
         val checkedAt=java.util.concurrent.atomic.AtomicLong(now)
         val since = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).minusMonths(1).toInstant().toEpochMilli()
         shows.distinctBy { it.id }.map { show -> async {
-            SongPlayer.awaitAudioStartup()
             val key = "podcast:${show.id}"
             val stored = cachedRows(key)
             if (!force && stored!=null && now-stored.optLong("at")<cooldown) {
@@ -118,11 +116,27 @@ internal class FollowingReleaseFeed(private val context: Context, private val sc
                                 val key=com.music.spotui.data.preferences.PodcastResumeStore.episodeKey(song.url)
                                 dates.getLong(key,0)==0L && publicationTime(song.releaseDate,now)==null && key !in dateAttempts
                             }.take((20-dateAttempts.size).coerceAtLeast(0))
+                            fun publishEpisodes(preservePrevious: Boolean) {
+                                val published = songs.mapNotNull { song ->
+                                    val identity = com.music.spotui.data.preferences.PodcastResumeStore.episodeKey(song.url)
+                                    val known = dates.getLong(identity,0)
+                                    val timestamp = com.music.spotui.data.stablePublicationTime(known,song.releaseDate,now)?.also {
+                                        dates.edit().putLong(identity,it).apply()
+                                    } ?: return@mapNotNull null
+                                    FollowedEpisode(song.copy(album=song.album.ifBlank {show.name}),show.id,timestamp)
+                                        .takeIf {withinLastMonth(it.publishedAt,now)}
+                                }
+                                finalRows=published
+                                podcastState.update { state -> state.copy(items=(state.items.filterNot {it.showId==show.id}+published)
+                                    .plus(if(preservePrevious)state.items.filter {it.showId==show.id} else emptyList())
+                                    .filter {it.showId in ids && withinLastMonth(it.publishedAt,now)}
+                                    .distinctBy {it.song.url.substringBefore('|')}.sortedByDescending {it.publishedAt}) }
+                            }
+                            if (pendingDates.isNotEmpty()) publishEpisodes(preservePrevious = true)
                             pendingDates.forEach {dateAttempts+=com.music.spotui.data.preferences.PodcastResumeStore.episodeKey(it.url)}
                             pendingDates.map {song->async {
                                 val key=com.music.spotui.data.preferences.PodcastResumeStore.episodeKey(song.url)
                                 datePermits.withPermit {
-                                    SongPlayer.awaitAudioStartup()
                                     val label=PodcastProvider.publicationDate(song)
                                     label?.let {publicationTime(it,now)}?.let {date->dates.edit().putLong(key,date).apply()}
                                 }
@@ -131,20 +145,7 @@ internal class FollowingReleaseFeed(private val context: Context, private val sc
                                 val key=com.music.spotui.data.preferences.PodcastResumeStore.episodeKey(song.url)
                                 dates.getLong(key,0)==0L && publicationTime(song.releaseDate,now)==null
                             }
-                            val published = songs.mapNotNull { song ->
-                                val identity = com.music.spotui.data.preferences.PodcastResumeStore.episodeKey(song.url)
-                                val known = dates.getLong(identity,0)
-                                val timestamp = com.music.spotui.data.stablePublicationTime(known,song.releaseDate,now)?.also {
-                                    dates.edit().putLong(identity,it).apply()
-                                } ?: return@mapNotNull null
-                                FollowedEpisode(song.copy(album=song.album.ifBlank {show.name}),show.id,timestamp)
-                                    .takeIf {withinLastMonth(it.publishedAt,now)}
-                            }
-                            finalRows=published
-                            podcastState.update { state -> state.copy(items=(state.items.filterNot {it.showId==show.id}+published)
-                                .plus(if(missingDates)state.items.filter {it.showId==show.id} else emptyList())
-                                .filter {it.showId in ids && withinLastMonth(it.publishedAt,now)}
-                                .distinctBy {it.song.url.substringBefore('|')}.sortedByDescending {it.publishedAt}) }
+                            publishEpisodes(preservePrevious = missingDates)
                         }
                         check(receivedEpisodes){"Podcast discovery was unavailable"}
                         check(!missingDates || finalRows.isNotEmpty()) {"Episode publication dates were unavailable"}
@@ -171,12 +172,12 @@ internal class FollowingReleaseFeed(private val context: Context, private val sc
         artists.forEach {results[it.id]=musicRows("music:${it.id}")}
         fun publish() { musicState.update {it.copy(items=results.values.flatten().filter {it.publishedAt<=now}
             .distinctBy {it.album.spotifyAlbumId}.sortedByDescending {it.publishedAt})} }
-        musicState.value=FollowingFeedState(loading=true,checkedAt=now);publish()
+        musicState.update { it.copy(loading = true, checkedAt = now, complete = false, error = null) }
+        publish()
         val failures=java.util.concurrent.atomic.AtomicInteger()
         val checkedAt=java.util.concurrent.atomic.AtomicLong(now)
-        if(artists.isNotEmpty()) {SongPlayer.awaitAudioStartup();SpotifyTokenProvider.ensureToken(context)}
+        if (artists.isNotEmpty()) SpotifyTokenProvider.ensureToken(context)
         artists.filter {it.id.isNotBlank()}.distinctBy {it.id}.map {artist->async {
-            SongPlayer.awaitAudioStartup()
             val key="music:${artist.id}";val stored=cachedRows(key)
             if(!force && stored!=null && now-stored.optLong("at")<cooldown) {
                 checkedAt.updateAndGet {minOf(it,stored.optLong("at"))};return@async
@@ -188,7 +189,6 @@ internal class FollowingReleaseFeed(private val context: Context, private val sc
                         var releaseDate=release.releaseDate.orEmpty()
                         if(releaseDate.length==4 && releaseDate.toIntOrNull()==java.time.Year.now().value) {
                             releaseDate=cache.getString("album-date:${release.id}",null) ?: run {
-                                SongPlayer.awaitAudioStartup()
                                 Spotify.album(release.id).getOrNull()?.releaseDate.orEmpty().also {date->
                                     if(date.length>4)cache.edit().putString("album-date:${release.id}",date).apply()
                                 }

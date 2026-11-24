@@ -1,0 +1,54 @@
+{
+  "rules": {
+    "users": {
+      "$uid": {
+        "playback": {
+          "session": {
+            ".read": "auth != null && auth.uid === $uid && root.child('authorizedUsers').child($uid).val() === true",
+            ".write": "auth != null && auth.uid === $uid && root.child('authorizedUsers').child($uid).val() === true",
+            ".validate": "newData.isString()"
+          },
+          "queue": {
+            ".read": "auth != null && auth.uid === $uid && root.child('authorizedUsers').child($uid).val() === true",
+            ".write": "auth != null && auth.uid === $uid && root.child('authorizedUsers').child($uid).val() === true",
+            ".validate": "newData.isString()"
+          },
+          "checkpoint": {
+            ".read": "auth != null && auth.uid === $uid && root.child('authorizedUsers').child($uid).val() === true",
+            ".write": "auth != null && auth.uid === $uid && root.child('authorizedUsers').child($uid).val() === true",
+            ".validate": "newData.isString()"
+          },
+          "capabilities": {
+            ".read": "auth != null && auth.uid === $uid && root.child('authorizedUsers').child($uid).val() === true",
+            "$device": {
+              ".write": "auth != null && auth.uid === $uid && root.child('authorizedUsers').child($uid).val() === true",
+              ".validate": "newData.hasChildren(['enabled'])",
+              "enabled": {
+                ".validate": "newData.isBoolean()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "commands": {
+            "$device": {
+              ".read": "auth != null && auth.uid === $uid && root.child('authorizedUsers').child($uid).val() === true",
+              "$command": {
+                ".write": "auth != null && auth.uid === $uid && root.child('authorizedUsers').child($uid).val() === true",
+                ".validate": "newData.isString()"
+              }
+            }
+          },
+          "releaseChecks": {
+            ".read": "auth != null && auth.uid === $uid && root.child('authorizedUsers').child($uid).val() === true",
+            "$marker": {
+              ".write": "auth != null && auth.uid === $uid && root.child('authorizedUsers').child($uid).val() === true",
+              ".validate": "($marker === 'music' || $marker === 'podcasts' || $marker === 'music_reset' || $marker === 'podcasts_reset') && newData.isNumber() && newData.val() >= 0 && (!data.exists() || newData.val() >= data.val())"
+            }
+          }
+        }
+      }
+    }
+  }
+}
