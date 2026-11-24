@@ -1260,6 +1260,39 @@ object Spotify {
             )
         }
 
+    /** The Web Player stores playlist membership in the user's root list. */
+    suspend fun setPlaylistInLibrary(userId: String, playlistId: String, saved: Boolean): Result<Unit> =
+        runCatching {
+            require(userId.isNotBlank())
+            require(playlistId.matches(Regex("[A-Za-z0-9]{22}")))
+            val userPath = java.net.URLEncoder.encode(userId, Charsets.UTF_8.name()).replace("+", "%20")
+            val payload = buildJsonObject {
+                putJsonArray("deltas") {
+                    add(buildJsonObject {
+                        putJsonArray("ops") {
+                            add(buildJsonObject {
+                                put("kind", if (saved) "ADD" else "REM")
+                                putJsonObject(if (saved) "add" else "rem") {
+                                    putJsonArray("items") {
+                                        add(buildJsonObject {
+                                            put("uri", "spotify:playlist:" + playlistId)
+                                            if (saved) putJsonObject("attributes") {
+                                                put("timestamp", System.currentTimeMillis().toString())
+                                            }
+                                        })
+                                    }
+                                    if (saved) put("addFirst", true) else put("itemsAsKey", true)
+                                }
+                            })
+                        }
+                        putJsonObject("info") { putJsonObject("source") { put("client", "WEBPLAYER") } }
+                    })
+                }
+            }
+            playlistWrite("https://spclient.wg.spotify.com/playlist/v2/user/" + userPath + "/rootlist/changes", payload)
+            Unit
+        }
+
     // ── Library Mutations (GQL: addToLibrary / removeFromLibrary) ──────
 
     /**

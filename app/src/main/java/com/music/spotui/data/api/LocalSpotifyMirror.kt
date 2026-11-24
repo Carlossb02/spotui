@@ -77,12 +77,21 @@ object LocalSpotifyMirror {
             val unchanged=rows(st,"base")==uris && st.optString("name")==local.name
             if(unchanged && st.optJSONObject("pending")==null && st.optJSONObject("pendingName")==null && !force && System.currentTimeMillis()-(checked[local.id]?:0)<300_000)continue
             status(local.id,Phase.SYNCING)
-            try {sync(c,me,session,local,st);checked[local.id]=System.currentTimeMillis()}
+            try {
+                sync(c,me,session,local,st)
+                if (st.has("retryAt")) { st.remove("retryAt"); save(c,me,local.id,st) }
+                checked[local.id]=System.currentTimeMillis()
+            }
             catch(cancelled:CancellationException){throw cancelled}
             catch(error:Exception){
                 st.put("retryAt",System.currentTimeMillis()+maxOf(30_000L,(error as? Spotify.SpotifyException)?.retryAfterSec?.times(1000)?:0L))
                 save(c,me,local.id,st)
-                status(local.id,Phase.FAILED,error.message?:"Spotify no está disponible; se conserva la copia local")
+                android.util.Log.w("LocalSpotifyMirror", "Playlist sync failed for " + local.id, error)
+                val message = if (error is Spotify.SpotifyException) {
+                    if (st.optBoolean("initializing")) "No se pudo añadir la lista a tu biblioteca de Spotify. Toca para reintentar."
+                    else "No se pudo sincronizar con Spotify. Toca para reintentar."
+                } else error.message ?: "Spotify no está disponible; se conserva la copia local"
+                status(local.id, Phase.FAILED, message)
             }
         }
         // Removing the local list unfollows its linked copy, never clears its contents.
@@ -91,12 +100,17 @@ object LocalSpotifyMirror {
             val st=JSONObject(prefs(c).getString(key,"{}")!!);val remote=st.optString("remote")
             if(remote.isNotBlank() && !st.optBoolean("retired")) {
                 check(SpotifySession.spDc(c)==session)
-                Spotify.removeFromLibrary(listOf("spotify:playlist:"+remote)).getOrThrow()
+                if (LocalPlaylistPref.getLocalPlaylist(c, key.removePrefix(me + ":")) != null) return@forEach
+                updateLibraryMembership(c, me, session, remote, saved = false)
                 st.put("retired",true);save(c,me,key.removePrefix(me+":"),st)
             }
         }
     }
-    private suspend fun guard(c:Context,session:String) {currentCoroutineContext().ensureActive();check(SpotifySession.spDc(c)==session) {"La cuenta ha cambiado"};com.music.spotui.di.SongPlayer.awaitAudioStartup()}
+    private suspend fun guard(context: Context, session: String) {
+        com.music.spotui.di.SongPlayer.awaitAudioStartup()
+        currentCoroutineContext().ensureActive()
+        check(SpotifySession.spDc(context) == session) { "La cuenta ha cambiado" }
+    }
     private data class Remote(val playlist:SpotifyPlaylist,val items:List<SpotifyPlaylistTrack>) {
         val catalog get()=items.filter {it.track?.let {t->!t.isLocal && t.uri?.startsWith("spotify:track:")!=false && t.id.matches(Regex("[A-Za-z0-9]{22}"))}==true}
         val uris get()=catalog.map {"spotify:track:"+it.track!!.id}
@@ -129,10 +143,7 @@ object LocalSpotifyMirror {
                 st.put("remote",known);save(c,owner,local.id,st)
             }
             if(st.optBoolean("initializing")) {
-                guard(c,session)
-                Spotify.editPlaylistAttributes(known,newDescription="Spotui-ID: "+local.id).getOrThrow()
-                Spotify.addToLibrary(listOf("spotify:playlist:"+known)).getOrThrow()
-                st.put("initializing",false);save(c,owner,local.id,st)
+                finishInitialization(c, owner, session, local.id, known, st)
             }
             return known
         }
@@ -159,12 +170,54 @@ object LocalSpotifyMirror {
         }
         check(remote.id.isNotBlank())
         st.put("remote",remote.id).put("creating",false).put("new",true).put("initializing",true);save(c,owner,local.id,st)
-        guard(c,session)
-        Spotify.editPlaylistAttributes(remote.id,newDescription=marker).getOrThrow()
-        Spotify.addToLibrary(listOf("spotify:playlist:"+remote.id)).getOrThrow()
-        st.put("initializing",false);save(c,owner,local.id,st)
+        finishInitialization(c, owner, session, local.id, remote.id, st)
         return remote.id
     }
+    private suspend fun finishInitialization(
+        context: Context,
+        owner: String,
+        session: String,
+        localId: String,
+        remoteId: String,
+        state: JSONObject,
+    ) {
+        guard(context, session)
+        val playlist = Spotify.playlist(remoteId).getOrThrow()
+        check(playlist.owner?.id == owner) { "La lista no pertenece a esta cuenta de Spotify" }
+        val marker = "Spotui-ID: " + localId
+        if (playlist.description?.contains(marker) != true) {
+            guard(context, session)
+            Spotify.editPlaylistAttributes(remoteId, newDescription = marker).getOrThrow()
+        }
+        updateLibraryMembership(context, owner, session, remoteId, saved = true)
+        state.put("initializing", false)
+        save(context, owner, localId, state)
+    }
+
+    private suspend fun updateLibraryMembership(
+        context: Context,
+        owner: String,
+        session: String,
+        playlistId: String,
+        saved: Boolean,
+    ) {
+        suspend fun isInLibrary(): Boolean {
+            guard(context, session)
+            return SpotifySync.allLibraryPlaylists(context, forceRefresh = true).any { it.id == playlistId }
+        }
+
+        // Read membership before sending: an interrupted attempt may have succeeded,
+        // or the playlist may already have been saved by another device.
+        if (isInLibrary() == saved) return
+        guard(context, session)
+        Spotify.setPlaylistInLibrary(owner, playlistId, saved).getOrThrow()
+        repeat(4) { attempt ->
+            if (attempt > 0) delay(400L * attempt)
+            if (isInLibrary() == saved) return
+        }
+        error("Spotify aún no confirma el cambio en tu biblioteca. La lista se conserva y se reintentará.")
+    }
+
     private suspend fun applyLocal(c:Context,expected:LocalPlaylist,updated:LocalPlaylist) {
         LocalPlaylistPref.saveSyncedPlaylist(c,expected,updated)
     }
