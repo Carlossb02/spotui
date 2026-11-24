@@ -99,6 +99,9 @@ import com.bumptech.glide.integration.compose.GlideImage
 import com.bumptech.glide.integration.compose.placeholder
 import com.music.spotui.R
 import com.music.spotui.data.api.Response
+import com.music.spotui.data.api.PlaylistAccess
+import com.music.spotui.data.api.PlaylistAccessInfo
+import com.music.spotui.data.preferences.LocalPlaylistPref
 import com.music.spotui.data.entity.AlbumsModel
 import com.music.spotui.di.Palette
 import com.music.spotui.di.SongPlayer
@@ -142,20 +145,22 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     // Trigger dinámico para refrescar la UI automáticamente cuando una descarga termina
     val downloadRefreshTrigger by com.music.spotui.data.preferences.downloadsVersion.collectAsState()
 
-    var playlistAccess by remember(playlistId) {
-        mutableStateOf(com.music.spotui.data.api.PlaylistAccessInfo(
-            canEdit = playlistId.startsWith("local_pl_"),
-            available = playlistId.startsWith("local_pl_"),
-        ))
-    }
-    LaunchedEffect(playlistId) {
-        playlistViewModel.loadPlaylist(playlistId)
-        playlistAccess = com.music.spotui.data.api.PlaylistAccess.load(context, playlistId)
+    val isLocalPlaylist = playlistId.startsWith("local_pl_")
+    val linkedSpotifyId = if (isLocalPlaylist) {
+        val links = remember(context, playlistId) { LocalPlaylistPref.observeSyncedSpotifyId(context, playlistId) }
+        val link by links.collectAsState(initial = null)
+        link
+    } else null
+    val profilePlaylistId = if (isLocalPlaylist) linkedSpotifyId.orEmpty() else playlistId
+    var playlistAccess by remember(profilePlaylistId) { mutableStateOf(PlaylistAccessInfo()) }
+    LaunchedEffect(playlistId) { playlistViewModel.loadPlaylist(playlistId) }
+    LaunchedEffect(context, profilePlaylistId) {
+        if (profilePlaylistId.isNotBlank()) playlistAccess = PlaylistAccess.load(context, profilePlaylistId)
     }
     val spotifyMirrorStatuses by com.music.spotui.data.api.LocalSpotifyMirror.statuses.collectAsState()
     val spotifyMirrorStatus = spotifyMirrorStatuses[playlistId]
-    val canEditPlaylist = playlistAccess.canEdit
-    val externalReadOnly = !playlistId.startsWith("local_pl_") && !canEditPlaylist
+    val canEditPlaylist = isLocalPlaylist || playlistAccess.canEdit
+    val externalReadOnly = !isLocalPlaylist && !canEditPlaylist
     var favoritePlaylist by remember(playlistId) {
         mutableStateOf(com.music.spotui.data.preferences.FavoritePlaylistsPref.isFavorite(context, playlistId))
     }
@@ -530,7 +535,6 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 }
                             }
                             Spacer(modifier = Modifier.height(17.dp))
-                            val isLocalPlaylist = playlistId.startsWith("local_pl_")
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.padding(horizontal = 20.dp).then(collapsedTitle.titleModifier)
@@ -549,7 +553,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 modifier = Modifier.padding(horizontal = 20.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (isLocalPlaylist && playlistAccess.ownerName.isBlank()) {
+                                if (isLocalPlaylist && linkedSpotifyId == "") {
                                     Icon(Icons.Default.PhoneAndroid, contentDescription = null,
                                         tint = Color(0xFF1ED760), modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(5.dp))
@@ -587,7 +591,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                         Spacer(Modifier.width(14.dp))
                                     }
                                     Text(
-                                        text = (listOf(playlistAccess.ownerName.ifBlank { playlist.artists }) +
+                                        text = (listOf(playlistAccess.ownerName.ifBlank { if (isLocalPlaylist) "" else playlist.artists }) +
                                             playlistAccess.contributors.map { it.displayName })
                                             .filter { it.isNotBlank() }.distinct().joinToString(" · "),
                                         color = Color.White,
@@ -606,9 +610,9 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 color = Color(0xFFB3B3B3),
                                 fontSize = 12.sp,
                             )
-                            if (playlistId.startsWith("local_pl_")) {
+                            if (isLocalPlaylist && (linkedSpotifyId == "" ||
+                                spotifyMirrorStatus?.phase == com.music.spotui.data.api.LocalSpotifyMirror.Phase.FAILED)) {
                                 val syncLabel = when (spotifyMirrorStatus?.phase) {
-                                    com.music.spotui.data.api.LocalSpotifyMirror.Phase.SYNCED -> "Sincronizada con Spotify"
                                     com.music.spotui.data.api.LocalSpotifyMirror.Phase.SYNCING -> "Sincronizando con Spotify"
                                     else -> spotifyMirrorStatus?.details ?: "Pendiente de sincronizar con Spotify"
                                 }

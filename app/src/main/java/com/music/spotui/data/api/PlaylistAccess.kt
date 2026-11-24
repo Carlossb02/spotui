@@ -27,7 +27,9 @@ object PlaylistAccess {
             ?: return@withContext PlaylistAccessInfo()
         val owner = details.owner
         val members = details.contributors
-        val ownerProfile = owner?.id?.takeIf { it.isNotBlank() && owner?.imageUrl.isNullOrBlank() }
+        val ownerProfile = owner?.id?.takeIf { id ->
+            id.isNotBlank() && (owner.imageUrl.isNullOrBlank() || owner.displayName.isNullOrBlank() || owner.displayName == id)
+        }
             ?.let { id -> if (id == currentId) currentUser else Spotify.user(id).getOrNull() }
         val picturedMembers = members.filter { it.id != owner?.id }.take(6).map { contributor ->
             val profile = if (contributor.imageUrl.isNullOrBlank() || contributor.displayName == contributor.id)
@@ -40,9 +42,9 @@ object PlaylistAccess {
         }
         PlaylistAccessInfo(
             canEdit = currentId.isNotBlank() && (owner?.id == currentId || members.any { it.id == currentId }),
-            ownerName = owner?.displayName?.takeIf { it.isNotBlank() }
+            ownerName = owner?.displayName?.takeIf { it.isNotBlank() && it != owner?.id }
                 ?: ownerProfile?.displayName.orEmpty(),
-            ownerImage = owner?.imageUrl ?: ownerProfile?.images?.firstOrNull()?.url,
+            ownerImage = owner?.imageUrl?.takeIf { it.isNotBlank() } ?: ownerProfile?.images?.firstOrNull()?.url,
             contributors = picturedMembers,
             available = true,
         )
