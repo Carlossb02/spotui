@@ -24,7 +24,7 @@ internal class DriveRequestFailure private constructor(
             val reason=reasons.firstOrNull {it in knownReasons} ?: "unknown"
             val text=when {
                 disabled->"Google Drive API no está habilitada en el proyecto de esta app. El propietario debe habilitarla en Google Cloud y después pulsar Reintentar conexión con Drive."
-                consent->"El permiso de Google Drive ha caducado o es insuficiente. Pulsa Autorizar Google Drive y acepta el permiso para los datos de Spotui."
+                consent->"El permiso de Google Drive ha caducado o es insuficiente. Pulsa Autorizar Google Drive y acepta el permiso para los datos de Spotidroid."
                 throttled->"Google Drive ha limitado temporalmente las peticiones. La sincronización se reintentará más tarde."
                 "storageQuotaExceeded" in reasons->"La cuenta no tiene espacio disponible en Google Drive. Libera espacio y pulsa Reintentar conexión con Drive."
                 "domainPolicy" in reasons || "DOMAIN_POLICY" in reasons->"La organización de esta cuenta bloquea el acceso a Drive. Consulta con su administrador."

@@ -43,10 +43,10 @@ internal class PlaybackAudioFocus(context: Context, private val onChange: (Int) 
             val granted = manager.requestAudioFocus(candidate) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
             held = granted
             request = if (granted) candidate else null
-            if (!granted) Log.w("SpotuiTransition", "Audio focus request denied; playback cannot start")
+            if (!granted) Log.w("SpotidroidTransition", "Audio focus request denied; playback cannot start")
             granted
         } catch (e: RuntimeException) {
-            Log.e("SpotuiTransition", "Audio focus request failed", e)
+            Log.e("SpotidroidTransition", "Audio focus request failed", e)
             false
         }
     }
@@ -58,7 +58,7 @@ internal class PlaybackAudioFocus(context: Context, private val onChange: (Int) 
         val previous = request
         request = null
         runCatching { previous?.let { manager.abandonAudioFocusRequest(it) } }
-            .onFailure { Log.w("SpotuiTransition", "Audio focus release failed", it) }
+            .onFailure { Log.w("SpotidroidTransition", "Audio focus release failed", it) }
     }
 
     /** Focus is already lost permanently; don't restart automatically. */

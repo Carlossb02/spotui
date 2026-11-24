@@ -237,9 +237,9 @@ fun SettingsScreen(navController: NavController) {
                     }
                     SettingsDivider()
                     SettingsActionRow(Icons.Default.Link, uiLocalized("Open Spotify links"),
-                        if (isDefaultLinkHandler) uiLocalized("Spotify links open in Spotui.")
-                        else uiLocalized("Choose Spotui as the default app for Spotify links.")) {
-                        if (isDefaultLinkHandler) DefaultLinkHelper.openSpotuiDefaultSettings(context)
+                        if (isDefaultLinkHandler) uiLocalized("Spotify links open in Spotidroid.")
+                        else uiLocalized("Choose Spotidroid as the default app for Spotify links.")) {
+                        if (isDefaultLinkHandler) DefaultLinkHelper.openSpotidroidDefaultSettings(context)
                         else showDefaultGuide = true
                     }
                 }
@@ -387,7 +387,7 @@ fun SettingsScreen(navController: NavController) {
                     SettingsDivider()
                     SettingsActionRow(Icons.Default.BatteryChargingFull, uiLocalized("Background playback"),
                         if (batteryOptExempt) uiLocalized("Unrestricted battery use is enabled.")
-                        else uiLocalized("Manage Android battery restrictions for Spotui.")) {
+                        else uiLocalized("Manage Android battery restrictions for Spotidroid.")) {
                         batteryOptLauncher.launch(BatteryOptimizationHelper.buildAppSettingsIntent(context))
                     }
                 }

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
     <!-- Keep preferences and metadata eligible for Android Auto Backup.
-         Offline audio is intentionally NOT backed up (manual Spotui JSON saves metadata only).
+         Offline audio is intentionally NOT backed up (manual Spotidroid JSON saves metadata only).
          Private audio survives app updates but disappears when the app is uninstalled. -->
     <exclude domain="file" path="downloads/" />
         <exclude domain="sharedpref" path="google_device_sync_config.xml" />

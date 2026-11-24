@@ -61,8 +61,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -109,6 +107,8 @@ import com.music.spotui.data.api.PlaylistAccessInfo
 import com.music.spotui.ui.components.PlaylistSpotifyCollaboratorsDialog
 import com.music.spotui.ui.components.PlaylistSpotifyMenuItems
 import com.music.spotui.ui.components.PlaylistPresentationEditor
+import com.music.spotui.ui.components.PlaylistEditingField
+import com.music.spotui.ui.components.PlaylistEditingSheet
 import com.music.spotui.ui.components.SpotifyPlaylistEditor
 import com.music.spotui.ui.components.LibraryPlaylistAction
 import com.music.spotui.ui.components.openSpotifyPlaylist
@@ -220,9 +220,12 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     }
     val originalDescription = remember(playlistAccess.description, playlistId, profilePlaylistId) {
         if (profilePlaylistId.isBlank()) ""
-        else androidx.core.text.HtmlCompat.fromHtml(playlistAccess.description,
-            androidx.core.text.HtmlCompat.FROM_HTML_MODE_COMPACT).toString()
-            .replace("Spotui-ID: " + playlistId, "").trim()
+        else {
+            val text = androidx.core.text.HtmlCompat.fromHtml(playlistAccess.description,
+                androidx.core.text.HtmlCompat.FROM_HTML_MODE_COMPACT).toString()
+            com.music.spotui.data.api.playlistLinkMarkers(playlistId)
+                .fold(text) { description, marker -> description.replace(marker, "") }.trim()
+        }
     }
     val displayedDescription = presentation.description ?: originalDescription
     val remotePlaylistId = spotifyUrl?.lastPathSegment
@@ -230,9 +233,10 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     val canOfferSyncedEditor = remotePlaylistId != null && (!playlistAccess.ownershipVerified || playlistAccess.isOwner)
     val canEditRemoteDetails = remotePlaylistId != null && playlistAccess.isOwner && playlistAccess.ownerId.isNotBlank()
     var showSpotifyEditor by androidx.compose.runtime.saveable.rememberSaveable(playlistId) { mutableStateOf(false) }
+    var showDeleteDialog by remember(playlistId) { mutableStateOf(false) }
     var showPresentationEditor by androidx.compose.runtime.saveable.rememberSaveable(playlistId) { mutableStateOf(false) }
     if (showPresentationEditor && presentationId != null && loadedPresentation != null) {
-        PlaylistPresentationEditor(presentationId, presentation, originalDescription) { showPresentationEditor = false }
+        PlaylistPresentationEditor(presentationId, presentation, originalDescription, visualCover) { showPresentationEditor = false }
     }
     var showSpotifyCollaborators by remember(profilePlaylistId) { mutableStateOf(false) }
     var awaitingSpotifyReturn by remember(profilePlaylistId) { mutableStateOf(false) }
@@ -260,14 +264,14 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         SpotifyPlaylistEditor(
             id = remotePlaylistId,
             localId = playlistId.takeIf { isLocalPlaylist },
-            onSaved = { newName, newDescription, changedCover ->
+            cover = visualCover,
+            onSaved = { newName, newDescription ->
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     if (presentationId != null) {
                         PlaylistPresentationPref.update(context, presentationId) {
                             it.copy(
                                 alias = if (newName == null) it.alias else "",
                                 description = if (newDescription == null) it.description else null,
-                                coverUri = if (changedCover) "" else it.coverUri,
                             )
                         }
                     }
@@ -283,6 +287,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                 playlistViewModel.reloadPlaylist(playlistId)
             },
             onOpenSpotify = { showSpotifyEditor = false; openInSpotify() },
+            onRemoveFromLibrary = { showSpotifyEditor = false; showDeleteDialog = true },
             onDismiss = { showSpotifyEditor = false },
         )
     }
@@ -373,7 +378,6 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     val (filteredSongs, stableSongKeys) = displaySongs
 
     var menuSong by remember { mutableStateOf<com.music.spotui.data.entity.SongsModel?>(null) }
-    var showDeleteDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
 
     var editingTracks by remember(playlistId) { mutableStateOf(false) }
@@ -431,74 +435,35 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         val renameLocalList = isLocalPlaylist && remotePlaylistId == null
         val currentName = playlist.name.ifBlank { playlistName }
         var newPlaylistNameInput by remember(currentName) { mutableStateOf(currentName) }
-        AlertDialog(
-            onDismissRequest = { showRenameDialog = false },
-            containerColor = Color(0xFF282828),
-            title = { Text(if (renameLocalList) uiLocalized("Rename Playlist") else "Cambiar nombre en Spotui",
-                color = Color.White, fontWeight = FontWeight.Bold) },
-            text = {
-                Column {
-                TextField(
-                    value = newPlaylistNameInput,
-                    onValueChange = { newPlaylistNameInput = it },
-                    placeholder = { Text(uiLocalized("Playlist name"), color = Color.Gray) },
-                    singleLine = true,
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = Color(0xFF383838),
-                        unfocusedContainerColor = Color(0xFF383838),
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        cursorColor = Color(0xFF1ED760),
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent,
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                )
-                if (!renameLocalList && presentationId != null) {
-                    Text("Este nombre solo se usa en Spotui.", color = Color.LightGray, modifier = Modifier.padding(top = 10.dp))
-                    if (presentation.alias.isNotBlank()) androidx.compose.material3.TextButton(onClick = {
+        val newName = newPlaylistNameInput.trim()
+        PlaylistEditingSheet(
+            title = if (renameLocalList) "Cambiar nombre" else "Nombre en Spotidroid",
+            cover = visualCover,
+            saving = false,
+            saveEnabled = newName.isNotBlank() && newName != currentName,
+            onDismiss = { showRenameDialog = false },
+            onSave = {
+                if (renameLocalList) {
+                    LocalPlaylistPref.renamePlaylist(context, playlistId, newName)
+                    com.music.spotui.data.api.Api.HomeCache.library = null
+                    com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(playlistId)
+                    playlistViewModel.reloadPlaylist(playlistId)
+                } else if (presentationId != null) {
+                    PlaylistPresentationPref.update(context, presentationId) { it.copy(alias = newName) }
+                }
+                showRenameDialog = false
+            },
+            fields = {
+                PlaylistEditingField(newPlaylistNameInput, "Nombre", { newPlaylistNameInput = it }, true)
+            },
+            extras = {
+                if (!renameLocalList && presentationId != null && presentation.alias.isNotBlank()) {
+                    androidx.compose.material3.TextButton(onClick = {
                         PlaylistPresentationPref.update(context, presentationId) { it.copy(alias = "") }
                         showRenameDialog = false
                     }) { Text("Usar nombre de Spotify") }
                 }
-                }
             },
-            confirmButton = {
-                Text(
-                    uiLocalized("Save"),
-                    color = Color(0xFF1ED760),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    modifier = Modifier
-                        .clickable {
-                            val name = newPlaylistNameInput.trim()
-                            if (name.isNotBlank()) {
-                                if (renameLocalList) {
-                                    LocalPlaylistPref.renamePlaylist(context, playlistId, name)
-                                    com.music.spotui.data.api.Api.HomeCache.library = null
-                                    com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(playlistId)
-                                    playlistViewModel.reloadPlaylist(playlistId)
-                                } else if (presentationId != null) {
-                                    PlaylistPresentationPref.update(context, presentationId) { it.copy(alias = name) }
-                                }
-                            }
-                            showRenameDialog = false
-                        }
-                        .padding(8.dp)
-                )
-            },
-            dismissButton = {
-                Text(
-                    uiLocalized("Cancel"),
-                    color = Color.Gray,
-                    fontSize = 15.sp,
-                    modifier = Modifier
-                        .clickable { showRenameDialog = false }
-                        .padding(8.dp)
-                )
-            }
         )
     }
 
@@ -509,7 +474,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             onDismissRequest = { showDeleteDialog = false },
             containerColor = Color(0xFF282828),
             title = { Text(deleteLabel, color = Color.White, fontWeight = FontWeight.Bold) },
-            text = { Text(if (removeLocally) "La lista desaparecerá de tu Biblioteca de Spotui. Puedes recuperarla en Listas ocultas."
+            text = { Text(if (removeLocally) "La lista desaparecerá de tu Biblioteca de Spotidroid. Puedes recuperarla en Listas ocultas."
                 else uiLocalized("Are you sure you want to delete this playlist?"), color = Color.LightGray) },
             confirmButton = {
                 Text(
@@ -610,10 +575,11 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         val keyboardController = LocalSoftwareKeyboardController.current
         val focusManager = LocalFocusManager.current
 
+        val collectionGlass = com.music.spotui.ui.components.rememberCollectionGlassBackdrop()
         Scaffold(
             modifier = Modifier.fillMaxSize().scrollingCollectionBackground(
                 topColor = dominentColor, baseColor = Color(AppBackground.toArgb()),
-                listState = listState, headerKey = "playlist_header", coverUri = visualCover),
+                listState = listState, headerKey = "playlist_header", coverUri = visualCover, glass = collectionGlass),
             containerColor = Color.Transparent,
             topBar = {
                 CenterAlignedTopAppBar(
@@ -757,7 +723,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                     Icon(Icons.Default.PhoneAndroid, contentDescription = null,
                                         tint = Color(0xFF1ED760), modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(5.dp))
-                                    Text("Lista de Spotui", color = Color.White,
+                                    Text("Lista de Spotidroid", color = Color.White,
                                         fontWeight = FontWeight.Medium, fontSize = 13.sp)
                                 } else {
                                     // Only identities reported by Spotify are shown. Unknown
@@ -836,7 +802,7 @@ Spacer(Modifier.height(8.dp))
 val playing = playlistViewModel.currentSongPlayingState.value
 val currentInList = songs.any { it.id == playlistViewModel.currentSongId.value }
 com.music.spotui.ui.components.CollectionActionBar(
- coverUri = visualCover,
+ glass = collectionGlass,
  accent = dominentColor,
  sortMode = currentSort.name, sortDescending = isDescending,
  modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -1116,7 +1082,7 @@ com.music.spotui.ui.components.CollectionActionBar(
                         ) {
                             Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White)
                             Spacer(Modifier.width(20.dp))
-                            Text("Editar nombre, descripción y portada", color = Color.White, fontSize = 16.sp)
+                            Text("Nombre e información", color = Color.White, fontSize = 16.sp)
                         }
                     }
                     if (editTargetReady && !canOfferSyncedEditor && (isLocalPlaylist || presentationId != null)) {
@@ -1128,7 +1094,7 @@ com.music.spotui.ui.components.CollectionActionBar(
                         ) {
                             Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White)
                             Spacer(Modifier.width(20.dp))
-                            Text(if (isLocalPlaylist && remotePlaylistId == null) uiLocalized("Cambiar nombre") else "Cambiar nombre en Spotui",
+                            Text(if (isLocalPlaylist && remotePlaylistId == null) uiLocalized("Cambiar nombre") else "Cambiar nombre en Spotidroid",
                                 color = Color.White, fontSize = 16.sp)
                         }
                     }
@@ -1142,7 +1108,7 @@ com.music.spotui.ui.components.CollectionActionBar(
                             ) {
                                 Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White)
                                 Spacer(Modifier.width(20.dp))
-                                Text("Editar descripción y portada en Spotui", color = Color.White, fontSize = 16.sp)
+                                Text("Editar descripción y portada en Spotidroid", color = Color.White, fontSize = 16.sp)
                             }
                         } else if (canOfferSyncedEditor &&
                             (presentation.alias.isNotBlank() || presentation.description != null || presentation.coverUri.isNotBlank())) {

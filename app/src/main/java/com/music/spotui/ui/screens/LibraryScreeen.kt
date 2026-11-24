@@ -301,7 +301,7 @@ fun LibraryScreen(navController: NavController) {
         ModalBottomSheet(onDismissRequest = { showHiddenPlaylists = false }, containerColor = Color(0xFF202020)) {
             LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
                 item {
-                    Text("Listas ocultas en Spotui", color = Color.White, fontWeight = FontWeight.Bold,
+                    Text("Listas ocultas en Spotidroid", color = Color.White, fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(20.dp))
                 }
                 items(hiddenPlaylists.entries.toList(), key = { it.key }) { (id, presentation) ->
@@ -356,7 +356,7 @@ fun LibraryScreen(navController: NavController) {
                         .clickable {
                             val name = playlistNameInput.trim().ifBlank { "My Playlist" }
                             val created = LocalPlaylistPref.createPlaylist(context, name)
-                            android.widget.Toast.makeText(context, "Lista creada y guardada en Spotui", android.widget.Toast.LENGTH_SHORT).show()
+                            android.widget.Toast.makeText(context, "Lista creada y guardada en Spotidroid", android.widget.Toast.LENGTH_SHORT).show()
                             Api.HomeCache.library = null
                             libraryViewModel.load()
                             showCreateDialog = false

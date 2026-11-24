@@ -100,7 +100,7 @@ fun SongOptionsSheet(
     onLikedChanged:((Boolean)->Unit)?=null,
     extraActions:(@Composable ()->Unit)?=null,
 ) {
-    val language=com.music.spotui.data.preferences.SpotuiLanguage.current
+    val language=com.music.spotui.data.preferences.SpotidroidLanguage.current
     fun text(value:String)=localizedUiText(value,language)
     val revision by com.music.spotui.sync.OwnLibraryChanges.revision.collectAsState()
     val displaySong=remember(song,revision) {com.music.spotui.data.preferences.CustomMetadataPref.applyOverride(context,song)}

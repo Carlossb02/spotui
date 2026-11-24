@@ -21,7 +21,7 @@ import java.net.URLEncoder
 /** Spotify identity first, then LRCLIB; KuGou and Lyrics.ovh extend missing coverage. */
 object LyricsApi {
     private const val BASE = "https://lrclib.net/api"
-    private const val UA = "SpotuiSpotifyClone (https://github.com/)"
+    private const val UA = "SpotidroidSpotifyClone (https://github.com/)"
     private class Miss(val at: Long = System.currentTimeMillis())
     private const val MISS_RETRY_MS = 120_000L
     private val cache = java.util.concurrent.ConcurrentHashMap<String, Any>()

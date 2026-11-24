@@ -1,101 +1,136 @@
 package com.music.spotui.ui.components
 
-import android.graphics.BitmapShader
-import android.graphics.Matrix
-import android.graphics.Paint
-import android.graphics.Shader
+import android.graphics.RuntimeShader
 import android.os.Build
 import androidx.annotation.RequiresApi
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
-import androidx.compose.ui.graphics.*
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.layer.GraphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import kotlin.math.ceil
 
-internal val LocalGlassBackdrop = staticCompositionLocalOf<ImageBitmap?> { null }
-private class GlassCoordinates { var value: LayoutCoordinates? = null }
+/** The collection paints this background once. Each lens reuses its GPU display list. */
+internal class CollectionGlassBackdrop(val layer: GraphicsLayer) {
+    var origin by mutableStateOf<Offset?>(null)
+}
 
-/** A small shared, genuinely blurred cover is refracted by the lens shader.
- * No screen capture, full-size intermediate textures or continuously running animation. */
 @Composable
-internal fun Modifier.liquidCollectionGlass(accent: Color): Modifier {
-    val image = LocalGlassBackdrop.current
-    val density = LocalDensity.current
-    val config = LocalConfiguration.current
-    val viewportWidth = with(density) { config.screenWidthDp.dp.toPx() }.coerceAtLeast(1f)
-    val coords = remember { GlassCoordinates() }
-    return clip(RoundedCornerShape(50)).onGloballyPositioned { coords.value = it }.drawWithCache {
-        val bitmap = image?.asAndroidBitmap()
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        val lens = if (bitmap != null && Build.VERSION.SDK_INT >= 33) runCatching { makeLensShader(bitmap, size.width, size.height, accent) }.getOrNull() else null
-        val shader = bitmap?.let { BitmapShader(it, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP) }
-        if (lens == null) paint.shader = shader
-        onDrawBehind {
-            val x = coords.value?.takeIf { it.isAttached }?.positionInRoot()?.x ?: 0f
-            if (lens != null && Build.VERSION.SDK_INT >= 33) {
-                lens.setFloatUniform("originX", x / viewportWidth)
-                lens.setFloatUniform("viewportWidth", viewportWidth)
-                paint.shader = lens
-                drawIntoCanvas { it.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, size.height / 2, size.height / 2, paint) }
-            } else {
-                if (bitmap != null && shader != null) {
-                    val matrix = Matrix()
-                    val scale = viewportWidth / bitmap.width
-                    matrix.setScale(scale, scale)
-                    matrix.postTranslate(-x, -bitmap.height * scale * .65f)
-                    shader.setLocalMatrix(matrix)
-                    drawIntoCanvas { it.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, size.height / 2, size.height / 2, paint) }
+internal fun rememberCollectionGlassBackdrop(): CollectionGlassBackdrop {
+    val layer = rememberGraphicsLayer()
+    return remember(layer) { CollectionGlassBackdrop(layer) }
+}
+
+internal val LocalGlassBackdrop = staticCompositionLocalOf<CollectionGlassBackdrop?> { null }
+
+@Composable
+internal fun Modifier.liquidCollectionGlass(accent: Color, interaction: InteractionSource): Modifier {
+    val backdrop = LocalGlassBackdrop.current
+    val sampleLayer = rememberGraphicsLayer()
+    var origin by remember { mutableStateOf<Offset?>(null) }
+    val pressed by interaction.collectIsPressedAsState()
+    val pressure = animateFloatAsState(if (pressed) 1f else 0f, tween(if (pressed) 95 else 210), label = "Glass press")
+    return clip(RoundedCornerShape(50))
+        .onGloballyPositioned { origin = it.positionInRoot() }
+        .drawWithCache {
+            val padding = 8.dp.toPx()
+            val pixelSize = IntSize(ceil(size.width + 2 * padding).toInt(), ceil(size.height + 2 * padding).toInt())
+            val shader = if (Build.VERSION.SDK_INT >= 33) {
+                runCatching { lensShader(size, padding, 1.6.dp.toPx(), accent) }.getOrNull()
+            } else null
+            var lastPressure = Float.NaN
+            onDrawBehind {
+                val amount = pressure.value
+                val source = backdrop?.origin
+                val destination = origin
+                val hasBackdrop = backdrop != null && source != null && destination != null &&
+                    backdrop.layer.size != IntSize.Zero && drawContext.canvas.nativeCanvas.isHardwareAccelerated
+                if (hasBackdrop && backdrop != null && source != null && destination != null) {
+                    val relative = destination - source
+                    sampleLayer.record(size = pixelSize) {
+                        translate(padding - relative.x, padding - relative.y) { drawLayer(backdrop.layer) }
+                    }
+                    if (shader != null && Build.VERSION.SDK_INT >= 33 && lastPressure != amount) {
+                        shader.setFloatUniform("pressure", amount)
+                        sampleLayer.renderEffect = android.graphics.RenderEffect
+                            .createRuntimeShaderEffect(shader, "backdrop").asComposeRenderEffect()
+                        lastPressure = amount
+                    }
+                    translate(-padding, -padding) { drawLayer(sampleLayer) }
                 }
-                drawRect(accent.copy(alpha = if (bitmap == null) .30f else .20f))
-                drawRect(Color.Black.copy(alpha = .32f))
-                drawRect(Brush.verticalGradient(listOf(Color.White.copy(alpha = .18f), Color.Transparent, Color.White.copy(alpha = .04f))))
+                if (shader == null || !hasBackdrop) {
+                    drawRect(accent.copy(alpha = .24f + amount * .13f))
+                    drawRect(Brush.verticalGradient(listOf(Color.White.copy(alpha = .15f + amount * .09f),
+                        Color.Transparent, Color.Black.copy(alpha = .23f))))
+                }
+                val inset = .6.dp.toPx()
+                drawRoundRect(
+                    brush = Brush.linearGradient(listOf(Color.White.copy(alpha = .61f + amount * .16f),
+                        accent.copy(alpha = .26f), Color.White.copy(alpha = .30f))),
+                    topLeft = Offset(inset, inset),
+                    size = Size((size.width - 2 * inset).coerceAtLeast(0f), (size.height - 2 * inset).coerceAtLeast(0f)),
+                    cornerRadius = CornerRadius(size.height / 2),
+                    style = Stroke(2 * inset),
+                )
             }
-            // A narrow specular rim stays distinct over bright and dark artwork.
-            drawRoundRect(Brush.linearGradient(listOf(Color.White.copy(alpha = .65f), accent.copy(alpha = .18f), Color.White.copy(alpha = .32f))),
-                topLeft = androidx.compose.ui.geometry.Offset(.6.dp.toPx(), .6.dp.toPx()),
-                size = androidx.compose.ui.geometry.Size(size.width - 1.2.dp.toPx(), size.height - 1.2.dp.toPx()),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.height / 2),
-                style = androidx.compose.ui.graphics.drawscope.Stroke(1.2.dp.toPx()))
         }
-    }
 }
 
 @RequiresApi(33)
-private fun makeLensShader(bitmap: android.graphics.Bitmap, width: Float, height: Float, accent: Color): android.graphics.RuntimeShader =
-    android.graphics.RuntimeShader("""
+private fun lensShader(size: Size, padding: Float, blur: Float, accent: Color): RuntimeShader =
+    RuntimeShader("""
         uniform shader backdrop;
         uniform float2 bounds;
-        uniform float2 sourceSize;
+        uniform float pad;
+        uniform float blur;
         uniform float3 tint;
-        uniform float originX;
-        uniform float viewportWidth;
+        uniform float pressure;
+
         half4 main(float2 p) {
-            float r = bounds.y * 0.5;
-            float2 q = p - bounds * 0.5;
-            float2 v = float2(q.x - clamp(q.x, -bounds.x * 0.5 + r, bounds.x * 0.5 - r), q.y);
-            float d = length(v) / max(r, 1.0);
-            float edge = smoothstep(0.42, 1.0, d);
+            float r = max(bounds.y * 0.5, 1.0);
+            float2 center = float2(pad) + bounds * 0.5;
+            float2 q = p - center;
+            float core = max(0.0, bounds.x * 0.5 - r);
+            float2 v = float2(q.x - clamp(q.x, -core, core), q.y);
+            float edge = smoothstep(0.35, 1.0, length(v) / r);
             float2 normal = v / max(length(v), 0.01);
-            float2 uv = float2(originX + p.x / viewportWidth, 0.65 + p.y / viewportWidth);
-            uv += normal * edge * edge * 0.045;
-            half3 scene = backdrop.eval(clamp(uv, 0.0, 1.0) * sourceSize).rgb;
-            float topLight = max(0.0, -normal.y) * edge;
-            float rim = pow(edge, 5.0);
-            half3 color = mix(scene * 0.48, half3(tint), 0.20);
-            color += half3(0.065 + topLight * 0.11 + rim * 0.09);
+            float2 samplePoint = p - normal * edge * edge * pad * (0.58 + 0.34 * pressure);
+
+            half3 scene = backdrop.eval(samplePoint).rgb * 0.40;
+            scene += backdrop.eval(samplePoint + float2(blur, 0.0)).rgb * 0.15;
+            scene += backdrop.eval(samplePoint - float2(blur, 0.0)).rgb * 0.15;
+            scene += backdrop.eval(samplePoint + float2(0.0, blur)).rgb * 0.15;
+            scene += backdrop.eval(samplePoint - float2(0.0, blur)).rgb * 0.15;
+            float2 light = normalize(float2(-0.64 + 0.95 * pressure, -1.0));
+            float gloss = pow(max(0.0, dot(light, normal)), 4.0) * edge;
+            half3 color = mix(scene * 0.86, half3(tint), 0.22 + 0.08 * pressure);
+            color += half3(0.07 + gloss * (0.18 + 0.10 * pressure));
             return half4(color, 1.0);
         }
     """).apply {
-        setInputShader("backdrop", BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP))
-        setFloatUniform("bounds", width, height)
-        setFloatUniform("sourceSize", bitmap.width.toFloat(), bitmap.height.toFloat())
+        setFloatUniform("bounds", size.width, size.height)
+        setFloatUniform("pad", padding)
+        setFloatUniform("blur", blur)
         setFloatUniform("tint", accent.red, accent.green, accent.blue)
+        setFloatUniform("pressure", 0f)
     }

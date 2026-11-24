@@ -112,7 +112,7 @@ class PlaybackService : MediaLibraryService() {
 
     /**
      * An ExoPlayer's MediaItem may arrive several seconds after the user presses Play,
-     * because Spotui resolves remote streams lazily. Media3's automatic notification
+     * because Spotidroid resolves remote streams lazily. Media3's automatic notification
      * refuses an empty timeline, so it cannot protect the service during that window.
      * The service owns ONE real MediaStyle notification for the Media3 session instead.
      * This is a real foreground MEDIA_PLAYBACK service, not a second player or a dummy
@@ -129,7 +129,7 @@ class PlaybackService : MediaLibraryService() {
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(
                 NotificationChannel(
                     PLAYBACK_NOTIFICATION_CHANNEL,
-                    "Reproducción de Spotui",
+                    "Reproducción de Spotidroid",
                     NotificationManager.IMPORTANCE_LOW
                 ).apply {
                     description = "Controles de música y podcasts en reproducción"
@@ -149,7 +149,7 @@ class PlaybackService : MediaLibraryService() {
 
     private fun buildPlaybackNotification(session: MediaSession, foreground: Boolean): android.app.Notification {
         val isActive = SongPlayer.isResolvingOrPlaying() || SpotifyWebPlayer.isPlaying
-        val title = currentSongState.title.value.ifBlank { "Spotui" }
+        val title = currentSongState.title.value.ifBlank { "Spotidroid" }
         val artist = currentSongState.singer.value.ifBlank { "Música y podcasts" }
         val openApp = PendingIntent.getActivity(
             this, 0,
@@ -195,7 +195,7 @@ class PlaybackService : MediaLibraryService() {
             kotlinx.coroutines.delay(70L)
             mediaSession?.let { session ->
                 runCatching { updateOwnedPlaybackNotification(session) }
-                    .onFailure { android.util.Log.e("SpotuiLifecycle", "media_notification_error", it) }
+                    .onFailure { android.util.Log.e("SpotidroidLifecycle", "media_notification_error", it) }
             }
         }
     }
@@ -223,13 +223,13 @@ class PlaybackService : MediaLibraryService() {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
                 )
                 if (!ownsPlaybackForeground) {
-                    android.util.Log.i("SpotuiLifecycle", "media_fgs_active=true")
+                    android.util.Log.i("SpotidroidLifecycle", "media_fgs_active=true")
                 }
                 ownsPlaybackForeground = true
             } catch (error: Exception) {
                 // Background starts may be restricted by the OS. Preserve playback
                 // and report the real exception rather than crashing our process.
-                android.util.Log.e("SpotuiLifecycle", "media_fgs_promotion_failed", error)
+                android.util.Log.e("SpotidroidLifecycle", "media_fgs_promotion_failed", error)
                 runCatching { manager.notify(PLAYBACK_NOTIFICATION_ID, notification) }
             }
         } else {
@@ -247,7 +247,7 @@ class PlaybackService : MediaLibraryService() {
         // MediaSessionService. Calling super here would allow Media3 to demote it
         // while a YouTube URL is still resolving or a crossfade swaps players.
         runCatching { updateOwnedPlaybackNotification(session) }
-            .onFailure { android.util.Log.e("SpotuiLifecycle", "onUpdateNotification failed", it) }
+            .onFailure { android.util.Log.e("SpotidroidLifecycle", "onUpdateNotification failed", it) }
     }
 
     // Keep each media ID attached to the queue it came from.
@@ -334,18 +334,18 @@ class PlaybackService : MediaLibraryService() {
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             scheduleMediaNotificationRefresh()
-            android.util.Log.w("SpotuiTransition", "session underlying playWhenReady=$playWhenReady reason=$reason " +
+            android.util.Log.w("SpotidroidTransition", "session underlying playWhenReady=$playWhenReady reason=$reason " +
                 "state=${SongPlayer.exoPlayer?.playbackState}, crossfade=${SongPlayer.isCrossfadeActive()}")
         }
 
         override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
-            android.util.Log.w("SpotuiTransition", "session underlying suppression=$playbackSuppressionReason " +
+            android.util.Log.w("SpotidroidTransition", "session underlying suppression=$playbackSuppressionReason " +
                 "state=${SongPlayer.exoPlayer?.playbackState}, crossfade=${SongPlayer.isCrossfadeActive()}")
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             scheduleMediaNotificationRefresh()
-            android.util.Log.i("SpotuiTransition", "session underlying isPlaying=$isPlaying " +
+            android.util.Log.i("SpotidroidTransition", "session underlying isPlaying=$isPlaying " +
                 "state=${SongPlayer.exoPlayer?.playbackState}, crossfade=${SongPlayer.isCrossfadeActive()}")
             // Mirror ExoPlayer's real play/pause state into the in-app UI so the
             // on-screen play button stays in sync when the notification controls are used.
@@ -472,7 +472,7 @@ class PlaybackService : MediaLibraryService() {
         val notificationsEnabled =
             (getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager)
                 .areNotificationsEnabled()
-        android.util.Log.i("SpotuiLifecycle", "system_notifications_enabled=$notificationsEnabled")
+        android.util.Log.i("SpotidroidLifecycle", "system_notifications_enabled=$notificationsEnabled")
 
         // Let the player advance the in-app queue itself during a crossfade.
         SongPlayer.bindState(currentSongState)
@@ -525,7 +525,7 @@ class PlaybackService : MediaLibraryService() {
             scheduleMediaNotificationRefresh()
         }
         SongPlayer.onPlayerSwapped = { oldPlayer, newPlayer ->
-            android.util.Log.i("SpotuiTransition", "media session swap: " +
+            android.util.Log.i("SpotidroidTransition", "media session swap: " +
                 "old=${oldPlayer?.playbackState} new=${newPlayer.playbackState} " +
                 "newPlaying=${newPlayer.isPlaying} newWhenReady=${newPlayer.playWhenReady} " +
                 "newSuppression=${newPlayer.playbackSuppressionReason}")
@@ -837,7 +837,7 @@ class PlaybackService : MediaLibraryService() {
             }
             currentSongState.updateRepeatState(mode)
             // Always ensure the underlying ExoPlayer repeatMode stays REPEAT_MODE_OFF.
-            // Spotui manages single-track / all-track looping at the queue & PlaybackService level.
+            // Spotidroid manages single-track / all-track looping at the queue & PlaybackService level.
             // If ExoPlayer itself is set to REPEAT_MODE_ONE or REPEAT_MODE_ALL on a single-item
             // timeline, ExoPlayer silently loops the single item internally and NEVER emits STATE_ENDED.
             base.repeatMode = Player.REPEAT_MODE_OFF
@@ -1100,7 +1100,7 @@ class PlaybackService : MediaLibraryService() {
             params: LibraryParams?,
         ): ListenableFuture<LibraryResult<MediaItem>> {
             val logoUri = "android.resource://${packageName}/${R.drawable.logo}"
-            return Futures.immediateFuture(LibraryResult.ofItem(folder(ROOT, "spotui", logoUri), params))
+            return Futures.immediateFuture(LibraryResult.ofItem(folder(ROOT, getString(R.string.app_name), logoUri), params))
         }
 
         override fun onGetChildren(
@@ -1598,7 +1598,7 @@ class PlaybackService : MediaLibraryService() {
             } catch (e: kotlinx.coroutines.CancellationException) {
                 f.cancel(false)
             } catch (e: Exception) {
-                android.util.Log.e("SpotuiAuto", "Library browse failed", e)
+                android.util.Log.e("SpotidroidAuto", "Library browse failed", e)
                 f.setException(e)
             }
         }
@@ -1654,13 +1654,13 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
-     * HyperOS can invoke onTaskRemoved during Recents reparenting while Spotui's
+     * HyperOS can invoke onTaskRemoved during Recents reparenting while Spotidroid's
      * Activity still exists. An immediate SongPlayer.stop() here previously killed
      * audio just by opening Google. Only act once Android's OWN task list confirms
-     * that the Spotui task has actually disappeared, twice, after a grace period.
+     * that the Spotidroid task has actually disappeared, twice, after a grace period.
      * If the query is unavailable/ambiguous, favor uninterrupted playback.
      */
-    private fun hasSpotuiTaskInRecents(): Boolean? = runCatching {
+    private fun hasSpotidroidTaskInRecents(): Boolean? = runCatching {
         val manager = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
         manager.appTasks.any { task ->
             val info = task.taskInfo
@@ -1669,7 +1669,7 @@ class PlaybackService : MediaLibraryService() {
                 info?.baseIntent?.component?.packageName == packageName
         }
     }.onFailure {
-        android.util.Log.w("SpotuiLifecycle", "Unable to inspect app tasks", it)
+        android.util.Log.w("SpotidroidLifecycle", "Unable to inspect app tasks", it)
     }.getOrNull()
 
     private fun saveLivePlaybackCheckpoint() {
@@ -1710,7 +1710,7 @@ class PlaybackService : MediaLibraryService() {
         PlaybackLifecycleDiagnostics.record(this, "service_destroy " +
             "fgs=${isPlaybackOngoing()} playing=${SongPlayer.isPlaying()} " +
             "preparing=${SongPlayer.isPreparingTrack()} crossfade=${SongPlayer.isCrossfadeActive()}")
-        android.util.Log.w("SpotuiTransition", "PlaybackService onDestroy, " +
+        android.util.Log.w("SpotidroidTransition", "PlaybackService onDestroy, " +
             "state=${SongPlayer.exoPlayer?.playbackState} " +
             "isPlaying=${SongPlayer.isPlaying()} crossfade=${SongPlayer.isCrossfadeActive()}")
         artworkRefreshJob?.cancel()

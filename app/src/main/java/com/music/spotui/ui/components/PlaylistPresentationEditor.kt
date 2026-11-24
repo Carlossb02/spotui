@@ -3,15 +3,12 @@ package com.music.spotui.ui.components
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import com.music.spotui.data.preferences.PlaylistPresentationPref
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +20,7 @@ internal fun PlaylistPresentationEditor(
     playlistId: String,
     saved: PlaylistPresentationPref.Presentation,
     defaultDescription: String,
+    cover: String,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -40,60 +38,44 @@ internal fun PlaylistPresentationEditor(
         }
     }
 
-    AlertDialog(
-        onDismissRequest = { if (!saving) onDismiss() },
-        title = { Text("Editar descripción y portada") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Los cambios se guardan en este dispositivo.")
-                OutlinedTextField(
-                    value = description ?: defaultDescription,
-                    onValueChange = { if (it.length <= 3_000) description = it },
-                    label = { Text("Descripción") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 2,
-                    maxLines = 4,
-                    enabled = !saving,
-                )
-                if (description != null) {
-                    TextButton(onClick = { description = null }, enabled = !saving) {
-                        Text("Usar descripción original")
+    PlaylistEditingSheet(
+        title = "Descripción y portada local",
+        cover = pickedCover?.toString() ?: cover,
+        saving = saving,
+        saveEnabled = description != saved.description || pickedCover != null || resetCover,
+        onDismiss = onDismiss,
+        onEditCover = { picker.launch(arrayOf("image/*")) },
+        onSave = {
+            saving = true
+            scope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        PlaylistPresentationPref.saveDetails(context, playlistId, description, pickedCover, resetCover)
                     }
+                    onDismiss()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    error = failure.message ?: "No se pudieron guardar los cambios."
+                } finally {
+                    saving = false
                 }
-                TextButton(enabled = !saving, onClick = { picker.launch(arrayOf("image/*")) }) {
-                    Text(if (pickedCover != null) "Cambiar imagen seleccionada" else "Elegir portada")
-                }
-                if (!resetCover && (saved.coverUri.isNotBlank() || pickedCover != null)) {
-                    TextButton(onClick = { pickedCover = null; resetCover = true }, enabled = !saving) {
-                        Text("Usar portada original")
-                    }
-                }
-                if (saving) LinearProgressIndicator(Modifier.fillMaxWidth())
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         },
-        confirmButton = {
-            TextButton(
-                enabled = !saving && (description != saved.description || pickedCover != null || resetCover),
-                onClick = {
-                    saving = true
-                    scope.launch {
-                        try {
-                            withContext(Dispatchers.IO) {
-                                PlaylistPresentationPref.saveDetails(context, playlistId, description, pickedCover, resetCover)
-                            }
-                            onDismiss()
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (failure: Exception) {
-                            error = failure.message ?: "No se pudieron guardar los cambios."
-                        } finally {
-                            saving = false
-                        }
-                    }
-                },
-            ) { Text("Guardar") }
+        fields = {
+            PlaylistEditingField(description ?: defaultDescription, "Descripción",
+                { if (it.length <= 3_000) description = it }, !saving, multiline = true)
         },
-        dismissButton = { TextButton(enabled = !saving, onClick = onDismiss) { Text("Cancelar") } },
+        extras = {
+            if (description != null) TextButton(onClick = { description = null }, enabled = !saving) {
+                Text("Usar descripción original")
+            }
+            if (!resetCover && (saved.coverUri.isNotBlank() || pickedCover != null)) {
+                TextButton(onClick = { pickedCover = null; resetCover = true }, enabled = !saving) {
+                    Text("Usar portada original")
+                }
+            }
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        },
     )
 }

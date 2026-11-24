@@ -35,7 +35,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Spotify-style destination picker for copying a read-only playlist.
- * Create new → a full local copy that remains in Spotui only.
+ * Create new → a full local copy that remains in Spotidroid only.
  * Existing destination → append only if ownership/collaboration verified.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalGlideComposeApi::class)
@@ -114,7 +114,7 @@ fun PlaylistCopySheet(
                         scope.launch(Dispatchers.IO) {
                             LocalPlaylistPref.createPlaylistWithSongs(context, newName.trim(), songs)
                             Api.HomeCache.library = null
-                            withContext(Dispatchers.Main) { done("Lista creada y guardada en Spotui") }
+                            withContext(Dispatchers.Main) { done("Lista creada y guardada en Spotidroid") }
                         }
                     }, enabled = !working && newName.isNotBlank()) { Text("Crear lista") }
                 }

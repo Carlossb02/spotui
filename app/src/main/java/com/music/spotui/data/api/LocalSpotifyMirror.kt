@@ -17,6 +17,9 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 
+// Older linked copies still carry the original marker in their Spotify description.
+internal fun playlistLinkMarkers(localId: String) = listOf("Spotidroid-ID: $localId", "Spotui-ID: $localId")
+
 /** Account-bound, recoverable synchronization. Local-only audio is never uploaded or matched by name. */
 object LocalSpotifyMirror {
     private const val PREF="local_spotify_mirrors_v2"
@@ -169,14 +172,17 @@ object LocalSpotifyMirror {
         }
         val legacy=c.getSharedPreferences("local_spotify_mirrors_v1",0).getString(local.id,null)
         if(!legacy.isNullOrBlank()) {read(c,owner,session,legacy);st.put("remote",legacy);save(c,owner,local.id,st);return legacy}
-        val marker="Spotui-ID: "+local.id
-        val temporary="Spotui · "+local.id.removePrefix("local_pl_")
+        val markers = playlistLinkMarkers(local.id)
+        val suffix = local.id.removePrefix("local_pl_")
+        val temporary = "Spotidroid · $suffix"
+        val legacyTemporary = "Spotui · $suffix"
         val found=mutableListOf<SpotifyPlaylist>()
         for(row in SpotifySync.allLibraryPlaylists(c)) {
             guard(c,session)
             if(row.owner?.id!=null && row.owner?.id!=owner)continue
             val detail=detailsCache[row.id] ?: Spotify.playlist(row.id).getOrThrow().also {detailsCache[row.id]=it}
-            if(detail.owner?.id==owner && (detail.name==temporary || detail.description?.contains(marker)==true))found+=detail
+            if (detail.owner?.id == owner && (detail.name == temporary || detail.name == legacyTemporary ||
+                    markers.any { detail.description?.contains(it) == true })) found += detail
         }
         check(found.size<=1) {"Hay varias copias vinculadas en Spotify; se conservan sin modificarlas"}
         val remote=found.singleOrNull() ?: run {
@@ -204,10 +210,12 @@ object LocalSpotifyMirror {
         guard(context, session)
         val playlist = Spotify.playlist(remoteId).getOrThrow()
         check(playlist.owner?.id == owner) { "La lista no pertenece a esta cuenta de Spotify" }
-        val marker = "Spotui-ID: " + localId
-        if (playlist.description?.contains(marker) != true) {
+        val markers = playlistLinkMarkers(localId)
+        if (markers.none { playlist.description?.contains(it) == true }) {
             guard(context, session)
-            Spotify.editPlaylistAttributes(remoteId, newDescription = marker).getOrThrow()
+            val description = listOf(playlist.description.orEmpty(), markers.first())
+                .filter(String::isNotBlank).joinToString("\n")
+            Spotify.editPlaylistAttributes(remoteId, newDescription = description).getOrThrow()
         }
         updateLibraryMembership(context, owner, session, remoteId, saved = true)
         state.put("initializing", false)

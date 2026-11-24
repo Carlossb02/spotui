@@ -91,7 +91,7 @@ fun UpdatePrompt() {
                     RenderMarkdown(info.releaseBody)
                 } else {
                     Text(
-                        uiLocalized("A new version of Spotui is available."),
+                        uiLocalized("A new version of Spotidroid is available."),
                         color = Color(0xFFB3B3B3),
                     )
                 }

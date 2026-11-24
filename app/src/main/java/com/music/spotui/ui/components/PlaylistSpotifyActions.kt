@@ -39,7 +39,7 @@ internal fun openSpotifyPlaylist(context: Context, url: Uri): Boolean {
         context.startActivity(official)
         return true
     } catch (_: ActivityNotFoundException) {
-        // Restrict the fallback to browsers because Spotui also handles Spotify links.
+        // Restrict the fallback to browsers because Spotidroid also handles Spotify links.
     }
     val browser = Intent(Intent.ACTION_VIEW, url).apply {
         selector = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_BROWSER)
@@ -53,7 +53,7 @@ internal fun openSpotifyPlaylist(context: Context, url: Uri): Boolean {
     }
 }
 
-/** Opens Spotify's own site in a browser-owned tab over Spotui. */
+/** Opens Spotify's own site in a browser-owned tab over Spotidroid. */
 internal fun openSpotifyPlaylistTab(context: Context, url: Uri): Boolean {
     val browserPackage = CustomTabsClient.getPackageName(context, null)
         ?: return openSpotifyPlaylist(context, url)

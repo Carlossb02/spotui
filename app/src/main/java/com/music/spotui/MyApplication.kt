@@ -47,7 +47,7 @@ class MyApplication : Application(){
                 } catch (cancelled:CancellationException) {
                     throw cancelled
                 } catch (failure:Exception) {
-                    android.util.Log.w("SpotuiStartup","Could not warm $name",failure)
+                    android.util.Log.w("SpotidroidStartup","Could not warm $name",failure)
                 }
             }
             com.music.spotui.sync.OwnLibraryChanges.changed()

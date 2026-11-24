@@ -209,7 +209,7 @@ object BackupHelper {
     }
 
     /**
-     * Validates if [jsonString] is a genuine Spotui backup file.
+     * Validates if [jsonString] is a genuine Spotidroid backup file.
      * Returns the root [JSONObject] if valid, or null if invalid.
      */
     fun validateBackupJson(jsonString: String): JSONObject? {
@@ -297,7 +297,7 @@ object BackupHelper {
         }
 
         val root = validateBackupJson(jsonString)
-            ?: return@withContext Pair(false, "Invalid backup file: Not a valid Spotui backup")
+            ?: return@withContext Pair(false, "Invalid backup file: Not a valid Spotidroid backup")
 
         restorationInProgress = true
         val result = try {

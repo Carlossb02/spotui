@@ -68,7 +68,7 @@ fun TabletSidebarNavigation(
                 modifier = Modifier.size(34.dp)
             )
             Spacer(Modifier.width(12.dp))
-            Text(uiLocalized("Spotui"), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+            Text(uiLocalized("Spotidroid"), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
         }
 
         listOf(

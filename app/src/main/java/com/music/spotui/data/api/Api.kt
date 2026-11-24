@@ -934,7 +934,7 @@ class Api @Inject constructor(
             com.music.spotui.data.entity.LibraryEntry(
                 spotifyId = playlist.id,
                 name = playlist.name,
-                subtitle = if (linkedId.isNotBlank()) remotePlaylist?.subtitle ?: "Playlist" else "Lista de Spotui",
+                subtitle = if (linkedId.isNotBlank()) remotePlaylist?.subtitle ?: "Playlist" else "Lista de Spotidroid",
                 coverUri = playlist.coverUri.ifBlank { remotePlaylist?.coverUri.orEmpty() },
                 isPlaylist = true,
                 isLocal = true,
@@ -1017,7 +1017,7 @@ class Api @Inject constructor(
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
-            Log.w("SpotuiLibrary", "Background library refresh failed; retaining cached library", failure)
+            Log.w("SpotidroidLibrary", "Background library refresh failed; retaining cached library", failure)
         }
     }
 

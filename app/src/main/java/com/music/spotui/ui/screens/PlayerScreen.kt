@@ -2108,7 +2108,7 @@ fun PlayerOptionsSheet(
     onDismiss: () -> Unit,
     onOpenQueue: () -> Unit = {}
 ) {
-    fun menuText(text:String)=com.music.spotui.util.localizedUiText(text,com.music.spotui.data.preferences.SpotuiLanguage.current)
+    fun menuText(text:String)=com.music.spotui.util.localizedUiText(text,com.music.spotui.data.preferences.SpotidroidLanguage.current)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showSleep by remember { mutableStateOf(false) }
     var showSavedIn by remember { mutableStateOf(false) }
@@ -2526,6 +2526,7 @@ fun YouTubeSearchView(
     enabled: Boolean,
     onBack: () -> Unit,
     onUseVideoId: (String) -> Unit,
+    queryLabel: String = uiLocalized("Search query"),
 ) {
     LaunchedEffect(songTitle, songArtist) {
         viewModel.initQuery(songTitle, songArtist)
@@ -2566,7 +2567,7 @@ fun YouTubeSearchView(
             enabled = enabled,
             singleLine = true,
             textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp),
-            label = { Text(uiLocalized("Search query"), color = Color(0xFFB3B3B3)) },
+            label = { Text(queryLabel, color = Color(0xFFB3B3B3)) },
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(12.dp))

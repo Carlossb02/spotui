@@ -158,10 +158,10 @@ private val uiLanguagePairs: List<Pair<String, String>> = listOf(
     "Devices and system" to "Dispositivos y sistema",
     "Audio output" to "Salida de audio",
     "Unrestricted battery use is enabled." to "El uso de batería sin restricciones está activado.",
-    "Manage Android battery restrictions for Spotui." to "Gestiona las restricciones de batería de Android para Spotui.",
+    "Manage Android battery restrictions for Spotidroid." to "Gestiona las restricciones de batería de Android para Spotidroid.",
     "Open Spotify links" to "Abrir enlaces de Spotify",
-    "Spotify links open in Spotui." to "Los enlaces de Spotify se abren en Spotui.",
-    "Choose Spotui as the default app for Spotify links." to "Elige Spotui como app predeterminada para los enlaces de Spotify.",
+    "Spotify links open in Spotidroid." to "Los enlaces de Spotify se abren en Spotidroid.",
+    "Choose Spotidroid as the default app for Spotify links." to "Elige Spotidroid como app predeterminada para los enlaces de Spotify.",
     "Library and storage" to "Biblioteca y almacenamiento",
     "Review your recently played music and listening stats." to "Consulta tus reproducciones recientes y estadísticas de escucha.",
     "Browse music imported from this device." to "Explora la música importada desde este dispositivo.",
@@ -306,6 +306,7 @@ private val uiLanguagePairs: List<Pair<String, String>> = listOf(
     "Use local audio file" to "Usar archivo de audio local",
     "Clear alternative stream" to "Borrar fuente alternativa",
     "Search query" to "Buscar término",
+    "Song or artist" to "Canción o artista",
     "Preview" to "Vista previa",
     "Use this" to "Utilizar este",
     "Log in to Deezer" to "Iniciar sesión en Deezer",
@@ -459,7 +460,7 @@ private val uiLanguagePairs: List<Pair<String, String>> = listOf(
     "More" to "Más",
     "No matches found for" to "No se encontraron coincidencias para",
     "Downloads" to "Descargas",
-    "A new version of Spotui is available." to "Hay una nueva versión de Spotui disponible.",
+    "A new version of Spotidroid is available." to "Hay una nueva versión de Spotidroid disponible.",
     "Alternative stream" to "Fuente alternativa",
     "Are you sure you want to remove all downloaded songs? This action cannot be undone." to "¿Seguro que quieres eliminar todas las canciones descargadas? Esta acción no se puede deshacer.",
     "Artists" to "Artistas",
@@ -489,7 +490,7 @@ private val uiLanguagePairs: List<Pair<String, String>> = listOf(
     "You don't follow any podcasts yet" to "No sigues ningún podcast aún",
     "Nothing here yet — play something!" to "Todavía no hay nada. ¡Reproduce algo!",
     "On this device" to "En este dispositivo",
-    "Open Links in Spotui" to "Abrir enlaces en Spotui",
+    "Open Links in Spotidroid" to "Abrir enlaces en Spotidroid",
     "Popular" to "Popular",
     "Current preset" to "Preset actual",
     "Tap a block to jump" to "Pulsa un bloque para saltar",
@@ -499,7 +500,7 @@ private val uiLanguagePairs: List<Pair<String, String>> = listOf(
     "SELECT A DEVICE" to "SELECCIONA UN DISPOSITIVO",
     "Search in library" to "Buscar en tu biblioteca",
     "Select Language" to "Seleccionar idioma",
-    "Set Spotui as default to play Spotify links directly." to "Establece Spotui como predeterminada para abrir enlaces de Spotify.",
+    "Set Spotidroid as default to play Spotify links directly." to "Establece Spotidroid como predeterminada para abrir enlaces de Spotify.",
     "Singer name" to "Nombre del artista",
     "Song Name" to "Nombre de la canción",
     "SpotiFLAC verification (experimental)" to "Verificación de SpotiFLAC (experimental)",
@@ -513,7 +514,7 @@ private val uiLanguagePairs: List<Pair<String, String>> = listOf(
     "You can connect Deezer any time from Settings." to "Puedes conectar Deezer en cualquier momento desde Ajustes.",
     "artists" to "artistas",
     "Paste your Spotify 'sp_dc' cookie value from your web browser (inspect cookies on open.spotify.com), or open Spotify in your browser." to "Pega el valor de la cookie sp_dc de Spotify desde tu navegador (consulta las cookies en open.spotify.com) o abre Spotify en el navegador.",
-    "Spotui streams your music from Deezer. Skip this and playback falls back to YouTube instead — slower to load, and some tracks come back censored or as a different edit." to "Spotui reproduce tu música desde Deezer. Si omites este paso utilizará YouTube, que puede tardar más o devolver versiones diferentes de las canciones.",
+    "Spotidroid streams your music from Deezer. Skip this and playback falls back to YouTube instead — slower to load, and some tracks come back censored or as a different edit." to "Spotidroid reproduce tu música desde Deezer. Si omites este paso utilizará YouTube, que puede tardar más o devolver versiones diferentes de las canciones.",
     "Device volume" to "Volumen del dispositivo",
     "Retry Drive connection" to "Reintentar conexión con Drive",
     "Check access" to "Comprobar acceso",
@@ -526,7 +527,7 @@ private val uiSpanishToEnglish = uiLanguagePairs.associate { (en, es) -> es to e
 
 @Composable
 fun uiLocalized(text: String): String {
-    val language = com.music.spotui.data.preferences.SpotuiLanguage.current
+    val language = com.music.spotui.data.preferences.SpotidroidLanguage.current
     return localizedUiText(text,language)
 }
 

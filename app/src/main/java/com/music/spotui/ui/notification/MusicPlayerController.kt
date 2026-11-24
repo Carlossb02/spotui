@@ -67,7 +67,7 @@ fun MusicPlayerController(
             verticalArrangement = Arrangement.SpaceEvenly
         ) {
             Text(
-                text = uiLocalized("spotui"),
+                text = androidx.compose.ui.res.stringResource(com.music.spotui.R.string.app_name),
                 fontSize = 10.sp
 
             )
