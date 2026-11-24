@@ -137,8 +137,9 @@ object SavedTrackLibrary {
         localJob = scope.launch {
             delay(80L)
             val locals = localLists(app)
+            val mirroredIds = LocalPlaylistPref.getLocalPlaylists(app).map { it.spotifyPlaylistId }.toSet()
             synchronized(this@SavedTrackLibrary) {
-                _snapshot.update { old -> old.copy(playlists = locals + old.playlists.filterNot { it.local }.map { remote ->
+                _snapshot.update { old -> old.copy(playlists = locals + old.playlists.filterNot { it.local || it.id in mirroredIds }.map { remote ->
                     remote.copy(extraSongs = PlaylistAdditionsPref.tracks(app, remote.id),hiddenKeys=PlaylistAdditionsPref.removedKeys(app,remote.id))
                 }) }
                 persist()
@@ -207,6 +208,7 @@ object SavedTrackLibrary {
 
     private suspend fun load(app: Context, token: Long) {
         val locals = localLists(app)
+        val mirroredIds = LocalPlaylistPref.getLocalPlaylists(app).map { it.spotifyPlaylistId }.filter(String::isNotBlank).toSet()
         val disk = synchronized(this) { if (!hydrated) account else null }?.let { SavedPlaylistCache.read(app, it) }?.let { cached ->
             cached.copy(playlists=cached.playlists.map {list->list.copy(extraSongs=PlaylistAdditionsPref.tracks(app,list.id),hiddenKeys=PlaylistAdditionsPref.removedKeys(app,list.id))})
         }
@@ -245,17 +247,17 @@ object SavedTrackLibrary {
                     hiddenKeys = PlaylistAdditionsPref.removedKeys(app,id),
                     checked = previous[id]?.checked == true)
             }
-            val known = listings.filter(::verified).map(::entry).distinctBy { it.id }
+            val known = listings.filter { it.id !in mirroredIds }.filter(::verified).map(::entry).distinctBy { it.id }
             val listingIds = listings.map { SpotifySync.cleanPlaylistId(it.id) }.toSet()
             publish(token) { old -> old.copy(playlists = localLists(app) +
                 (known.map { entry -> old.playlists.firstOrNull { it.id == entry.id && !it.local }?.copy(
                     name = entry.name, coverUri = entry.coverUri, extraSongs = entry.extraSongs, hiddenKeys=entry.hiddenKeys) ?: entry } +
-                    old.playlists.filter { !it.local && (it.id in listingIds || edits[it.id]?.values?.any { edit -> System.currentTimeMillis() - edit.createdAt in 0..120_000L } == true) }).distinctBy { it.id }
+                    old.playlists.filter { !it.local && it.id !in mirroredIds && (it.id in listingIds || edits[it.id]?.values?.any { edit -> System.currentTimeMillis() - edit.createdAt in 0..120_000L } == true) }).distinctBy { it.id }
                     .sortedBy { order[it.id] ?: Int.MAX_VALUE }) }
             // Owned lists appear immediately; a slow third-party permission check must not
             // delay all membership indicators. Network work remains bounded to two requests.
             supervisorScope {
-                listings.sortedBy { !verified(it) }.map { list -> launch {
+                listings.filter { it.id !in mirroredIds }.sortedBy { !verified(it) }.map { list -> launch {
                     permits.withPermit {
                         val id = SpotifySync.cleanPlaylistId(list.id)
                         var canEdit = verified(list)

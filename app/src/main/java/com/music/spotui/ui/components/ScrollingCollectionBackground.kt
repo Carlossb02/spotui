@@ -53,20 +53,7 @@ fun Modifier.scrollingCollectionBackground(
     headerKey: String,
     coverUri: String = "",
 ): Modifier {
-    val context = LocalContext.current
-    val image by produceState(collectionBackdrops.get(coverUri), coverUri) {
-        value = collectionBackdrops.get(coverUri)
-        if (coverUri.isNotBlank() && value == null) {
-            com.music.spotui.di.SongPlayer.awaitAudioStartup()
-            value = withContext(Dispatchers.IO) {
-                val request = com.bumptech.glide.Glide.with(context).asBitmap().load(coverUri).submit(64, 64)
-                try { blurCollectionBitmap(request.get()).also { collectionBackdrops.put(coverUri, it) } }
-                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                catch (_: Exception) { null }
-                finally { com.bumptech.glide.Glide.with(context).clear(request) }
-            }
-        }
-    }
+    val image by rememberCollectionBackdrop(coverUri)
     return drawWithCache {
     onDrawBehind {
         drawRect(baseColor)
@@ -89,4 +76,23 @@ fun Modifier.scrollingCollectionBackground(
         }
     }
 }
+}
+
+@Composable
+internal fun rememberCollectionBackdrop(coverUri: String): State<ImageBitmap?> {
+    val context = LocalContext.current
+    val image by produceState(collectionBackdrops.get(coverUri), coverUri) {
+        value = collectionBackdrops.get(coverUri)
+        if (coverUri.isNotBlank() && value == null) {
+            com.music.spotui.di.SongPlayer.awaitAudioStartup()
+            value = withContext(Dispatchers.IO) {
+                val request = com.bumptech.glide.Glide.with(context).asBitmap().disallowHardwareConfig().load(coverUri).submit(64, 64)
+                try { blurCollectionBitmap(request.get()).also { collectionBackdrops.put(coverUri, it) } }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { null }
+                finally { com.bumptech.glide.Glide.with(context).clear(request) }
+            }
+        }
+    }
+    return rememberUpdatedState(image)
 }

@@ -478,6 +478,7 @@ Spacer(Modifier.height(8.dp))
 val playing = albumViewModel.currentSongPlayingState.value
 val currentInList = albumSongs.any { it.id == albumViewModel.currentSongId.value }
 com.music.spotui.ui.components.CollectionActionBar(
+ coverUri = album[0].coverUri,
  accent = dominentColor,
  sortMode = currentSort.name, sortDescending = isDescending,
  modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),

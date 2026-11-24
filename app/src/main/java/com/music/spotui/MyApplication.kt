@@ -27,6 +27,7 @@ class MyApplication : Application(){
         super.onCreate()
         instance = this
         com.music.spotui.data.api.SpotifyPendingWrites.install(this)
+        com.music.spotui.data.api.LocalSpotifyMirror.install(this)
         com.music.spotui.sync.GoogleDeviceSync.install(this)
         appScope.launch {
             kotlinx.coroutines.delay(1_200L)

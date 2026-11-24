@@ -913,11 +913,13 @@ class Api @Inject constructor(
         liveLibrary(LibraryCatalogCache.peek(context).orEmpty())
 
     private fun liveLibrary(remote: List<com.music.spotui.data.entity.LibraryEntry>): List<com.music.spotui.data.entity.LibraryEntry> {
-        val localEntries = com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylists(context).map { pl ->
+        val localPlaylists = com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylists(context)
+        val mirroredIds = localPlaylists.map { it.spotifyPlaylistId }.filter { it.isNotBlank() }.toSet()
+        val localEntries = localPlaylists.map { pl ->
             com.music.spotui.data.entity.LibraryEntry(
                 spotifyId = pl.id,
                 name = pl.name,
-                subtitle = "Lista local • ${pl.songs.size} " + (if (pl.songs.size == 1) "canción" else "canciones"),
+                subtitle = (if (pl.spotifyPlaylistId.isNotBlank()) "Spotify • " else "Pendiente de Spotify • ") + "${pl.songs.size} " + (if (pl.songs.size == 1) "canción" else "canciones"),
                 coverUri = pl.coverUri,
                 isPlaylist = true,
                 isLocal = true,
@@ -941,7 +943,7 @@ class Api @Inject constructor(
             com.music.spotui.data.entity.LibraryEntry(LIKED_SONGS_ID, "Canciones que te gustan", "Playlist • Canciones que te gustan", "https://misc.scdn.co/liked-songs/liked-songs-640.png", true),
             com.music.spotui.data.entity.LibraryEntry(DOWNLOADS_ID, "Downloaded", "Available offline", "", true),
         )
-        val preferred = shortcuts + localEntries + favoriteEntries + podcastEntries + remote
+        val preferred = shortcuts + localEntries + favoriteEntries + podcastEntries + remote.filterNot { it.spotifyId in mirroredIds }
         val offline = com.music.spotui.data.preferences.OfflineCollectionsPref.getOfflineCollections(context).filter { col ->
             val id = cleanId(col.id)
             preferred.none { entry ->

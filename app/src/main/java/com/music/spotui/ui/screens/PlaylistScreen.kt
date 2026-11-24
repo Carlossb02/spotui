@@ -152,6 +152,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         playlistViewModel.loadPlaylist(playlistId)
         playlistAccess = com.music.spotui.data.api.PlaylistAccess.load(context, playlistId)
     }
+    val spotifyMirrorStatuses by com.music.spotui.data.api.LocalSpotifyMirror.statuses.collectAsState()
+    val spotifyMirrorStatus = spotifyMirrorStatuses[playlistId]
     val canEditPlaylist = playlistAccess.canEdit
     val externalReadOnly = !playlistId.startsWith("local_pl_") && !canEditPlaylist
     var favoritePlaylist by remember(playlistId) {
@@ -604,6 +606,16 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                                 color = Color(0xFFB3B3B3),
                                 fontSize = 12.sp,
                             )
+                            if (playlistId.startsWith("local_pl_")) {
+                                val syncLabel = when (spotifyMirrorStatus?.phase) {
+                                    com.music.spotui.data.api.LocalSpotifyMirror.Phase.SYNCED -> "Sincronizada con Spotify"
+                                    com.music.spotui.data.api.LocalSpotifyMirror.Phase.SYNCING -> "Sincronizando con Spotify"
+                                    else -> spotifyMirrorStatus?.details ?: "Pendiente de sincronizar con Spotify"
+                                }
+                                Text(syncLabel, color = Color.White.copy(alpha = .7f), fontSize = 12.sp,
+                                    modifier = Modifier.fillMaxWidth().clickable { com.music.spotui.data.api.LocalSpotifyMirror.retry(context, playlistId) }
+                                        .padding(horizontal = 20.dp, vertical = 6.dp))
+                            }
                             Spacer(modifier = Modifier.height(12.dp))
 
                             if (externalReadOnly) {
@@ -620,6 +632,7 @@ Spacer(Modifier.height(8.dp))
 val playing = playlistViewModel.currentSongPlayingState.value
 val currentInList = songs.any { it.id == playlistViewModel.currentSongId.value }
 com.music.spotui.ui.components.CollectionActionBar(
+ coverUri = playlist.coverUri,
  accent = dominentColor,
  sortMode = currentSort.name, sortDescending = isDescending,
  modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -706,17 +719,14 @@ com.music.spotui.ui.components.CollectionActionBar(
                     }
                     if (canEditPlaylist) item(key = "add_music_to_playlist") {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 10.dp)
-                                .clip(RoundedCornerShape(32.dp)).background(Color(0xFF202020))
-                                .clickable { showAddMusic = true }
-                                .padding(horizontal = 14.dp, vertical = 8.dp)
-                                .height(48.dp),
+                            modifier = Modifier.fillMaxWidth().clickable { showAddMusic = true }
+                                .padding(horizontal = 20.dp, vertical = 8.dp).height(48.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Box(
                                 modifier = Modifier.size(48.dp)
-                                    .clip(RoundedCornerShape(7.dp))
-                                    .background(Color(0xFF303030)),
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Color.White.copy(alpha = .08f)),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Icon(

@@ -555,6 +555,18 @@ object Spotify {
             com.metrolist.spotify.models.SpotifyLyrics(synced = synced, lines = lines)
         }
 
+    /** Optional Web Player credits, independent of playback and lyrics. */
+    suspend fun trackCredits(trackId: String): Result<com.metrolist.spotify.models.SpotifyTrackCredits> = runCatching {
+        require(trackId.matches(Regex("[A-Za-z0-9]{22}")))
+        val token = accessToken ?: throw SpotifyException(401, "Not authenticated")
+        val response = gqlClient.get("https://spclient.wg.spotify.com/track-credits-view/v0/experimental/" + trackId + "/credits") {
+            header("Authorization", "Bearer " + token)
+            header("app-platform", "WebPlayer")
+        }
+        if (response.status.value !in 200..299) throw SpotifyException(response.status.value, "Credits unavailable")
+        com.metrolist.spotify.models.parseTrackCredits(json.parseToJsonElement(response.bodyAsText()).jsonObject)
+    }
+
     // ── Playlists (GQL: libraryV3) ──────────────────────────────────────
 
     suspend fun myPlaylists(
@@ -1010,13 +1022,13 @@ object Spotify {
                     ?: throw SpotifyException(500, "No content in fetchPlaylist response")
 
             val tracks =
-                content.arr("items")?.mapNotNull { elem ->
-                    val itemWrapper = elem.jsonObject.obj("itemV2") ?: return@mapNotNull null
-                    val itemData = itemWrapper.obj("data") ?: return@mapNotNull null
-                    val wrapperUri = itemWrapper.str("_uri") ?: itemWrapper.str("uri")
-                    val uid = elem.jsonObject.str("uid") ?: itemWrapper.str("uid")
+                content.arr("items")?.map { elem ->
+                    val itemWrapper = elem.jsonObject.obj("itemV2")
+                    val itemData = itemWrapper?.obj("data")
+                    val wrapperUri = itemWrapper?.str("_uri") ?: itemWrapper?.str("uri")
+                    val uid = elem.jsonObject.str("uid") ?: itemWrapper?.str("uid")
                     SpotifyPlaylistTrack(
-                        track = parseGqlTrack(itemData, uriOverride = wrapperUri),
+                        track = itemData?.let { parseGqlTrack(it, uriOverride = wrapperUri) },
                         uid = uid,
                     )
                 } ?: emptyList()
@@ -1170,26 +1182,36 @@ object Spotify {
             log("D", "moveItemsInPlaylist: moved ${uids.size} items (before=$beforeUid) in $playlistId")
         }
 
-    /**
-     * Renames a playlist and/or updates its description via GQL mutation.
-     */
+    /** Update metadata through the same web-session endpoint as playlist creation. */
     suspend fun editPlaylistAttributes(
         playlistId: String,
         newName: String? = null,
         newDescription: String? = null,
-    ): Result<Unit> =
-        runCatching {
-            val vars = buildJsonObject {
-                put("playlistUri", "spotify:playlist:$playlistId")
-                if (newName != null) put("newName", newName)
-                if (newDescription != null) put("newDescription", newDescription)
+    ): Result<Unit> = runCatching {
+        if (newName == null && newDescription == null) return@runCatching
+        val payload = buildJsonObject {
+            putJsonArray("deltas") {
+                add(buildJsonObject {
+                    putJsonArray("ops") {
+                        add(buildJsonObject {
+                            put("kind", "UPDATE_LIST_ATTRIBUTES")
+                            putJsonObject("updateListAttributes") {
+                                putJsonObject("newAttributes") {
+                                    putJsonObject("values") {
+                                        if (newName != null) put("name", newName)
+                                        if (newDescription != null) put("description", newDescription)
+                                    }
+                                }
+                            }
+                        })
+                    }
+                    putJsonObject("info") { putJsonObject("source") { put("client", "WEBPLAYER") } }
+                })
             }
-            graphqlPost(
-                operationName = "editPlaylistAttributes",
-                variables = vars,
-            )
-            log("D", "editPlaylistAttributes: updated $playlistId (name=$newName)")
         }
+        playlistWrite("https://spclient.wg.spotify.com/playlist/v2/playlist/" + playlistId + "/changes", payload)
+        Unit
+    }
 
     /**
      * Reference to a specific item inside a playlist, needed for removal/reorder.
