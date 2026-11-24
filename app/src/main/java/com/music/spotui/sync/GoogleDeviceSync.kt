@@ -127,7 +127,7 @@ object GoogleDeviceSync {
         check(status.value.authorized && status.value.uid==expectedUid && auth?.currentUser?.uid==expectedUid){"La cuenta de Google ha cambiado. Vuelve a autorizarla."}
         if("https://www.googleapis.com/auth/drive.appdata" !in result.grantedScopes || result.accessToken.isNullOrBlank()) {
             invalidateDriveToken()
-            throw DriveConsentRequired("No se ha concedido el permiso para los datos de Spotui en Drive. Pulsa Autorizar Google Drive y acepta el permiso.")
+            throw DriveConsentRequired("No se ha concedido el permiso para los datos de Spotidroid en Drive. Pulsa Autorizar Google Drive y acepta el permiso.")
         }
         val requested=mutable.value.needsDrive
         accessToken=result.accessToken?:throw DriveConsentRequired();tokenAt=System.currentTimeMillis()
@@ -555,7 +555,7 @@ object GoogleDeviceSync {
                 OwnLibraryChanges.changed();com.music.spotui.data.api.SavedTrackLibrary.localChanged(context)
                 if(appliedKeys.any {it.startsWith("settings_prefs:")})work.launch(Dispatchers.Main) {
                     if(!SyncOptions.enabled(SyncOptions.Category.SETTINGS))return@launch
-                    if("settings_prefs:app_language" in appliedKeys)SpotuiLanguage.initialize(context)
+                    if("settings_prefs:app_language" in appliedKeys)SpotidroidLanguage.initialize(context)
                     if(appliedKeys.any {it.contains(":audio_normalization_")})com.music.spotui.di.SongPlayer.onNormalizationSettingChanged(context)
                     if(appliedKeys.any {it.contains(":equalizer_") || it.endsWith(":custom_equalizer_bands")})com.music.spotui.di.SongPlayer.onEqualizerSettingChanged(context)
                 }

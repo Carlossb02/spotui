@@ -19,8 +19,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
@@ -90,13 +88,15 @@ internal fun CollectionDownloadButton(songs: List<SongsModel>, description: Stri
     val fraction by androidx.compose.animation.core.animateFloatAsState(status.progress, label = "collectionDownload")
     val metrics = LocalCapsuleMetrics.current
     val accent = LocalCapsuleAccent.current
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val shape = androidx.compose.foundation.shape.RoundedCornerShape(50)
     val action = if (paused) "Reanudar" else if (status.active) "Pausar" else "Descargar"
     Box(Modifier.width(metrics.download.dp).height(metrics.control.dp)) {
         CollectionCapsuleBody(action,
-            Modifier.fillMaxSize().collectionCapsuleSurface(accent)
+            Modifier.fillMaxSize().liquidCollectionGlass(accent, interaction)
                 .then(if (status.complete) Modifier.border(1.4.dp, CollectionGreen, shape) else Modifier)
-                .combinedClickable(enabled = keys.isNotEmpty(), role = androidx.compose.ui.semantics.Role.Button,
+                .combinedClickable(interactionSource = interaction, indication = null,
+                    enabled = keys.isNotEmpty(), role = androidx.compose.ui.semantics.Role.Button,
                     onClick = {
                         when {
                             paused -> SongPlayer.pauseDownloads(songs, false)
@@ -127,9 +127,6 @@ internal fun CollectionDownloadButton(songs: List<SongsModel>, description: Stri
         }
     }
 }
-
-@Composable
-private fun Modifier.collectionCapsuleSurface(accent: Color): Modifier = liquidCollectionGlass(accent)
 
 @Composable
 private fun CollectionCapsuleBody(label: String, modifier: Modifier, icon: @Composable RowScope.() -> Unit) {
@@ -175,20 +172,14 @@ internal fun CollectionActionBar(
     modifier: Modifier = Modifier, enabled: Boolean, playing: Boolean,
     download: @Composable () -> Unit, onSort: () -> Unit, onQueue: () -> Unit,
     onShuffle: () -> Unit, onPlay: () -> Unit,
-    sortMode: String, sortDescending: Boolean, accent: Color = Color(0xFF75648F), coverUri: String = "",
+    sortMode: String, sortDescending: Boolean, accent: Color = Color(0xFF75648F), glass: CollectionGlassBackdrop,
 ) {
-    val backdrop by rememberCollectionBackdrop(coverUri)
-    val glassBackdrop = backdrop ?: remember(accent) {
-        android.graphics.Bitmap.createBitmap(64, 64, android.graphics.Bitmap.Config.ARGB_8888).also { bitmap ->
-            val paint = android.graphics.Paint().apply { shader = android.graphics.LinearGradient(0f, 0f, 64f, 64f,
-                androidx.compose.ui.graphics.lerp(accent, Color.White, .15f).toArgb(), accent.toArgb(), android.graphics.Shader.TileMode.CLAMP) }
-            android.graphics.Canvas(bitmap).drawRect(0f, 0f, 64f, 64f, paint)
-        }.asImageBitmap()
-    }
+    val sortInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val queueInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val tablet = LocalConfiguration.current.smallestScreenWidthDp >= 600
     BoxWithConstraints(modifier) {
         val metrics = remember(maxWidth, tablet) { collectionActionMetrics(maxWidth.value, tablet) }
-        CompositionLocalProvider(LocalCapsuleMetrics provides metrics, LocalCapsuleAccent provides accent, LocalGlassBackdrop provides glassBackdrop) {
+        CompositionLocalProvider(LocalCapsuleMetrics provides metrics, LocalCapsuleAccent provides accent, LocalGlassBackdrop provides glass) {
             Row(Modifier.height(68.dp), verticalAlignment = Alignment.CenterVertically) {
                 Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(metrics.itemGap.dp), verticalAlignment = Alignment.CenterVertically) {
                     download()
@@ -202,13 +193,16 @@ internal fun CollectionActionBar(
                         else -> com.music.spotui.R.drawable.collection_sort_date
                     }
                     CollectionCapsuleBody("Ordenar", Modifier.width(metrics.pill.dp).height(metrics.control.dp)
-                        .collectionCapsuleSurface(accent).clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onSort)) {
+                        .liquidCollectionGlass(accent, sortInteraction)
+                        .clickable(interactionSource = sortInteraction, indication = null, role = androidx.compose.ui.semantics.Role.Button, onClick = onSort)) {
                         Icon(androidx.compose.ui.res.painterResource(sortIcon), when (sortMode) { "DEFAULT" -> "Ordenar por pistas"; "TITLE" -> "Ordenar por título"; "ARTIST" -> "Ordenar por artista"; "ALBUM" -> "Ordenar por álbum"; "DURATION" -> "Ordenar por duración"; "POPULARITY" -> "Ordenar por popularidad"; else -> "Ordenar por fecha" }, tint = Color.White, modifier = Modifier.size(22.dp))
                         Icon(androidx.compose.ui.res.painterResource(if (sortDescending) com.music.spotui.R.drawable.collection_sort_down else com.music.spotui.R.drawable.collection_sort_up),
                             if (sortDescending) "Descendente" else "Ascendente", tint = Color.White, modifier = Modifier.size(22.dp))
                     }
                     CollectionCapsuleBody("Añadir a la cola", Modifier.width(metrics.queue.dp).height(metrics.control.dp)
-                        .collectionCapsuleSurface(accent).clickable(enabled = enabled, role = androidx.compose.ui.semantics.Role.Button, onClick = onQueue)) {
+                        .liquidCollectionGlass(accent, queueInteraction)
+                        .clickable(interactionSource = queueInteraction, indication = null, enabled = enabled,
+                            role = androidx.compose.ui.semantics.Role.Button, onClick = onQueue)) {
                         Icon(androidx.compose.ui.res.painterResource(com.music.spotui.R.drawable.collection_queue), "Añadir a la cola", tint = Color.White, modifier = Modifier.size(22.dp))
                     }
                 }

@@ -24,7 +24,6 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
-import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
@@ -1193,19 +1192,6 @@ object Spotify {
             )
             log("D", "moveItemsInPlaylist: moved ${uids.size} items (before=$beforeUid) in $playlistId")
         }
-
-    /** Upload a cover using the active session. Spotify validates image-upload permissions. */
-    suspend fun uploadPlaylistCover(playlistId: String, jpegBase64: String): Result<Unit> = runCatching {
-        require(playlistId.matches(Regex("[A-Za-z0-9]{22}")) && jpegBase64.length in 1..256_000)
-        val token = accessToken ?: throw SpotifyException(401, "Spotify session expired")
-        val response = restClient.put("playlists/$playlistId/images") {
-            header("Authorization", "Bearer $token")
-            setBody(TextContent(jpegBase64, ContentType.parse("image/jpeg")))
-        }
-        if (response.status.value != 202) {
-            throw SpotifyException(response.status.value, "Spotify no aceptó la portada (${response.status.value}).")
-        }
-    }
 
     /** Update metadata through the same web-session endpoint as playlist creation. */
     suspend fun editPlaylistAttributes(

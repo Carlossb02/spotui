@@ -81,7 +81,7 @@ object SongPlayer {
 
     private fun onAudioFocusChanged(change: Int) {
         // Android dispatches this callback on the main looper (see PlaybackAudioFocus).
-        Log.i("SpotuiTransition", "session audio focus change=$change crossfade=$isCrossfading")
+        Log.i("SpotidroidTransition", "session audio focus change=$change crossfade=$isCrossfading")
         appCtx?.let {
             com.music.spotui.ui.notification.PlaybackLifecycleDiagnostics.record(it,
                 "audio_focus change=$change playing=${player?.isPlaying} " +
@@ -167,7 +167,7 @@ object SongPlayer {
 
             if (wakeLock == null) {
                 val pm = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
-                wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Spotui:AudioWakeLock")?.apply {
+                wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Spotidroid:AudioWakeLock")?.apply {
                     setReferenceCounted(false)
                 }
             }
@@ -1580,7 +1580,7 @@ object SongPlayer {
             }
             return value
         } finally {
-            Log.i("SpotuiStartup", "resolution total=${android.os.SystemClock.elapsedRealtime() - startedAtMs}ms cached=${streamCache.containsKey(song)}")
+            Log.i("SpotidroidStartup", "resolution total=${android.os.SystemClock.elapsedRealtime() - startedAtMs}ms cached=${streamCache.containsKey(song)}")
         }
     }
 
@@ -1637,7 +1637,7 @@ object SongPlayer {
                     boundState?.updateResolveDetailNote("Source: $currentSource • Format: $currentQuality (valid episode cache)")
                     updateResolveStatus(false)
                 }
-                Log.i("SpotuiStartup", "podcast exact-ID signed URL reused, remaining=${(podcastExpires - now) / 1000}s")
+                Log.i("SpotidroidStartup", "podcast exact-ID signed URL reused, remaining=${(podcastExpires - now) / 1000}s")
                 return cachedPodcast
             }
             // Expired signed CDN URLs must never be handed to Media3 again.
@@ -2921,7 +2921,7 @@ object SongPlayer {
             rating.await()
             result
         }
-        Log.i("SpotuiStartup", "spotifyMetadata lookup=${android.os.SystemClock.elapsedRealtime() - metadataStartedAt}ms success=${track != null}")
+        Log.i("SpotidroidStartup", "spotifyMetadata lookup=${android.os.SystemClock.elapsedRealtime() - metadataStartedAt}ms success=${track != null}")
         if (track == null) {
             Log.w(TAG, "Spotify metadata unavailable for $spotifyId: trying duration fallbacks")
             resolveDurationFallbacks(query, spotifyId, null, currentMeta?.title, currentMeta?.artist, currentMeta?.album)
@@ -3037,7 +3037,7 @@ object SongPlayer {
         val epoch = synchronized(resolutionCacheLock) { resolutionCacheGeneration }
         val matchStartedAt = android.os.SystemClock.elapsedRealtime()
         if(!bypassCache)videoCandidatesCache[cacheKey]?.let {
-            Log.i("SpotuiStartup", "ytCandidates memoryCache hits=${it.size}")
+            Log.i("SpotidroidStartup", "ytCandidates memoryCache hits=${it.size}")
             return it
         }
         if(!bypassCache)appCtx?.let { ctx ->
@@ -3142,7 +3142,7 @@ object SongPlayer {
             wantExplicit=explicitRegistry[query] ?: wantExplicit
             searchText=if(wantExplicit==true)"$baseSearchText explicit" else baseSearchText
             cacheKey=videoCandidateCacheKey(query,filter)
-            if (forPlayback) Log.i("SpotuiStartup", "ytSearch metadataGate=${android.os.SystemClock.elapsedRealtime() - metadataWaitStarted}ms")
+            if (forPlayback) Log.i("SpotidroidStartup", "ytSearch metadataGate=${android.os.SystemClock.elapsedRealtime() - metadataWaitStarted}ms")
             val finalPlan = buildPlan(exactMeta)
             launchPlan(finalPlan)
             // Run the SAME recording's primary queries as one wave rather than two network waves.
@@ -3155,7 +3155,7 @@ object SongPlayer {
             val allHits = primaryQueries(finalPlan).take(1)
                 .flatMap { q -> searches.getValue(q).await() }
                 .distinctBy { it.id }
-            if (forPlayback) Log.i("SpotuiStartup", "ytSearch networkGate=${android.os.SystemClock.elapsedRealtime() - searchWaitStarted}ms queries=${primaryQueries(finalPlan).size}")
+            if (forPlayback) Log.i("SpotidroidStartup", "ytSearch networkGate=${android.os.SystemClock.elapsedRealtime() - searchWaitStarted}ms queries=${primaryQueries(finalPlan).size}")
             Triple(exactMeta, finalPlan, allHits)
         } } catch (failure: Exception) {
             primarySearches.values.forEach { it.cancel() }
@@ -3548,7 +3548,7 @@ object SongPlayer {
         return try {
             decide().also { result ->
                 if (result.firstOrNull() != speculativeVideo) speculativeStream?.cancel()
-                Log.i("SpotuiStartup", "ytCandidates total=${android.os.SystemClock.elapsedRealtime() - matchStartedAt}ms " +
+                Log.i("SpotidroidStartup", "ytCandidates total=${android.os.SystemClock.elapsedRealtime() - matchStartedAt}ms " +
                     "matches=${result.size} primaryHits=${hits.size} queries=${searchQueries.size}")
             }
         } catch (failure: Throwable) {
@@ -3739,7 +3739,7 @@ object SongPlayer {
                 if (isPlaying && p === player && loadedQuery == currentRequest &&
                     startupTapAtMs > 0L && measuredStartupGeneration != generation) {
                     measuredStartupGeneration = generation
-                    Log.i("SpotuiStartup", "tapToAudio=${android.os.SystemClock.elapsedRealtime() - startupTapAtMs}ms source=$currentSource")
+                    Log.i("SpotidroidStartup", "tapToAudio=${android.os.SystemClock.elapsedRealtime() - startupTapAtMs}ms source=$currentSource")
                 }
             }
         })
@@ -4002,7 +4002,7 @@ object SongPlayer {
         }
 
         val active = player
-        // Closing Spotui from Recents stops/releases ExoPlayer, but its singleton
+        // Closing Spotidroid from Recents stops/releases ExoPlayer, but its singleton
         // CurrentSongState can survive with the track still shown in the UI.
         // A Media3 player with no item (or STOPPED/ENDED) cannot play by just
         // calling play(): rebuild the source for the track the user sees.
@@ -4032,11 +4032,11 @@ object SongPlayer {
                 }
                 if (seekMs > 0L) setRestorePoint(songUrl, seekMs)
                 val songId = queuedSong?.id ?: persisted?.first?.takeIf { it.url == songUrl }?.id
-                android.util.Log.i("SpotuiLifecycle", "resume_unprepared_player restoring=${songId ?: "unknown"}")
+                android.util.Log.i("SpotidroidLifecycle", "resume_unprepared_player restoring=${songId ?: "unknown"}")
                 playSong(songUrl, ctx, songId?.takeIf { it != 0 }?.let { "song/$it" })
                 return
             }
-            android.util.Log.w("SpotuiLifecycle", "resume_unprepared_player no_track_to_restore")
+            android.util.Log.w("SpotidroidLifecycle", "resume_unprepared_player no_track_to_restore")
             boundState?.updatePlayingState(false)
             return
         }
@@ -4161,7 +4161,7 @@ object SongPlayer {
         if (autofillJob?.isActive == true) return
         autofillSeed = seed.url
         lastAutofillAttemptAt = now
-        Log.i("SpotuiAutofill", "Scheduling episode radio for ${seed.url.substringBefore('|')}")
+        Log.i("SpotidroidAutofill", "Scheduling episode radio for ${seed.url.substringBefore('|')}")
         autofillJob = scope.launch {
             // Audio is already READY before this is triggered. Short wait keeps
             // episode radio out of the critical audio connection handshake.
@@ -4172,7 +4172,7 @@ object SongPlayer {
                 loadedQuery?.substringBefore('|') != seed.url.substringBefore('|')) return@launch
             val results = PlaybackAutofill.suggest(context.applicationContext, seed, snapshot)
             if (results.isEmpty()) {
-                Log.w("SpotuiAutofill", "No related episodes returned for ${seed.url.substringBefore('|')}")
+                Log.w("SpotidroidAutofill", "No related episodes returned for ${seed.url.substringBefore('|')}")
                 return@launch
             }
             withContext(Dispatchers.Main) {
@@ -4184,7 +4184,7 @@ object SongPlayer {
                 val additions = results.filter { it.url.substringBefore('|') !in ids }
                 if (additions.isEmpty()) return@withContext
                 live.updateQueue(q + additions, isManualEdit = true)
-                Log.i("SpotuiAutofill", "Extended queue by ${additions.size} from ${seed.title}")
+                Log.i("SpotidroidAutofill", "Extended queue by ${additions.size} from ${seed.title}")
                 // A recommendation returned after the track ended: resume on the
                 // next item, without restarting the ended episode/track.
                 if (player?.playbackState == ExoPlayer.STATE_ENDED && currentRequest == seed.url) {
@@ -4776,7 +4776,7 @@ object SongPlayer {
     }
 
     private fun triggerCrossfade(ctx: Context, configuredMs: Int) {
-        Log.i("SpotuiTransition", "crossfade trigger requested, ms=$configuredMs " +
+        Log.i("SpotidroidTransition", "crossfade trigger requested, ms=$configuredMs " +
             "oldState=${player?.playbackState}, oldPlaying=${player?.isPlaying}, " +
             "oldPlayWhenReady=${player?.playWhenReady}")
         if (!playWhenResolved || pausedForTransientFocusLoss) return
@@ -4817,7 +4817,7 @@ object SongPlayer {
                     playerComp.player.addListener(object : androidx.media3.common.Player.Listener {
                         override fun onPlaybackStateChanged(playbackState: Int) {
                             if (playbackState == androidx.media3.common.Player.STATE_READY) {
-                                Log.i("SpotuiTransition", "incoming READY, starting fade when possible")
+                                Log.i("SpotidroidTransition", "incoming READY, starting fade when possible")
                                 readyDeferred.complete(true)
                             } else if (playbackState == androidx.media3.common.Player.STATE_ENDED) {
                                 readyDeferred.complete(false)
@@ -4825,15 +4825,15 @@ object SongPlayer {
                         }
 
                         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-                            Log.i("SpotuiTransition", "incoming playWhenReady=$playWhenReady reason=$reason")
+                            Log.i("SpotidroidTransition", "incoming playWhenReady=$playWhenReady reason=$reason")
                         }
 
                         override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
-                            Log.w("SpotuiTransition", "incoming suppression=$playbackSuppressionReason")
+                            Log.w("SpotidroidTransition", "incoming suppression=$playbackSuppressionReason")
                         }
 
                         override fun onIsPlayingChanged(isPlaying: Boolean) {
-                            Log.i("SpotuiTransition", "incoming isPlaying=$isPlaying")
+                            Log.i("SpotidroidTransition", "incoming isPlaying=$isPlaying")
                         }
 
                         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -5007,7 +5007,7 @@ object SongPlayer {
             val incoming = secondaryPlayer ?: return@withContext
             if (incoming.playbackState != ExoPlayer.STATE_READY) return@withContext
             val old = player
-            Log.i("SpotuiTransition", "finalize begin: outgoing=${old?.playbackState} " +
+            Log.i("SpotidroidTransition", "finalize begin: outgoing=${old?.playbackState} " +
                 "outgoingWhenReady=${old?.playWhenReady}; incoming=${incoming.playbackState} " +
                 "incomingWhenReady=${incoming.playWhenReady}; " +
                 "incomingSuppression=${incoming.playbackSuppressionReason}")
@@ -5091,7 +5091,7 @@ object SongPlayer {
             crossfadeTriggered.set(false)
             // ExoPlayer's WAKE_MODE_LOCAL now owns the continuous playback lock.
             releaseWakeLock("spotui:crossfade")
-            Log.i("SpotuiTransition", "finalize complete: newState=${incoming.playbackState} " +
+            Log.i("SpotidroidTransition", "finalize complete: newState=${incoming.playbackState} " +
                 "newPlaying=${incoming.isPlaying} newWhenReady=${incoming.playWhenReady} " +
                 "suppression=${incoming.playbackSuppressionReason}")
         }

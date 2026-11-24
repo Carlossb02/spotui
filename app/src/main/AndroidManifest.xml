@@ -108,7 +108,7 @@
             android:resource="@xml/automotive_app_desc" />
         <meta-data
             android:name="com.google.android.gms.car.application.theme"
-            android:resource="@style/Theme.Spotui.Car" />
+            android:resource="@style/Theme.Spotidroid.Car" />
         <meta-data
             android:name="com.google.android.gms.car.notification.SmallIcon"
             android:resource="@drawable/ic_spotui_notification_monochrome" />
@@ -135,7 +135,7 @@
             android:exported="true"
             android:grantUriPermissions="true" />
 
-        <!-- Makes Spotui discoverable as a media button target for automation
+        <!-- Makes Spotidroid discoverable as a media button target for automation
              apps (MacroDroid, Tasker, etc.) and forwards media key events to
              the active PlaybackService MediaSession. -->
         <receiver

@@ -73,7 +73,7 @@ fun BatteryOptimizationPrompt() {
         text = {
             Column {
                 Text(
-                    text = "Para que la música continúe reproduciéndose sin pausas cuando la pantalla esté bloqueada, tengas el ahorro de batería activado o utilices otras aplicaciones, desactiva la optimización de batería para Spotui.",
+                    text = "Para que la música continúe reproduciéndose sin pausas cuando la pantalla esté bloqueada, tengas el ahorro de batería activado o utilices otras aplicaciones, desactiva la optimización de batería para Spotidroid.",
                     fontSize = 14.sp,
                     color = Color(0xFFCCCCCC)
                 )

@@ -158,7 +158,7 @@ fun DefaultAppPrompt(
 
                 // Header Title
                 Text(
-                    text = uiLocalized("Open Links in Spotui"),
+                    text = uiLocalized("Open Links in Spotidroid"),
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
@@ -167,7 +167,7 @@ fun DefaultAppPrompt(
                 Spacer(modifier = Modifier.height(6.dp))
 
                 Text(
-                    text = uiLocalized("Set Spotui as default to play Spotify links directly."),
+                    text = uiLocalized("Set Spotidroid as default to play Spotify links directly."),
                     fontSize = 14.sp,
                     color = SpotifyTextSecondary
                 )
@@ -206,7 +206,7 @@ fun DefaultAppPrompt(
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Android blocks adding links to Spotui until you clear defaults from $conflictingAppLabel first in Step 1.",
+                                text = "Android blocks adding links to Spotidroid until you clear defaults from $conflictingAppLabel first in Step 1.",
                                 fontSize = 13.sp,
                                 color = Color(0xFFFFE082),
                                 lineHeight = 18.sp,
@@ -229,24 +229,24 @@ fun DefaultAppPrompt(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Step 2: Enable Spotui Default Card
+                    // Step 2: Enable Spotidroid Default Card
                     StepCard(
                         stepNumber = "2",
-                        title = "STEP 2: Enable default links for Spotui",
-                        description = "After completing Step 1, tap below to open Spotui settings -> Tap 'Open by default' -> Tap '+ Add link' -> Check open.spotify.com.",
-                        buttonText = "2. Enable Defaults for Spotui",
+                        title = "STEP 2: Enable default links for Spotidroid",
+                        description = "After completing Step 1, tap below to open Spotidroid settings -> Tap 'Open by default' -> Tap '+ Add link' -> Check open.spotify.com.",
+                        buttonText = "2. Enable Defaults for Spotidroid",
                         isPrimary = true,
-                        onClick = { DefaultLinkHelper.openSpotuiDefaultSettings(context) }
+                        onClick = { DefaultLinkHelper.openSpotidroidDefaultSettings(context) }
                     )
                 } else {
                     // Single Step Card for when no conflicting app is installed
                     StepCard(
                         stepNumber = "1",
-                        title = "Set Spotui as default handler",
-                        description = "Tap below to open Spotui settings -> Tap 'Open by default' -> Tap '+ Add link' -> Check open.spotify.com.",
-                        buttonText = "Enable Defaults for Spotui",
+                        title = "Set Spotidroid as default handler",
+                        description = "Tap below to open Spotidroid settings -> Tap 'Open by default' -> Tap '+ Add link' -> Check open.spotify.com.",
+                        buttonText = "Enable Defaults for Spotidroid",
                         isPrimary = true,
-                        onClick = { DefaultLinkHelper.openSpotuiDefaultSettings(context) }
+                        onClick = { DefaultLinkHelper.openSpotidroidDefaultSettings(context) }
                     )
                 }
 

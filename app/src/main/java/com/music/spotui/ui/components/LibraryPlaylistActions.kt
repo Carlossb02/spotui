@@ -71,7 +71,9 @@ internal fun LibraryPlaylistActions(
             MenuRow(Icons.Default.AddCircleOutline, "Añadir a esta lista") { onAction(LibraryPlaylistAction.ADD) }
             MenuRow(Icons.Default.List, "Editar canciones") { onAction(LibraryPlaylistAction.TRACKS) }
             MenuRow(Icons.Default.Edit, "Cambiar nombre") { onAction(LibraryPlaylistAction.NAME) }
-            MenuRow(Icons.Default.Image, "Descripción y portada") { onAction(LibraryPlaylistAction.DETAILS) }
+            MenuRow(Icons.Default.Image, if (url == null) "Descripción y portada" else "Descripción") {
+                onAction(LibraryPlaylistAction.DETAILS)
+            }
             MenuRow(Icons.Default.Delete, "Quitar de Biblioteca") { onAction(LibraryPlaylistAction.REMOVE) }
             MenuRow(Icons.Default.PushPin, if (pinned) "Desfijar lista" else "Fijar lista") {
                 onTogglePin()

@@ -10,6 +10,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -46,36 +51,51 @@ private fun blurCollectionBitmap(source: android.graphics.Bitmap): ImageBitmap {
  * Scroll state is read only during drawing, without recomposing the song list.
  */
 @Composable
-fun Modifier.scrollingCollectionBackground(
+internal fun Modifier.scrollingCollectionBackground(
     topColor: Color,
     baseColor: Color,
     listState: LazyListState,
     headerKey: String,
     coverUri: String = "",
+    glass: CollectionGlassBackdrop,
 ): Modifier {
     val image by rememberCollectionBackdrop(coverUri)
-    return drawWithCache {
-    onDrawBehind {
-        drawRect(baseColor)
-        val header = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == headerKey }
-        if (header != null && header.size > 0) {
-            val top = header.offset.toFloat()
-            val bottom = top + header.size
-            if (bottom > 0f) {
-                drawRect(Brush.verticalGradient(colors = listOf(topColor.copy(alpha = .8f), baseColor), startY = top, endY = bottom))
-                image?.let { bitmap ->
-                    val imageBottom = bottom
-                    clipRect(top = top - 100.dp.toPx(), bottom = imageBottom) {
-                        drawImage(bitmap, dstOffset = IntOffset(0, (top - 100.dp.toPx()).roundToInt()),
-                            dstSize = IntSize(size.width.roundToInt(), (header.size + 100.dp.toPx()).roundToInt().coerceAtLeast(1)))
-                        drawRect(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .08f), baseColor.copy(alpha = .3f), baseColor),
-                            startY = top, endY = imageBottom))
+    return onGloballyPositioned { glass.origin = it.positionInRoot() }.drawWithCache {
+        val paintBackdrop: DrawScope.() -> Unit = {
+            drawRect(baseColor)
+            val header = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == headerKey }
+            if (header != null && header.size > 0) {
+                val top = header.offset.toFloat()
+                val bottom = top + header.size
+                if (bottom > 0f) {
+                    drawRect(Brush.verticalGradient(
+                        0f to topColor.copy(alpha = .8f), .78f to topColor.copy(alpha = .34f), 1f to baseColor,
+                        startY = top, endY = bottom,
+                    ))
+                    image?.let { bitmap ->
+                        val imageBottom = bottom
+                        clipRect(top = top - 100.dp.toPx(), bottom = imageBottom) {
+                            drawImage(bitmap, dstOffset = IntOffset(0, (top - 100.dp.toPx()).roundToInt()),
+                                dstSize = IntSize(size.width.roundToInt(), (header.size + 100.dp.toPx()).roundToInt().coerceAtLeast(1)))
+                            drawRect(Brush.verticalGradient(
+                                0f to Color.Black.copy(alpha = .08f), .58f to baseColor.copy(alpha = .29f),
+                                .86f to baseColor.copy(alpha = .52f), 1f to baseColor,
+                                startY = top, endY = imageBottom,
+                            ))
+                        }
                     }
                 }
             }
         }
+        onDrawBehind {
+            if (drawContext.canvas.nativeCanvas.isHardwareAccelerated) {
+                glass.layer.record(block = paintBackdrop)
+                drawLayer(glass.layer)
+            } else {
+                paintBackdrop()
+            }
+        }
     }
-}
 }
 
 @Composable

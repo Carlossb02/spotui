@@ -15,7 +15,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 /** Background-only radio extension; strictly independent of music matching/audio resolution. */
 internal object PlaybackAutofill {
-    private const val TAG = "SpotuiAutofill"
+    private const val TAG = "SpotidroidAutofill"
     private val attempted = ConcurrentHashMap<String, Long>()
 
     /** Called only when the final queued item is currently playing. */

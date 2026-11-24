@@ -49,29 +49,20 @@ class AlternativeSearchViewModel @Inject constructor(
         val query = "$title $artist".trim()
         if (query == lastInitQuery) return
         lastInitQuery = query
-        searchQuery = query
-        searchResults = emptyList()
-        error = null
-        search(query)
+        search(query, debounce = false)
     }
 
-    fun updateQuery(query: String) {
+    fun updateQuery(query: String) = search(query, debounce = true)
+
+    private fun search(query: String, debounce: Boolean) {
         searchQuery = query
         searchJob?.cancel()
-        searchJob = viewModelScope.launch {
-            delay(350)
-            search(query)
-        }
-    }
-
-    private fun search(query: String) {
-        if (query.isBlank()) {
-            searchResults = emptyList()
-            return
-        }
-        isSearching = true
+        searchResults = emptyList()
         error = null
-        viewModelScope.launch {
+        isSearching = query.isNotBlank()
+        if (query.isBlank()) return
+        searchJob = viewModelScope.launch {
+            if (debounce) delay(350)
             val result = withContext(Dispatchers.IO) {
                 YouTube.search(query, YouTube.SearchFilter.FILTER_SONG)
             }

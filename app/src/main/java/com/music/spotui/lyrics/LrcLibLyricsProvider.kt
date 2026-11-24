@@ -12,7 +12,7 @@ import kotlin.math.abs
 
 object LrcLibLyricsProvider {
     private const val API_BASE = "https://lrclib.net/api"
-    private const val USER_AGENT = "Spotui-Android/1.0"
+    private const val USER_AGENT = "Spotidroid-Android/1.0"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(6, TimeUnit.SECONDS)

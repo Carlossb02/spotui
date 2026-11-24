@@ -81,7 +81,7 @@ fun isUserEditableLocalTrack(context: Context, song: SongsModel): Boolean {
     val url = song.url.trim()
 
     // A genuine Spotify track ID is exactly 22 base-62 characters. Editing its
-    // metadata in Spotui must remain impossible even if it says "Unknown Artist".
+    // metadata in Spotidroid must remain impossible even if it says "Unknown Artist".
     val catalogId = spotifyId
         .removePrefix("spotify:track:")
         .removePrefix("track:")

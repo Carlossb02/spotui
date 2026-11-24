@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.Spotui" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.Spotidroid" parent="android:Theme.Material.Light.NoActionBar" />
     <!-- Only an Android Auto styling hint; the car OS owns the playback UI. -->
-    <style name="Theme.Spotui.Car" parent="Theme.Spotui">
+    <style name="Theme.Spotidroid.Car" parent="Theme.Spotidroid">
         <item name="android:colorAccent">#1ED760</item>
     </style>
     <style name="splashScreenTheme" parent="Theme.SplashScreen">
@@ -11,7 +11,7 @@
              matches the icon the user tapped (not the old equalizer logo). -->
         <item name="windowSplashScreenBackground">@color/splash_background</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
-        <item name="postSplashScreenTheme">@style/Theme.Spotui</item>
+        <item name="postSplashScreenTheme">@style/Theme.Spotidroid</item>
         <item name="android:windowActionBar">false</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:statusBarColor">@android:color/transparent</item>

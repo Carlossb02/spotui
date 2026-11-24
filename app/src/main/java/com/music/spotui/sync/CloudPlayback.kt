@@ -50,7 +50,7 @@ object CloudPlayback {
             if(state==null)runCatching {
                 val shared=dagger.hilt.android.EntryPointAccessors.fromApplication(context.applicationContext,CloudPlayerEntryPoint::class.java).currentSongState()
                 SongPlayer.bindState(shared)
-            }.onFailure {mutable.update {it.copy(error="No se pudo preparar el reproductor. Abre Spotui en este dispositivo.")}}
+            }.onFailure {mutable.update {it.copy(error="No se pudo preparar el reproductor. Abre Spotidroid en este dispositivo.")}}
         }
     }
     internal fun disconnect() {
@@ -459,7 +459,7 @@ object CloudPlayback {
         private fun send(action:String,position:Long=0L,target:String="",edit:QueueEdit?=null) {
             val owner=current?:return
             if(closed || !GoogleDeviceSync.canSyncPlayer(actor))return
-            if(!SyncOptions.enabled(SyncOptions.Category.PLAYER) || !connected || (!owner.fresh(now()) && GoogleDeviceSync.status.value.devices.none {it.id==owner.owner && it.online})){mutable.update { it.copy(error="El dispositivo no está disponible. Abre Spotui en él para conectarlo.") };return}
+            if(!SyncOptions.enabled(SyncOptions.Category.PLAYER) || !connected || (!owner.fresh(now()) && GoogleDeviceSync.status.value.devices.none {it.id==owner.owner && it.online})){mutable.update { it.copy(error="El dispositivo no está disponible. Abre Spotidroid en él para conectarlo.") };return}
             if(!controls.accept(action,position,target,owner.epoch,android.os.SystemClock.elapsedRealtime()))return
             val queued=edit?:if(action=="select" || action=="queue")queueEdit() else null
             val capture=queued?.queue
@@ -541,7 +541,7 @@ object CloudPlayback {
                 return
             }
             val device=GoogleDeviceSync.status.value.devices.firstOrNull {it.id==target}
-            if(!connected || device?.online!=true || target in mutable.value.disabledDevices){mutable.update {it.copy(error="Abre Spotui en el dispositivo que quieres conectar.")};return}
+            if(!connected || device?.online!=true || target in mutable.value.disabledDevices){mutable.update {it.copy(error="Abre Spotidroid en el dispositivo que quieres conectar.")};return}
             mutable.update {it.copy(transferring=target,error=null)}
             if(owner.owner==actor)scope.launch {operations.withLock {runCatching {handoff(target)}.onFailure(::report)}}
             else send("transfer",target=target)

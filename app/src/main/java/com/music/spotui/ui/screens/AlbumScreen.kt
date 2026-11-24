@@ -336,10 +336,11 @@ fun SumUpAlbumScreen(
     }
     LaunchedEffect(keyboardVisible,searchReveal.expanded) { if (keyboardVisible && searchReveal.expanded) listState.scrollToItem(0) }
 
+    val collectionGlass = com.music.spotui.ui.components.rememberCollectionGlassBackdrop()
     Scaffold(
         modifier = Modifier.fillMaxSize().scrollingCollectionBackground(
                 topColor = dominentColor, baseColor = Color(AppBackground.toArgb()),
-                listState = listState, headerKey = "album_header", coverUri = album[0].coverUri),
+                listState = listState, headerKey = "album_header", coverUri = album[0].coverUri, glass = collectionGlass),
         containerColor = Color.Transparent,
         topBar = {
             CenterAlignedTopAppBar(
@@ -478,7 +479,7 @@ Spacer(Modifier.height(8.dp))
 val playing = albumViewModel.currentSongPlayingState.value
 val currentInList = albumSongs.any { it.id == albumViewModel.currentSongId.value }
 com.music.spotui.ui.components.CollectionActionBar(
- coverUri = album[0].coverUri,
+ glass = collectionGlass,
  accent = dominentColor,
  sortMode = currentSort.name, sortDescending = isDescending,
  modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),

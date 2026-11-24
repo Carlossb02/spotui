@@ -11,7 +11,7 @@ import android.util.Log
  * string; never keeps an Activity or a wake lock alive.
  */
 object PlaybackLifecycleDiagnostics {
-    private const val TAG = "SpotuiLifecycle"
+    private const val TAG = "SpotidroidLifecycle"
     private const val PREFS = "spotui_playback_lifecycle"
     private const val LAST_EVENT = "last_event"
     private const val LAST_EVENT_TIME = "last_event_time"

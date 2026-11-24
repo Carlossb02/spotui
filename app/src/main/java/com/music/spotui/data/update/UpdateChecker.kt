@@ -60,7 +60,7 @@ object UpdateChecker {
         val request = Request.Builder()
             .url(apiLatest)
             .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "Spotui-App")
+            .header("User-Agent", "Spotidroid-App")
             .build()
         val response = client.newCall(request).execute()
         val body = response.body?.string()
@@ -75,7 +75,7 @@ object UpdateChecker {
             val listRequest = Request.Builder()
                 .url(apiReleases)
                 .header("Accept", "application/vnd.github+json")
-                .header("User-Agent", "Spotui-App")
+                .header("User-Agent", "Spotidroid-App")
                 .build()
             val listResponse = client.newCall(listRequest).execute()
             if (listResponse.isSuccessful) {

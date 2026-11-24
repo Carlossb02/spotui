@@ -95,7 +95,7 @@ object DefaultLinkHelper {
         }
     }
 
-    fun openSpotuiDefaultSettings(context: Context) {
+    fun openSpotidroidDefaultSettings(context: Context) {
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val intent = Intent(

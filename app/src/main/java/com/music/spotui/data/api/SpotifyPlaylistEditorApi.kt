@@ -1,23 +1,16 @@
 package com.music.spotui.data.api
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.net.Uri
-import android.util.Base64
 import com.metrolist.spotify.Spotify
 import com.music.spotui.data.preferences.LocalPlaylistPref
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
 
 /** Edits owned playlists with the Spotify session already in use by the library. */
 internal object SpotifyPlaylistEditorApi {
     data class Details(val name: String, val description: String, val ownerId: String)
-    data class SaveResult(val coverError: String? = null)
 
     suspend fun load(context: Context, id: String, localId: String?): Details =
         withContext(Dispatchers.IO) {
@@ -25,10 +18,10 @@ internal object SpotifyPlaylistEditorApi {
             val playlist = ownedPlaylist(context, id, session)
             val ownerId = checkNotNull(playlist.owner).id
             val name = linkedPlaylist(context, id, ownerId, localId)?.name ?: playlist.name
-            val marker = localId?.let { "Spotui-ID: $it" }
+            val markers = localId?.let(::playlistLinkMarkers).orEmpty()
             val description = playlist.description.orEmpty()
-            val editableDescription = if (marker == null) description else description.lineSequence()
-                .filterNot { it.trim() == marker }.joinToString("\n").trim()
+            val editableDescription = if (markers.isEmpty()) description else description.lineSequence()
+                .filterNot { it.trim() in markers }.joinToString("\n").trim()
             Details(name, editableDescription, ownerId)
         }
 
@@ -39,15 +32,15 @@ internal object SpotifyPlaylistEditorApi {
         localId: String?,
         name: String?,
         description: String?,
-        cover: Uri?,
-    ): SaveResult = withContext(Dispatchers.IO) {
+    ) = withContext(Dispatchers.IO) {
         val session = SpotifySession.spDc(context)
         val remote = ownedPlaylist(context, id, session)
         check(remote.owner?.id == ownerId) { "La cuenta de Spotify ha cambiado." }
         val local = linkedPlaylist(context, id, ownerId, localId)
         val remoteName = name?.takeIf { local == null && it != remote.name }
-        val marker = localId?.let { "Spotui-ID: $it" }
-            ?.takeIf { current -> remote.description.orEmpty().lineSequence().any { it.trim() == current } }
+        val marker = localId?.let(::playlistLinkMarkers)?.firstOrNull { current ->
+            remote.description.orEmpty().lineSequence().any { it.trim() == current }
+        }
         val remoteDescription = description?.let {
             if (marker == null) it else listOf(it, marker).filter(String::isNotBlank).joinToString("\n")
         }?.takeUnless { it == remote.description.orEmpty() }
@@ -65,18 +58,6 @@ internal object SpotifyPlaylistEditorApi {
             LocalPlaylistPref.saveSyncedPlaylist(context, latest, latest.copy(name = name))
             LocalSpotifyMirror.onRenamed(context, localId, name)
         }
-        if (cover == null) return@withContext SaveResult()
-        try {
-            val coverData = encodeCover(context, cover)
-            checkSession(context, session)
-            Spotify.uploadPlaylistCover(id, coverData).getOrThrow()
-            checkSession(context, session)
-            SaveResult()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            SaveResult(error.message ?: "No se pudo subir la portada a Spotify.")
-        }
     }
 
     private fun linkedPlaylist(context: Context, id: String, ownerId: String, localId: String?) =
@@ -90,7 +71,7 @@ internal object SpotifyPlaylistEditorApi {
         com.metrolist.spotify.models.SpotifyPlaylist {
         require(id.matches(Regex("[A-Za-z0-9]{22}")))
         check(session.isNotBlank() && SpotifyTokenProvider.ensureToken(context)) {
-            "Vuelve a iniciar sesión en Spotify desde los ajustes de Spotui."
+            "Vuelve a iniciar sesión en Spotify desde los ajustes de Spotidroid."
         }
         checkSession(context, session)
         val ownerId = Spotify.me().getOrThrow().id
@@ -107,26 +88,4 @@ internal object SpotifyPlaylistEditorApi {
         check(SpotifySession.spDc(context) == session) { "La cuenta de Spotify ha cambiado." }
     }
 
-    private fun encodeCover(context: Context, uri: Uri): String {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-        require(bounds.outWidth > 0 && bounds.outHeight > 0) { "No se pudo leer la imagen." }
-        val options = BitmapFactory.Options().apply { inSampleSize = 1 }
-        while (maxOf(bounds.outWidth, bounds.outHeight) / options.inSampleSize > 1_024) {
-            options.inSampleSize *= 2
-        }
-        val cover = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
-            ?: error("No se pudo abrir la portada.")
-        try {
-            for (quality in 90 downTo 30 step 10) {
-                val bytes = ByteArrayOutputStream()
-                if (cover.compress(Bitmap.CompressFormat.JPEG, quality, bytes) && bytes.size() <= 192_000) {
-                    return Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP)
-                }
-            }
-            error("La imagen supera el tamaño que admite Spotify.")
-        } finally {
-            cover.recycle()
-        }
-    }
 }

@@ -46,7 +46,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.music.spotui.ui.notification.PlaybackService
-import com.music.spotui.ui.theme.SpotuiTheme
+import com.music.spotui.ui.theme.SpotidroidTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 
@@ -118,7 +118,7 @@ class MainActivity : ComponentActivity() {
                 pipAutoEnterEnabled = canEnter
                 lastPipVideoSize = pair
             }
-            .onFailure { android.util.Log.w("SpotuiPiP", "Could not configure PiP", it) }
+            .onFailure { android.util.Log.w("SpotidroidPiP", "Could not configure PiP", it) }
     }
 
     /** The native PiP surface is attached first; navigation stays mounted underneath. */
@@ -174,7 +174,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?){
 
         super.onCreate(savedInstanceState)
-        com.music.spotui.data.preferences.SpotuiLanguage.initialize(this)
+        com.music.spotui.data.preferences.SpotidroidLanguage.initialize(this)
 
         // Ask for notification permission (Android 13+) so the media notification shows.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -202,7 +202,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             // ComponentActivity does not install AppCompat locales into Compose resources.
             // A localized Context + Configuration lets all stringResource callers refresh live.
-            val appLanguage = com.music.spotui.data.preferences.SpotuiLanguage.current
+            val appLanguage = com.music.spotui.data.preferences.SpotidroidLanguage.current
             val parentContext = LocalContext.current
             val systemConfiguration = LocalConfiguration.current
             val localeConfiguration = remember(appLanguage, systemConfiguration) {
@@ -224,7 +224,7 @@ class MainActivity : ComponentActivity() {
                 LocalContext provides localizedContext,
                 LocalConfiguration provides localeConfiguration
             ) {
-            SpotuiTheme {
+            SpotidroidTheme {
                 // Keep the original Compose navigation and audio session mounted while
                 // Android displays only the video surface in its PiP window.
                 Box(Modifier.fillMaxSize()) {

@@ -26,21 +26,21 @@ object BatteryOptimizationHelper {
 
     fun getManufacturerTips(): Pair<String, String>? = when (Build.MANUFACTURER.lowercase()) {
         "xiaomi", "redmi", "poco" -> "Xiaomi / MIUI" to
-            "Settings > Apps > Manage apps > Spotui > Battery saver > No restrictions"
+            "Settings > Apps > Manage apps > Spotidroid > Battery saver > No restrictions"
         "huawei", "honor" -> "Huawei / EMUI" to
-            "Settings > Apps > Apps > Spotui > Battery > Allow background activity"
+            "Settings > Apps > Apps > Spotidroid > Battery > Allow background activity"
         "samsung" -> "Samsung / One UI" to
-            "Settings > Apps > Spotui > Battery > Allow background activity"
+            "Settings > Apps > Spotidroid > Battery > Allow background activity"
         "oneplus", "realme" -> "OnePlus / ColorOS" to
-            "Settings > Apps > Spotui > Battery usage > Allow background activity"
+            "Settings > Apps > Spotidroid > Battery usage > Allow background activity"
         "oppo" -> "OPPO / ColorOS" to
-            "Settings > Apps > Spotui > Battery usage > Allow background activity"
+            "Settings > Apps > Spotidroid > Battery usage > Allow background activity"
         "vivo" -> "Vivo / Funtouch" to
-            "Settings > Apps > Spotui > Battery > Background restriction > Unrestricted"
+            "Settings > Apps > Spotidroid > Battery > Background restriction > Unrestricted"
         "sony" -> "Sony / Xperia" to
-            "Settings > Apps > Spotui > Battery > Battery optimization > Don't optimize"
+            "Settings > Apps > Spotidroid > Battery > Battery optimization > Don't optimize"
         "nothing" -> "Nothing OS" to
-            "Settings > Apps > Spotui > Battery > Unrestricted"
+            "Settings > Apps > Spotidroid > Battery > Unrestricted"
         else -> null
     }
 }

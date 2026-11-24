@@ -153,7 +153,7 @@ internal object PodcastVideoStreams {
             videoProbeClient.newCall(request).execute().use { result ->
                 val valid = result.code == 200 || result.code == 206
                 val readable = valid && result.body?.source()?.request(1L) == true
-                Log.d("SpotuiPodcastVideo", "video stream probe status=${result.code} readable=$readable")
+                Log.d("SpotidroidPodcastVideo", "video stream probe status=${result.code} readable=$readable")
                 readable
             }
         }.getOrElse { false }
@@ -234,7 +234,7 @@ internal object PodcastVideoStreams {
             }.distinctBy { it.height }.take(4).toList()
         if (result.isNotEmpty()) {
             videoOptionsCache[videoId] = now to result
-            Log.i("SpotuiStartup", "video source reused from audio metadata without extra HTTP requests")
+            Log.i("SpotidroidStartup", "video source reused from audio metadata without extra HTTP requests")
         }
         return result
     }
@@ -319,7 +319,7 @@ internal object PodcastVideoStreams {
         }
         val encoded = android.util.Base64.encodeToString(
             xmlManifest.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
-        Log.i("SpotuiStartup", "Video DASH adaptation set available: ${formats.size} renditions")
+        Log.i("SpotidroidStartup", "Video DASH adaptation set available: ${formats.size} renditions")
         return MediaItem.Builder()
             .setUri("data:application/dash+xml;base64,$encoded")
             .setMimeType(MimeTypes.APPLICATION_MPD)
@@ -373,7 +373,7 @@ internal object PodcastVideoStreams {
                 frameRate = first.fps ?: 30
             )
             videoOptionsCache[videoId] = System.currentTimeMillis() to listOf(quality)
-            Log.i("SpotuiStartup", "Podcast audio response decoded one video stream for fast toggle")
+            Log.i("SpotidroidStartup", "Podcast audio response decoded one video stream for fast toggle")
             listOf(quality)
         }
 
@@ -485,7 +485,7 @@ internal object PodcastVideoStreams {
                 if (fromAudio.isNotEmpty()) {
                     val marked = fromAudio.mapIndexed { idx, q -> if (idx == 0) q.copy(verifiedForStartup = true) else q }
                     videoOptionsCache[videoId] = now to marked
-                    Log.d("SpotuiPodcastVideo", "Reused audio player response for videoId=$videoId directly")
+                    Log.d("SpotidroidPodcastVideo", "Reused audio player response for videoId=$videoId directly")
                     return@withContext marked.sortedByDescending { it.height }
                 }
             }
@@ -586,7 +586,7 @@ internal object PodcastVideoStreams {
 @OptIn(UnstableApi::class)
 object PodcastVideoSession {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val tag = "SpotuiPodcastVideo"
+    private val tag = "SpotidroidPodcastVideo"
 
     var activeVideoId by mutableStateOf<String?>(null)
         private set
@@ -767,7 +767,7 @@ object PodcastVideoSession {
                 emptyList()
             }
             if (activeVideoId != videoId) return@launch
-            Log.i("SpotuiStartup", "video metadata ready=" +
+            Log.i("SpotidroidStartup", "video metadata ready=" +
                 "${android.os.SystemClock.elapsedRealtime() - videoRequestedAt}ms " +
                 "qualities=${choices.size} videoId=$videoId")
             val videoOnly = choices.filterNot { it.muxed }
@@ -843,7 +843,7 @@ object PodcastVideoSession {
                 when (state) {
                     Player.STATE_READY -> {
                         if (!hadReadyFrame) {
-                            Log.i("SpotuiStartup", "video first READY=" +
+                            Log.i("SpotidroidStartup", "video first READY=" +
                                 "${now - videoRequestedAt}ms videoId=$videoId " +
                                 "quality=${currentQuality?.label} fps=${currentQuality?.frameRate}")
                         }
@@ -869,7 +869,7 @@ object PodcastVideoSession {
                 firstFrameWatchdog = null
                 isLoading = false
                 error = null
-                if (wasWaiting) Log.i("SpotuiStartup", "video FIRST_FRAME=${android.os.SystemClock.elapsedRealtime() - videoRequestedAt}ms videoId=$videoId")
+                if (wasWaiting) Log.i("SpotidroidStartup", "video FIRST_FRAME=${android.os.SystemClock.elapsedRealtime() - videoRequestedAt}ms videoId=$videoId")
                 if (adaptiveActive && automaticQuality) {
                     // Unlock quality adaptation only after visible video already
                     // plays; Media3's DASH track selector then changes quality

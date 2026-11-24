@@ -957,7 +957,7 @@ private fun LatestReleaseCard(
                         .clickable {
                             showBottomSheet = false
                             val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                putExtra(Intent.EXTRA_TEXT, "Check out ${album.name} by ${album.artists} on Spotui!")
+                                putExtra(Intent.EXTRA_TEXT, "Check out ${album.name} by ${album.artists} on Spotidroid!")
                                 type = "text/plain"
                             }
                             context.startActivity(Intent.createChooser(sendIntent, "Share Release"))

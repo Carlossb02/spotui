@@ -325,7 +325,7 @@ fun setEqualizerBandGains(c: Context, gains: FloatArray) {
 fun getAppLanguage(c: Context): String = prefs(c).getString(KEY_LANGUAGE, "es") ?: "es"
 
 /** Live language preference; Compose observes it at the root and in legacy UI strings. */
-object SpotuiLanguage {
+object SpotidroidLanguage {
     var current by androidx.compose.runtime.mutableStateOf("es")
         private set
 
@@ -339,7 +339,7 @@ object SpotuiLanguage {
 }
 
 fun setAppLanguage(c: Context, lang: String) {
-    SpotuiLanguage.change(c, lang)
+    SpotidroidLanguage.change(c, lang)
 }
 
 

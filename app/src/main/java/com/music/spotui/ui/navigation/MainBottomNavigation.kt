@@ -58,7 +58,7 @@ class NoRippleInteractionSource : MutableInteractionSource {
 }
 
 /**
- * Three real Spotui destinations only. Wide Android tablets use Spotify's
+ * Three real Spotidroid destinations only. Wide Android tablets use Spotify's
  * inline bottom-bar pattern: navigation and mini player are siblings, rather
  * than stacking the mini player above the navigation.
  */

@@ -51,13 +51,16 @@ import com.music.spotui.data.entity.SongsModel
 import com.music.spotui.data.preferences.LocalPlaylistPref
 import com.music.spotui.data.preferences.PlaylistAdditionsPref
 import com.music.spotui.di.SongPlayer
+import com.music.spotui.ui.screens.YouTubeSearchView
+import com.music.spotui.ui.viewmodel.AlternativeSearchViewModel
 import com.music.spotui.ui.viewmodel.SearchViewModel
+import com.music.spotui.util.uiLocalized
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 /** Two explicit destinations: a Spotify catalogue track is synchronized only after a
- * successful Spotify write; a user-provided track uses Spotui membership and the configured Drive sync. */
+ * successful Spotify write; a user-provided track uses Spotidroid membership and the configured Drive sync. */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalGlideComposeApi::class)
 @Composable
 fun PlaylistAddMusicSheet(
@@ -77,6 +80,9 @@ fun PlaylistAddMusicSheet(
     var artist by remember { mutableStateOf("") }
     var album by remember { mutableStateOf("") }
     var artwork by remember { mutableStateOf("") }
+    var durationMs by remember { mutableStateOf(0) }
+    var explicit by remember { mutableStateOf(false) }
+    var metadataBack by remember { mutableStateOf("youtube") }
     var busy by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
@@ -185,6 +191,11 @@ fun PlaylistAddMusicSheet(
                     }
                 }
                 "youtube" -> {
+                    TextButton(onClick = { mode = "youtubeSearch" }) {
+                        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(uiLocalized("Search YouTube"))
+                    }
                     OutlinedTextField(
                         value = youtubeUrl, onValueChange = { youtubeUrl = it },
                         label = { Text(stringResource(R.string.youtube_link)) },
@@ -199,9 +210,36 @@ fun PlaylistAddMusicSheet(
                             artwork = "https://i.ytimg.com/vi/$parsed/hqdefault.jpg"
                             title = ""
                             artist = ""
+                            album = ""
+                            durationMs = 0
+                            explicit = false
+                            metadataBack = "youtube"
                             mode = "metadata"
                         }
                     }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.continue_label)) }
+                }
+                "youtubeSearch" -> {
+                    val youtubeSearch: AlternativeSearchViewModel = hiltViewModel(key = "playlist-youtube-$playlistId")
+                    YouTubeSearchView(
+                        viewModel = youtubeSearch,
+                        songTitle = "",
+                        songArtist = "",
+                        enabled = true,
+                        onBack = { mode = "youtube" },
+                        queryLabel = uiLocalized("Song or artist"),
+                        onUseVideoId = { id ->
+                            val track = youtubeSearch.searchResults.firstOrNull { it.id == id }
+                            videoId = id
+                            title = track?.title.orEmpty()
+                            artist = track?.artists.orEmpty().joinToString(", ") { it.name }
+                            album = track?.album?.name.orEmpty()
+                            artwork = track?.thumbnail.orEmpty().ifBlank { "https://i.ytimg.com/vi/$id/hqdefault.jpg" }
+                            durationMs = (track?.duration ?: 0) * 1000
+                            explicit = track?.explicit == true
+                            metadataBack = "youtubeSearch"
+                            mode = "metadata"
+                        },
+                    )
                 }
                 "metadata" -> {
                     GlideImage(
@@ -222,6 +260,8 @@ fun PlaylistAddMusicSheet(
                             singer = artist.ifBlank { "YouTube" },
                             coverUri = artwork,
                             url = id,
+                            durationMs = durationMs,
+                            explicit = explicit,
                         )
                         if (localPlaylist) LocalPlaylistPref.addSongToPlaylist(context, playlistId, track)
                         else PlaylistAdditionsPref.add(context, playlistId, track)
@@ -229,8 +269,8 @@ fun PlaylistAddMusicSheet(
                     }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.save_locally)) }
                 }
             }
-            if (mode != "choose") {
-                TextButton(onClick = { mode = if (mode == "metadata") "youtube" else "choose" }) {
+            if (mode != "choose" && mode != "youtubeSearch") {
+                TextButton(onClick = { mode = if (mode == "metadata") metadataBack else "choose" }) {
                     Text(stringResource(R.string.back))
                 }
             }

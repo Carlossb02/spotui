@@ -185,10 +185,12 @@ fun LikedSongsScreen(navController: NavController) {
         val keyboardController = LocalSoftwareKeyboardController.current
         val focusManager = LocalFocusManager.current
 
+        val collectionGlass = com.music.spotui.ui.components.rememberCollectionGlassBackdrop()
         Scaffold(
             modifier = Modifier.fillMaxSize().scrollingCollectionBackground(
                 topColor = likedColor, baseColor = Color(AppBackground.toArgb()),
-                listState = listState, headerKey = "liked_header", coverUri = "https://misc.scdn.co/liked-songs/liked-songs-640.png"),
+                listState = listState, headerKey = "liked_header", coverUri = "https://misc.scdn.co/liked-songs/liked-songs-640.png",
+                glass = collectionGlass),
             containerColor = Color.Transparent,
             topBar = {
                 CenterAlignedTopAppBar(
@@ -317,6 +319,7 @@ fun LikedSongsScreen(navController: NavController) {
                             val playing = likedSongsViewModel.currentSongPlayingState.value
 val currentInList = songs.any { it.id == likedSongsViewModel.currentSongId.value }
 com.music.spotui.ui.components.CollectionActionBar(
+ glass = collectionGlass,
  accent = Color(0xFF7961C7),
  sortMode = currentSort.name, sortDescending = isDescending,
  modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),

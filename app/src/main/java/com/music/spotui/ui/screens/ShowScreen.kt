@@ -177,9 +177,11 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
         if (keyboardVisible) listState.scrollToItem(0)
     }
 
+    val collectionGlass = com.music.spotui.ui.components.rememberCollectionGlassBackdrop()
     com.music.spotui.ui.components.CollectionContentViewport(modifier = Modifier.fillMaxSize()
         .scrollingCollectionBackground(Color(0xFF1E2A38), Color(AppBackground.toArgb()), listState, "podcast_header",
-            coverUri = show?.coverUri?.takeIf { it.isNotBlank() } ?: episodes.firstOrNull()?.coverUri.orEmpty())) {
+            coverUri = show?.coverUri?.takeIf { it.isNotBlank() } ?: episodes.firstOrNull()?.coverUri.orEmpty(),
+            glass = collectionGlass)) {
         LazyColumn(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(
                 start = com.music.spotui.ui.components.LocalCollectionInset.current,
@@ -347,7 +349,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         // The common bar keeps identical slots while episodes load.
                         run {
                             com.music.spotui.ui.components.CollectionActionBar(
- coverUri = show?.coverUri?.takeIf { it.isNotBlank() } ?: episodes.firstOrNull()?.coverUri.orEmpty(),
+ glass = collectionGlass,
  accent = com.music.spotui.ui.components.rememberCollectionAccent(show?.coverUri?.takeIf { it.isNotBlank() } ?: episodes.firstOrNull()?.coverUri.orEmpty()),
  sortMode = currentSort.name, sortDescending = isDescending,
  modifier = Modifier.fillMaxWidth(),

@@ -408,7 +408,7 @@ object YTPlayerUtils {
             null
         }
 
-        Log.i("SpotuiStartup", "ytAuth cost=${android.os.SystemClock.elapsedRealtime() - streamStartedAt}ms " +
+        Log.i("SpotidroidStartup", "ytAuth cost=${android.os.SystemClock.elapsedRealtime() - streamStartedAt}ms " +
             "signature=${signatureTimestamp.timestamp != null} token=${poToken != null}")
 
         // If MAIN_CLIENT needs a PoToken but we couldn't get one (WebView missing, JS
@@ -568,7 +568,7 @@ object YTPlayerUtils {
                 val inProgress = prefetchedResponses.remove(clientIndex)
                 streamPlayerResponse = if (inProgress != null) inProgress.await()
                     else YouTube.player(videoId, playlistId, client, clientSigTimestamp, clientPoToken).getOrNull()
-                Log.i("SpotuiStartup", "ytClient[${clientIndex}] latency=${android.os.SystemClock.elapsedRealtime() - startedClientAt}ms " +
+                Log.i("SpotidroidStartup", "ytClient[${clientIndex}] latency=${android.os.SystemClock.elapsedRealtime() - startedClientAt}ms " +
                     "status=${streamPlayerResponse?.playabilityStatus?.status}")
                 dumpAudioFormats("CLIENT_${client.clientName}", streamPlayerResponse)
             }
@@ -632,7 +632,7 @@ object YTPlayerUtils {
                 val directVerified = selectedDirectUrl != null
                 val newPipeResponse = if (wasOriginallyAgeRestricted || isMultiLangVideo || directVerified) null
                     else YouTube.newPipePlayer(videoId, streamPlayerResponse, preloadedStreams = warmStreams.await())
-                if (directVerified) Log.i("SpotuiStartup", "ytDirectAudio verified; extraction wait avoided")
+                if (directVerified) Log.i("SpotidroidStartup", "ytDirectAudio verified; extraction wait avoided")
                 val responseToUse = newPipeResponse ?: streamPlayerResponse
 
                 // 3. Match targetItag in responseToUse to get NewPipe's playable URL for that exact Spanish track
@@ -854,7 +854,7 @@ object YTPlayerUtils {
         if (isUploadedTrack) {
             println("[PLAYBACK_DEBUG] SUCCESS: Got playback data for uploaded track - format=${format.mimeType}, streamUrl=${streamUrl.take(100)}...")
         }
-        Log.i("SpotuiStartup", "ytStream total=${android.os.SystemClock.elapsedRealtime() - streamStartedAt}ms " +
+        Log.i("SpotidroidStartup", "ytStream total=${android.os.SystemClock.elapsedRealtime() - streamStartedAt}ms " +
             "videoId=$videoId format=${format.itag} track=${format.audioTrack?.id ?: "default"}")
         PlaybackData(
             streamPlayerResponse?.playerConfig?.audioConfig ?: mainPlayerResponse?.playerConfig?.audioConfig,

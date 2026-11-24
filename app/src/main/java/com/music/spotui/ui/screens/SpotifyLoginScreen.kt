@@ -95,7 +95,7 @@ private const val SPOTIFY_GREEN = 0xFF1ED760
 fun SpotifyLoginScreen(navController: NavController) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val language=com.music.spotui.data.preferences.SpotuiLanguage.current
+    val language=com.music.spotui.data.preferences.SpotidroidLanguage.current
     fun message(value:String)=localizedUiText(value,language)
     var active by remember {mutableStateOf(true)}
     DisposableEffect(Unit) {onDispose {active=false}}
