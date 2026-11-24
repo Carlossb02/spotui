@@ -59,7 +59,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -85,7 +84,6 @@ import com.music.spotui.ui.screens.PodcastVideoFrame
 import com.music.spotui.ui.screens.PodcastVideoSession
 import com.music.spotui.ui.navigation.Routes
 import com.music.spotui.ui.theme.AppBackground
-import com.music.spotui.ui.theme.GridBackground
 import com.music.spotui.ui.viewmodel.PlayerViewModel
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.SwipeToDismissBox
@@ -146,12 +144,15 @@ private fun MiniOutputRouteButton(onClick: () -> Unit, size: Dp = 36.dp) {
     }
 }
 
+private val miniPlayerArtworkColors = com.music.spotui.util.ExpiringLruCache<String, Color>(32, 30 * 60_000L)
+
 @OptIn(ExperimentalGlideComposeApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun MiniPlayer(
     navController: NavHostController,
     onExpandPlayer: (() -> Unit)? = null,
     tabletLayout: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     val miniPlayerViewModel : PlayerViewModel = hiltViewModel()
     val songTitle by miniPlayerViewModel.currentSongTitle
@@ -186,15 +187,6 @@ fun MiniPlayer(
 
     val context = LocalContext.current
 
-    var darkVibrantColor by remember {
-        mutableStateOf(Color(GridBackground.toArgb()))
-    }
-    LaunchedEffect(songCoverUri) {
-        Palette().extractFirstColorFromImageUrl(context = context, songCoverUri) { color ->
-            darkVibrantColor = color
-        }
-    }
-
     var isLiked by remember {
         mutableStateOf(false)
     }
@@ -203,7 +195,27 @@ fun MiniPlayer(
         isLiked = isSongLiked(context, songId.toString())
     }
     val currentTrack = miniPlayerViewModel.queue.value.firstOrNull { it.id == songId }
-    val currentArtwork=currentTrack?.let {rememberSongArtwork(it)} ?: songCoverUri
+    val currentArtwork = currentTrack?.let { rememberSongArtwork(it) }
+        .orEmpty().ifBlank { songCoverUri }
+    val neutralBackground = Color(0xFF212121)
+    var artworkColor by remember(currentArtwork) {
+        mutableStateOf(miniPlayerArtworkColors.get(currentArtwork) ?: neutralBackground)
+    }
+    DisposableEffect(context, currentArtwork) {
+        var active = true
+        val cancel = if (currentArtwork.isNotBlank() && miniPlayerArtworkColors.get(currentArtwork) == null) {
+            Palette().extractFirstColorFromImageUrl(context, currentArtwork) { color ->
+                if (active) {
+                    miniPlayerArtworkColors.put(currentArtwork, color)
+                    artworkColor = color
+                }
+            }
+        } else null
+        onDispose {
+            active = false
+            cancel?.invoke()
+        }
+    }
     val isSaved = rememberTrackSaved(currentTrack, isLiked)
     var showSavedIn by remember { mutableStateOf(false) }
     var showDevicesSheet by remember { mutableStateOf(false) }
@@ -298,9 +310,9 @@ fun MiniPlayer(
             ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
         val videoActive = PodcastVideoSession.isActive(podcastVideoId)
         Column(
-            Modifier.fillMaxWidth().height(60.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color(0xFF212121))
+            modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(artworkColor)
                 .then(gesture)
         ) {
             Row(
@@ -324,7 +336,7 @@ fun MiniPlayer(
                     val coverModifier = if (podcastVideoId != null) {
                         Modifier.padding(start = 7.dp, top = 5.dp, bottom = 5.dp)
                             .width(88.dp).fillMaxHeight()
-                    } else Modifier.padding(start = 7.dp).size(45.dp)
+                    } else Modifier.padding(start = 7.dp).size(50.dp)
                     if (currentTrack != null && com.music.spotui.data.preferences.PodcastResumeStore.isEpisode(currentTrack.url)) {
                         EpisodeArtwork(episode = currentTrack, modifier = coverModifier, radius = 7.dp)
                     } else {
@@ -376,11 +388,10 @@ fun MiniPlayer(
     }
 
     Column(
-        modifier = Modifier
-
+        modifier = modifier
             .padding(13.dp, 0.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(darkVibrantColor)
+            .background(artworkColor)
             .padding(8.dp, 0.dp)
 
     ) {
