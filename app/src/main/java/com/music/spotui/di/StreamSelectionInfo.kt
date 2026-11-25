@@ -8,11 +8,11 @@ import org.json.JSONObject
 
 internal data class StreamSelectionInfo(val videoId:String,val title:String="",val artist:String="",
     val score:Int?=null,val stage:Int?=null,val explicit:Boolean?=null,val criteria:String="",
-    val mode:String="Automatic",val selectedAt:Long=System.currentTimeMillis()) {
+    val mode:String="Automatic",val selectedAt:Long=System.currentTimeMillis(),val recordingMatch:Boolean=false) {
     val youtubeUrl get()="https://www.youtube.com/watch?v=$videoId"
     fun json()=JSONObject().put("video",videoId).put("title",title).put("artist",artist)
         .put("score",score).put("stage",stage).put("explicit",explicit).put("criteria",criteria)
-        .put("mode",mode).put("at",selectedAt)
+        .put("mode",mode).put("at",selectedAt).put("recordingMatch",recordingMatch)
 }
 
 /** Persist only the successful candidate, after ordered concurrent resolution chooses its result. */
@@ -38,13 +38,14 @@ internal object StreamSelections {
         val o=JSONObject(raw)
         StreamSelectionInfo(o.getString("video"),o.optString("title"),o.optString("artist"),
             if(o.has("score"))o.getInt("score") else null,if(o.has("stage"))o.getInt("stage") else null,
-            if(o.has("explicit"))o.getBoolean("explicit") else null,o.optString("criteria"),o.optString("mode"),o.optLong("at"))
+            if(o.has("explicit"))o.getBoolean("explicit") else null,o.optString("criteria"),o.optString("mode"),o.optLong("at"),
+            o.optBoolean("recordingMatch"))
             .also {selected[query]=it}
     }.getOrNull()
     fun resolved(context:Context,query:String,videoId:String,mode:String="Automatic") {
         val info=candidates["$query|$videoId"] ?: get(context,query)?.takeIf {it.videoId==videoId}
             ?: StreamSelectionInfo(videoId,criteria="Selection details were not retained for this stream.",mode=mode)
-        val result=info.copy(mode=mode,selectedAt=System.currentTimeMillis())
+        val result=info.copy(mode=mode,selectedAt=System.currentTimeMillis(),recordingMatch=true)
         selected[query]=result
         context.getSharedPreferences("stream_selection_info_v1",0).edit().putString(query,result.json().toString()).apply()
         com.music.spotui.data.api.ResolvedSongArtwork.resolved(context,query,videoId)

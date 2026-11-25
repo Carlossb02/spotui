@@ -1577,8 +1577,9 @@ private fun HomeShortcutGrid(navController: NavController, items: List<HomeItem>
 
 @Composable
 private fun HomeFeedSection(navController: NavController, section: HomeSection) {
+    val language = com.music.spotui.data.preferences.SpotidroidLanguage.current
     Text(
-        text = section.title,
+        text = com.music.spotui.util.localizedHomeLabel(section.title, language),
         color = Color.White,
         fontSize = 21.sp,
         fontWeight = FontWeight.Bold,
@@ -1600,6 +1601,7 @@ private fun HomeFeedCard(item: HomeItem, onClick: () -> Unit) {
         is HomeItem.Playlist -> item.subtitle
         is HomeItem.Artist -> "Artist"
     }
+    val language = com.music.spotui.data.preferences.SpotidroidLanguage.current
     Column(
         horizontalAlignment = if (isArtist) Alignment.CenterHorizontally else Alignment.Start,
         modifier = Modifier
@@ -1630,7 +1632,7 @@ private fun HomeFeedCard(item: HomeItem, onClick: () -> Unit) {
             textAlign = if (isArtist) TextAlign.Center else TextAlign.Start,
         )
         Text(
-            text = subtitle,
+            text = com.music.spotui.util.localizedHomeLabel(subtitle, language),
             color = Color(0xFFB3B3B3),
             fontSize = 11.sp,
             maxLines = 2,
@@ -2089,7 +2091,7 @@ private fun formatReleaseDate(raw: String): String {
 
 @OptIn(ExperimentalGlideComposeApi::class)
 @Composable
-private fun PodcastCatalogueCard(show: com.music.spotui.data.entity.PodcastModel, onClick: () -> Unit) {
+internal fun PodcastCatalogueCard(show: com.music.spotui.data.entity.PodcastModel, onClick: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     Column(Modifier.width(164.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF181818))
         .clickable(onClick = onClick).padding(10.dp)) {

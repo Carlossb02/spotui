@@ -6,7 +6,6 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.FileProvider
-import androidx.core.content.pm.PackageInfoCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 import okhttp3.HttpUrl
@@ -130,9 +129,6 @@ internal object UpdateInstaller {
         val incomingSigners = signers(incoming)
         if (incoming.packageName != installed.packageName) {
             throw VerificationException("La APK de GitHub pertenece a otro paquete de Android.")
-        }
-        if (PackageInfoCompat.getLongVersionCode(incoming) <= PackageInfoCompat.getLongVersionCode(installed)) {
-            throw VerificationException("La APK de GitHub tiene la misma versión interna o una anterior a la instalada.")
         }
         if (installedSigners.isEmpty() || incomingSigners.isEmpty()) {
             throw VerificationException("Android no pudo leer los certificados de la APK o de la app instalada.")

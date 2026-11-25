@@ -211,6 +211,10 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     val editScope = androidx.compose.runtime.rememberCoroutineScope()
     val libraryRevision by com.music.spotui.sync.OwnLibraryChanges.revision.collectAsState()
     var playlistSaved by remember(remotePlaylistId) { mutableStateOf<Boolean?>(null) }
+    var membershipResolved by remember(remotePlaylistId) { mutableStateOf(false) }
+    val playlistPermissionsReady = if (profilePlaylistId.isBlank()) {
+        !isLocalPlaylist || linkedSpotifyId != null
+    } else accessResolved && (playlistSaved != null || membershipResolved)
     var playlistSaveBusy by remember(remotePlaylistId) { mutableStateOf(false) }
     var membershipResume by remember(remotePlaylistId) { mutableStateOf(0) }
     LaunchedEffect(remotePlaylistId, libraryRevision, membershipResume) {
@@ -225,6 +229,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             } catch (_: Exception) {
                 // Keep the last confirmed or queued state when the library is offline.
             }
+            membershipResolved = true
         }
     }
     var awaitingSpotifyReturn by remember(profilePlaylistId) { mutableStateOf(false) }
@@ -317,7 +322,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     var currentSort by remember(playlistId) { mutableStateOf(getPlaylistSortOption(context, playlistId)) }
     var isDescending by remember(playlistId) { mutableStateOf(isPlaylistSortDescending(context, playlistId)) }
     var showSortSheet by remember { mutableStateOf(false) }
-    var showPlaylistActions by remember { mutableStateOf(false) }
+    var showPlaylistActions by remember(playlistId) { mutableStateOf(false) }
     var showCopyPlaylist by remember { mutableStateOf(false) }
     var showAddMusic by remember { mutableStateOf(false) }
     if (showAddMusic && canEditPlaylist) {
@@ -370,6 +375,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         mutableStateOf(initialAction)
     }
     val songsSettled by playlistViewModel.songsSettled.collectAsState()
+    val canShowPlaylistActions = playlistPermissionsReady && belongsToPlaylist && (songs.isNotEmpty() || songsSettled)
     LaunchedEffect(pendingAction, belongsToPlaylist, songsSettled, canEditPlaylist, accessResolved, linkedSpotifyId) {
         val action = LibraryPlaylistAction.entries.firstOrNull { it.name == pendingAction } ?: return@LaunchedEffect
         if (!belongsToPlaylist) return@LaunchedEffect
@@ -833,7 +839,7 @@ com.music.spotui.ui.components.CollectionActionBar(
                         }
                     }
 
-                    if (!canEditPlaylist && !playlistId.startsWith("local_pl_")) item(key = "playlist_read_only") {
+                    if (accessResolved && !canEditPlaylist && !isLocalPlaylist) item(key = "playlist_read_only") {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Add, null, tint = Color(0xFF1ED760),
@@ -949,6 +955,14 @@ com.music.spotui.ui.components.CollectionActionBar(
                     Text(uiLocalized("Opciones de la lista"), color = Color.White,
                         fontWeight = FontWeight.Bold, fontSize = 20.sp,
                         modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 18.dp))
+                    if (!canShowPlaylistActions) {
+                        Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                Modifier.size(24.dp), color = Color(0xFF1ED760), strokeWidth = 2.dp,
+                            )
+                        }
+                        return@Column
+                    }
                     spotifyUrl?.let { url ->
                         PlaylistSpotifyMenuItems(url,
                             onDismiss = { showPlaylistActions = false },

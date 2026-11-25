@@ -3,7 +3,6 @@ package com.music.spotui.ui.components
 import android.content.Intent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,6 +15,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -46,6 +47,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -53,6 +55,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ClippingMediaSource
+import androidx.media3.exoplayer.source.FilteringMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
@@ -73,6 +76,8 @@ import com.music.spotui.di.SongPlayer
 import com.music.spotui.ui.screens.PodcastVideoStreams
 import com.music.spotui.ui.screens.CanvasVideo
 import com.music.spotui.util.ExpiringLruCache
+import com.music.spotui.util.SharedWork
+import com.music.spotui.util.uiLocalized
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -152,6 +157,9 @@ private fun CollectionStoryPager(
     val pager = rememberPagerState(initialPage = initialPage) { pages }
     var pendingPosition by remember { mutableLongStateOf(if (restoredIndex >= 0) resumePosition else 0L) }
     val audioCache = remember { ExpiringLruCache<String, String>(8, 4 * 60_000L) }
+    val videoCache = remember { ExpiringLruCache<String, String>(8, 4 * 60_000L) }
+    val lookupScope = rememberCoroutineScope()
+    val videoLookups = remember(lookupScope) { SharedWork<String, String?>(lookupScope) }
     val player = remember {
         ExoPlayer.Builder(context).setLoadControl(
             DefaultLoadControl.Builder().setBufferDurationsMs(2_500, 12_000, 350, 700).build(),
@@ -221,6 +229,16 @@ private fun CollectionStoryPager(
             withContext(Dispatchers.IO) { SongPlayer.resolveCollectionStory(song, context.applicationContext) }
         }?.also { audioCache.put(song.url, it) }
 
+    fun episodeVideoId(song: SongsModel): String? = song.url.takeIf { it.startsWith("yt_ep:") }
+        ?.removePrefix("yt_ep:")?.substringBefore('|')?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
+    val currentEpisodeVideoId by rememberUpdatedState(episodeVideoId(active))
+
+    suspend fun videoFor(videoId: String): String? = videoCache.get(videoId) ?: videoLookups.await(videoId) {
+        resolveStoryContent(18_000L) {
+            PodcastVideoStreams.resolveStoryPreview(videoId)
+        }?.also { videoCache.put(videoId, it) }
+    }
+
     fun trackId(song: SongsModel): String = SpotifySync.cleanTrackId(song.spotifyTrackId.ifBlank {
         song.url.substringBefore('|').takeIf { it.startsWith("spotify:track:") }.orEmpty()
     })
@@ -234,8 +252,19 @@ private fun CollectionStoryPager(
             }
         }?.also { canvasCache.put(id, it) }
     }
-    suspend fun mediaFactory() = withContext(Dispatchers.IO) {
-        ProgressiveMediaSource.Factory(StoryMediaCache.factory(context.applicationContext))
+    suspend fun mediaFactory(video: Boolean = false) = withContext(Dispatchers.IO) {
+        ProgressiveMediaSource.Factory(StoryMediaCache.factory(context.applicationContext, video))
+    }
+
+    fun restoreStoryAudio(): Boolean {
+        val backup = audioFallback ?: return false
+        val position = player.currentPosition.coerceIn(0L, STORY_DURATION_MS - 1L)
+        audioFallback = null
+        hasVideo = false
+        currentEpisodeVideoId?.let { videoCache.remove(it) }
+        player.setMediaSource(backup, position)
+        player.prepare()
+        return true
     }
 
     DisposableEffect(player, lifecycle) {
@@ -243,15 +272,7 @@ private fun CollectionStoryPager(
             override fun onPlaybackStateChanged(playbackState: Int) { status = playbackState }
             override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
             override fun onPlayerError(error: PlaybackException) {
-                val backup = audioFallback
-                audioFallback = null
-                hasVideo = false
-                if (backup != null) {
-                    player.setMediaSource(backup)
-                    player.prepare()
-                } else {
-                    failure = true
-                }
+                if (!restoreStoryAudio()) failure = true
             }
         }
         val observer = LifecycleEventObserver { _, event ->
@@ -293,22 +314,16 @@ private fun CollectionStoryPager(
         hasVideo = false
         audioFallback = null
         val song = active
-        val (audio, video) = coroutineScope {
-            val videoId = song.url.takeIf { it.startsWith("yt_ep:") }
-                ?.removePrefix("yt_ep:")?.substringBefore('|')?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
-            val preview = videoId?.let { id -> async {
-                resolveStoryContent(5_000L) { PodcastVideoStreams.resolvePreview(id)?.url }
-            } }
-            val url = audioFor(song)
-            val videoUrl = if (url == null) null else preview?.let { withTimeoutOrNull(1_600L) { it.await() } }
-            preview?.cancel()
-            url to videoUrl
-        }
+        val videoId = episodeVideoId(song)
+        val preview = videoId?.let { id -> async { videoFor(id) } }
+        val audio = audioFor(song)
         if (audio.isNullOrBlank()) {
+            preview?.cancel()
             failure = true
             return@LaunchedEffect
         }
         val factory = mediaFactory()
+        val videoFactory = videoId?.let { mediaFactory(video = true) }
         fun source(url: String) = factory.createMediaSource(MediaItem.fromUri(url))
         val actualDuration = durationCache.get(audio) ?: run {
             player.setMediaSource(source(audio))
@@ -319,6 +334,7 @@ private fun CollectionStoryPager(
             }?.also { durationCache.put(audio, it) }
         }
         if (actualDuration == null) {
+            preview?.cancel()
             player.stop()
             failure = true
             return@LaunchedEffect
@@ -326,22 +342,37 @@ private fun CollectionStoryPager(
         val start = storyStartPosition(actualDuration)
         fun clip(media: MediaSource): MediaSource = ClippingMediaSource.Builder(media)
             .setStartPositionMs(start).setEndPositionMs(start + STORY_DURATION_MS).build()
+        fun selectMedia(video: String?, position: Long) {
+            val audioSource = source(audio)
+            audioFallback = if (video != null) clip(source(audio)) else null
+            hasVideo = video != null
+            val media = if (video == null) audioSource else MergingMediaSource(
+                true, audioSource, FilteringMediaSource(
+                    checkNotNull(videoFactory).createMediaSource(MediaItem.fromUri(video)), C.TRACK_TYPE_VIDEO,
+                ),
+            )
+            player.setMediaSource(clip(media), position)
+            player.prepare()
+            player.playWhenReady = latestCanPlayPreview
+        }
         if (restore == null) restore = SongPlayer.pauseForCollectionStories()
-        if (video != null) audioFallback = clip(source(audio))
-        hasVideo = video != null
         val target = if (page == initialPage) pendingPosition.coerceIn(
             0L, (minOf(actualDuration, STORY_DURATION_MS) - 1L).coerceAtLeast(0L)
         ) else 0L
         pendingPosition = 0L
-        player.setMediaSource(
-            if (video == null) clip(source(audio)) else clip(MergingMediaSource(true, source(audio), source(video))),
-            target,
-        )
-        player.prepare()
+        val readyVideo = if (preview?.isCompleted == true) preview.await() else null
+        selectMedia(readyVideo, target)
         preparedPage = page
-        player.playWhenReady = latestCanPlayPreview
+        if (readyVideo == null) {
+            val lateVideo = preview?.await()
+            if (lateVideo != null && !failure) {
+                val position = player.currentPosition.coerceIn(0L,
+                    (minOf(actualDuration, STORY_DURATION_MS) - 1L).coerceAtLeast(0L))
+                selectMedia(lateVideo, position)
+            }
+        }
         delay(10_000L)
-        if (status == Player.STATE_BUFFERING) {
+        if (status == Player.STATE_BUFFERING && !restoreStoryAudio()) {
             player.stop()
             failure = true
         }
@@ -351,6 +382,7 @@ private fun CollectionStoryPager(
         val next = clips[(page + 1) % clips.size]
         coroutineScope {
             launch { canvasFor(next) }
+            launch { episodeVideoId(next)?.let { videoFor(it) } }
             launch {
                 val url = audioFor(next) ?: return@launch
                 val factory = mediaFactory()
@@ -447,10 +479,9 @@ private fun CollectionStoryPager(
                         if (selected) {
                             when {
                                 podcast != null -> StoryPodcastFollowButton(podcast)
-                                artists.size > 1 -> OutlinedButton(onClick = { artistMenu = true },
-                                    contentPadding = PaddingValues(horizontal = 10.dp)) {
-                                    Text("Ver todos", color = Color.White, maxLines = 1)
-                                }
+                                artists.size > 1 -> StoryActionButton(
+                                    uiLocalized("See all"), StoryActionStyle.Browse,
+                                ) { artistMenu = true }
                                 artists.size == 1 -> StoryArtistFollowButton(artists.first(), followed, followChoices)
                             }
                         }
@@ -511,8 +542,10 @@ private fun CollectionStoryPager(
 private object StoryMediaCache {
     private var cache: androidx.media3.datasource.cache.SimpleCache? = null
 
-    @Synchronized fun factory(context: android.content.Context): androidx.media3.datasource.DataSource.Factory {
-        val upstream = DefaultDataSource.Factory(context)
+    @Synchronized fun factory(context: android.content.Context, video: Boolean): androidx.media3.datasource.DataSource.Factory {
+        val upstream = if (video) DefaultDataSource.Factory(context,
+            androidx.media3.datasource.DefaultHttpDataSource.Factory().setUserAgent(PodcastVideoStreams.USER_AGENT))
+        else DefaultDataSource.Factory(context)
         val store = cache ?: runCatching {
             androidx.media3.datasource.cache.SimpleCache(
                 java.io.File(context.cacheDir, "story_media"),
@@ -611,10 +644,38 @@ private fun StoryPodcastFollowButton(podcast: PodcastModel) {
 
 @Composable
 private fun StoryFollowControl(following: Boolean, onClick: () -> Unit) {
-    OutlinedButton(onClick = onClick,
-        colors = ButtonDefaults.outlinedButtonColors(containerColor = if (following) Color(0xFF206047) else Color.Black.copy(alpha = .48f)),
-        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)) {
-        Text(if (following) "Siguiendo" else "Seguir", color = Color.White, maxLines = 1)
+    StoryActionButton(
+        uiLocalized(if (following) "Following" else "Follow"),
+        if (following) StoryActionStyle.Following else StoryActionStyle.Follow,
+        onClick,
+    )
+}
+
+private enum class StoryActionStyle { Browse, Follow, Following }
+
+@Composable
+private fun StoryActionButton(label: String, style: StoryActionStyle, onClick: () -> Unit) {
+    val border = Color.White.copy(alpha = if (style == StoryActionStyle.Following) .92f else .64f)
+    val fill = when (style) {
+        StoryActionStyle.Browse -> Color.White.copy(alpha = .14f)
+        StoryActionStyle.Follow -> Color.Black.copy(alpha = .2f)
+        StoryActionStyle.Following -> Color.Black.copy(alpha = .34f)
+    }
+    Box(Modifier.heightIn(min = 48.dp).clip(CircleShape)
+        .clickable(role = Role.Button, onClick = onClick), contentAlignment = Alignment.Center) {
+        Row(
+            Modifier.heightIn(min = 29.dp).border(1.dp, border, CircleShape)
+                .background(fill, CircleShape).padding(horizontal = 11.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(label, color = Color.White, maxLines = 1, fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.labelMedium)
+            if (style == StoryActionStyle.Browse) {
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null,
+                    modifier = Modifier.size(13.dp), tint = Color.White)
+            }
+        }
     }
 }
 

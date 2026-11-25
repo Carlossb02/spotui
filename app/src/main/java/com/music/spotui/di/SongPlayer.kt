@@ -517,6 +517,9 @@ object SongPlayer {
         java.util.concurrent.ConcurrentHashMap<String, TrackMatchMetadata>()
     private val registeredMetadataInputs =
         java.util.concurrent.ConcurrentHashMap<String, Pair<String?, TrackMatchMetadata>>()
+    private val editedMatchQueries = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    private fun matchCacheVersion(query: String): String = if (query in editedMatchQueries) "edited-v1" else ""
 
     fun registerMetadata(pairs: List<Pair<String, TrackMatchMetadata>>) {
         pairs.forEach { (query, meta) ->
@@ -1275,7 +1278,17 @@ object SongPlayer {
             com.music.spotui.data.preferences.getPreloadSongCount(context)),context)
     }
 
-    fun registerTracksForResolution(songs: List<com.music.spotui.data.entity.SongsModel>) {
+    fun registerTracksForResolution(songs: List<com.music.spotui.data.entity.SongsModel>, context: Context? = appCtx) {
+        context?.let {
+            val overrides = com.music.spotui.data.preferences.CustomMetadataPref.getAllOverrides(it)
+            songs.forEach { song ->
+                if (com.music.spotui.data.preferences.CustomMetadataPref.preferredOverride(song,overrides) != null) {
+                    editedMatchQueries.add(song.url)
+                } else {
+                    editedMatchQueries.remove(song.url)
+                }
+            }
+        }
         registerLossless(songs.map { it.url to it.spotifyTrackId })
         registerAlternativeKeys(songs.map { it.url to com.music.spotui.data.preferences.alternativeStreamKey(it) })
         registerExplicit(songs.map { it.url to it.explicit })
@@ -1593,10 +1606,7 @@ object SongPlayer {
             )
         if (alternative?.isLocal == true) return alternative.value
         if (alternative?.isYouTube == true) return resolveStreamUrl("yt_local:${alternative.value}", context)
-        registerLossless(listOf(url to song.spotifyTrackId))
-        registerExplicit(listOf(url to song.explicit))
-        if (song.durationMs > 0) registerDuration(listOf(url to song.durationMs))
-        registerMetadata(listOf(url to TrackMatchMetadata(song.title, song.singer, song.album)))
+        registerTracksForResolution(listOf(song), context)
         return resolveStreamUrl(url, context)
     }
 
@@ -1640,7 +1650,9 @@ object SongPlayer {
             }
             return playback.streamUrl
         }
-        var expectedTier = "${quality.name}:audio-v5-uncensored:${explicitRegistry[song] ?: "unknown"}"
+        fun matchTier() = "${quality.name}:audio-v5-uncensored:${explicitRegistry[song] ?: "unknown"}" +
+            matchCacheVersion(song)
+        var expectedTier = matchTier()
 
         val meta = metadataRegistry[song]
         val matchSong = boundState?.queue?.value?.firstOrNull { it.url == song }
@@ -1800,7 +1812,7 @@ object SongPlayer {
                 withContext(Dispatchers.Main) { boundState?.updateContentRating(song, rating) }
             }
         } }
-        expectedTier = "${quality.name}:audio-v5-uncensored:${explicitRegistry[song] ?: "unknown"}"
+        expectedTier = matchTier()
         preparedPlayback.get(song, preparedMatchInput(song, expectedTier), System.currentTimeMillis())?.let { url ->
             if (streamCache[song] == url && sourceCache[song] == "YouTube") {
                 if (forPlayback) {
@@ -1817,9 +1829,9 @@ object SongPlayer {
         if(networkAvailable && flacSpotifyId!=null) {
             if (!hasRecentVerifiedMetadata(song)) metadataLookup()
             else ensureMatchingContentRating(song, flacSpotifyId, appContext)
-            expectedTier="${quality.name}:audio-v5-uncensored:${explicitRegistry[song] ?: "unknown"}"
+            expectedTier=matchTier()
         }
-        expectedTier="${quality.name}:audio-v5-uncensored:${explicitRegistry[song] ?: "unknown"}"
+        expectedTier=matchTier()
         // A fast cache hit is useful only when the CDN signature is still valid.
         // Without this guard, the player could try a stale URL, hit 403 and spend
         // much longer recovering than a fresh resolution would take.
@@ -1837,7 +1849,7 @@ object SongPlayer {
             val hasDiskCache = runCatching {
                 mediaCache(appContext).getCachedBytes(cacheKey, 0, 100_000L) > 0
             }.getOrDefault(false)
-            if (qualityTierCache[song] == expectedTier || qualityTierCache[song] == null) {
+            if (qualityTierCache[song] == expectedTier || (qualityTierCache[song] == null && song !in editedMatchQueries)) {
                 if (forPlayback || !networkAvailable || hasDiskCache || streamStillValid(song, url)) {
                     if (forPlayback) {
                         currentSource = sourceCache[song] ?: "YouTube"
@@ -1866,7 +1878,8 @@ object SongPlayer {
         if (forPlayback) {
             updateResolveStatus(true)
         }
-        com.music.spotui.data.preferences.getCachedStream(appContext, song, expectedTier = if (networkAvailable) expectedTier else null)?.let { (url, source, cachedQuality) ->
+        com.music.spotui.data.preferences.getCachedStream(appContext, song,
+            expectedTier = if (networkAvailable || song in editedMatchQueries) expectedTier else null)?.let { (url, source, cachedQuality) ->
             val cacheKey = com.music.spotui.audio.LosslessCacheKeyFactory.buildCacheKey(flacSpotifyId, url)
             val hasDiskCache = runCatching {
                 mediaCache(appContext).getCachedBytes(cacheKey, 0, 100_000L) > 0
@@ -3042,7 +3055,7 @@ object SongPlayer {
     }
 
     private fun videoCandidateCacheKey(query:String,filter:YouTube.SearchFilter)=
-        "$query|${filter.value}|MATCH_V15:${explicitRegistry[query] ?: "unknown"}"
+        "$query|${filter.value}|MATCH_V15:${explicitRegistry[query] ?: "unknown"}${matchCacheVersion(query)}"
 
     internal fun applyResolvedArtwork(query:String,url:String) {
         onPlayerThread {boundState?.updateResolvedArtwork(query,url)}

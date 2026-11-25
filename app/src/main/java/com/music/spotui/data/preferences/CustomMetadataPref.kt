@@ -60,9 +60,11 @@ object CustomMetadataPref {
     }
 
     fun getOverride(context: Context, song: SongsModel): TrackMetadataOverride? {
-        val current = getAllOverrides(context)
-        return preferredMetadataOverride(getSongKeys(song),current)
+        return preferredOverride(song, getAllOverrides(context))
     }
+
+    internal fun preferredOverride(song: SongsModel, values: Map<String, TrackMetadataOverride>) =
+        if (values.isEmpty()) null else preferredMetadataOverride(getSongKeys(song), values)
 
     fun applyOverride(context: Context, song: SongsModel): SongsModel {
         val override = getOverride(context, song) ?: return song
