@@ -66,6 +66,15 @@ internal object LibraryCatalogCache {
         replace(context, expectedAccount, playlistEntries(playlists) + previous.filterNot { it.isPlaylist })
         if (removed != previousRemoved) com.music.spotui.sync.OwnLibraryChanges.changed()
     }
+
+    @Synchronized fun playlistRemovalConfirmed(context: Context, expectedAccount: String, id: String) {
+        if (SpotifySession.spDc(context) != expectedAccount) return
+        val remaining = read(context).filterNot { it.isPlaylist && it.spotifyId == id }
+        prefs(context).edit().putStringSet("removed:" + key(expectedAccount),
+            removedPlaylistIds(context, expectedAccount) + id).apply()
+        replace(context, expectedAccount, remaining)
+    }
+
     private fun key(account: String) = java.security.MessageDigest.getInstance("SHA-256")
         .digest(account.toByteArray()).joinToString("") { "%02x".format(it) }
 }

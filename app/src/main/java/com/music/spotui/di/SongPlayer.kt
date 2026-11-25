@@ -1584,6 +1584,43 @@ object SongPlayer {
         }
     }
 
+    internal suspend fun resolveCollectionStory(song: com.music.spotui.data.entity.SongsModel, context: Context): String? {
+        val url = song.url
+        val alternative = if (url.startsWith("yt_ep:")) null else
+            com.music.spotui.data.preferences.getAlternativeStream(
+                context, com.music.spotui.data.preferences.alternativeStreamKey(song),
+            )
+        if (alternative?.isLocal == true) return alternative.value
+        if (alternative?.isYouTube == true) return resolveStreamUrl("yt_local:${alternative.value}", context)
+        registerLossless(listOf(url to song.spotifyTrackId))
+        registerExplicit(listOf(url to song.explicit))
+        if (song.durationMs > 0) registerDuration(listOf(url to song.durationMs))
+        registerMetadata(listOf(url to TrackMatchMetadata(song.title, song.singer, song.album)))
+        return resolveStreamUrl(url, context)
+    }
+
+    internal fun pauseForCollectionStories(): () -> Unit {
+        val generation = playbackGeneration.get()
+        val resume = com.music.spotui.sync.CloudPlayback.remotePlaying() == null && isResolvingOrPlaying()
+        if (resume) pause()
+        return {
+            if (resume && playbackGeneration.get() == generation &&
+                com.music.spotui.sync.CloudPlayback.remotePlaying() == null && !isResolvingOrPlaying()) play()
+        }
+    }
+
+    internal fun playFromCollectionStory(
+        context: Context, songs: List<com.music.spotui.data.entity.SongsModel>,
+        song: com.music.spotui.data.entity.SongsModel, source: String,
+    ) {
+        val state = boundState ?: return
+        state.updateQueue(songs, startSongId = song.id, sourceName = source)
+        val index = state.queue.value.indexOfFirst { it.id == song.id && it.url == song.url }.coerceAtLeast(0)
+        state.updateSongState(song.coverUri, song.title, song.singer, true, song.id, index, song.album)
+        com.music.spotui.ui.notification.PodcastCover.preserve(context, song)
+        playSong(song.url, context, "song/${song.id}")
+    }
+
     private suspend fun doResolveStreamUrl(song: String, appContext: Context, forPlayback: Boolean,
         metadataLookup: suspend () -> TrackMatchMetadata?): String? {
 

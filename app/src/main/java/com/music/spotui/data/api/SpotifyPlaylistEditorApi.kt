@@ -78,21 +78,6 @@ internal object SpotifyPlaylistEditorApi {
         return playlist
     }
 
-    suspend fun isPrivate(context: Context, id: String): Boolean = withContext(Dispatchers.IO) {
-        val session = SpotifySession.spDc(context)
-        check(SpotifyTokenProvider.ensureToken(context)) { "Vuelve a conectar Spotify." }
-        checkSession(context, session)
-        Spotify.playlistIsPrivate(id).getOrThrow().also { checkSession(context, session) }
-    }
-
-    suspend fun setPrivate(context: Context, id: String, ownerId: String, isPrivate: Boolean) =
-        withContext(Dispatchers.IO) {
-            val session = SpotifySession.spDc(context)
-            check(ownedPlaylist(context, id, session).owner?.id == ownerId) { "La cuenta de Spotify ha cambiado." }
-            Spotify.setPlaylistPrivate(id, isPrivate).getOrThrow()
-            checkSession(context, session)
-        }
-
     private suspend fun checkSession(context: Context, session: String) {
         currentCoroutineContext().ensureActive()
         check(SpotifySession.spDc(context) == session) { "La cuenta de Spotify ha cambiado." }
