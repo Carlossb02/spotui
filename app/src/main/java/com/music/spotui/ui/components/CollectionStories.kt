@@ -110,10 +110,12 @@ internal fun CollectionStoriesButton(cover: String, enabled: Boolean, onClick: (
 @Composable
 internal fun CollectionStories(
     title: String, cover: String, songs: List<SongsModel>, accent: Color,
-    navController: NavController, podcast: PodcastModel?, onDismiss: () -> Unit,
+    navController: NavController, podcast: PodcastModel?, shuffleSeed: Int,
+    resumeUrl: String?, resumePosition: Long, resumePaused: Boolean, resumeMuted: Boolean,
+    onVisitArtist: (String, Long, Boolean, Boolean) -> Unit, onDismiss: () -> Unit,
 ) {
-    val clips by produceState<List<SongsModel>?>(null) {
-        value = withContext(Dispatchers.Default) { collectionStoryItems(songs) }
+    val clips by produceState<List<SongsModel>?>(null, songs) {
+        if (value.isNullOrEmpty()) value = withContext(Dispatchers.Default) { collectionStoryItems(songs, kotlin.random.Random(shuffleSeed)) }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(
         usePlatformDefaultWidth = false, decorFitsSystemWindows = false,
@@ -126,7 +128,8 @@ internal fun CollectionStories(
                     TextButton(onClick = onDismiss) { Text("Cerrar") }
                 }
             } else {
-                CollectionStoryPager(title, cover, available, songs, accent, navController, podcast, onDismiss)
+                CollectionStoryPager(title, cover, available, songs, accent, navController, podcast,
+                    resumeUrl, resumePosition, resumePaused, resumeMuted, onVisitArtist, onDismiss)
             }
         }
     }
@@ -137,12 +140,17 @@ internal fun CollectionStories(
 @Composable
 private fun CollectionStoryPager(
     title: String, cover: String, clips: List<SongsModel>, songs: List<SongsModel>,
-    accent: Color, navController: NavController, podcast: PodcastModel?, onDismiss: () -> Unit,
+    accent: Color, navController: NavController, podcast: PodcastModel?,
+    resumeUrl: String?, resumePosition: Long, resumePaused: Boolean, resumeMuted: Boolean,
+    onVisitArtist: (String, Long, Boolean, Boolean) -> Unit, onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val pages = if (clips.size > 1) Int.MAX_VALUE else 1
-    val pager = rememberPagerState(initialPage = (pages / 2 / clips.size) * clips.size) { pages }
+    val restoredIndex = clips.indexOfFirst { it.url == resumeUrl }
+    val initialPage = (pages / 2 / clips.size) * clips.size + restoredIndex.coerceAtLeast(0)
+    val pager = rememberPagerState(initialPage = initialPage) { pages }
+    var pendingPosition by remember { mutableLongStateOf(if (restoredIndex >= 0) resumePosition else 0L) }
     val audioCache = remember { ExpiringLruCache<String, String>(8, 4 * 60_000L) }
     val player = remember {
         ExoPlayer.Builder(context).setLoadControl(
@@ -154,10 +162,10 @@ private fun CollectionStoryPager(
         }
     }
     var foreground by remember { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
-    var muted by remember { mutableStateOf(false) }
+    var muted by remember { mutableStateOf(restoredIndex >= 0 && resumeMuted) }
     var artistMenu by remember { mutableStateOf(false) }
-    var paused by remember { mutableStateOf(false) }
-    var measuring by remember { mutableStateOf(false) }
+    var paused by remember { mutableStateOf(restoredIndex >= 0 && resumePaused) }
+    var preparedPage by remember { mutableStateOf<Int?>(null) }
     var menu by remember { mutableStateOf<SongsModel?>(null) }
     var savedIn by remember { mutableStateOf<SongsModel?>(null) }
     val durationCache = remember { ExpiringLruCache<String, Long>(8, 4 * 60_000L) }
@@ -174,7 +182,9 @@ private fun CollectionStoryPager(
     val page = pager.settledPage
     var audioAttempt by remember(page) { mutableIntStateOf(0) }
     val active = clips[page % clips.size]
-    val playPreview = foreground && !pager.isScrollInProgress && !paused && !measuring && menu == null && savedIn == null && !artistMenu
+    val canPlayPreview = foreground && !pager.isScrollInProgress && !paused && menu == null && savedIn == null && !artistMenu
+    val playPreview = preparedPage == page && canPlayPreview
+    val latestCanPlayPreview by rememberUpdatedState(canPlayPreview)
     val latestDismiss by rememberUpdatedState(onDismiss)
     val contextApi = remember(context) { Api(context.applicationContext) }
     val followed by produceState(emptySet<String>(), contextApi) {
@@ -202,7 +212,7 @@ private fun CollectionStoryPager(
     } }
     fun openArtist(name: String, id: String) {
         artistMenu = false
-        latestDismiss()
+        onVisitArtist(active.url, if (preparedPage == page) player.currentPosition else 0L, paused, muted)
         navController.navigate(com.music.spotui.ui.navigation.artistRoute(name, id))
     }
 
@@ -261,7 +271,7 @@ private fun CollectionStoryPager(
         }
     }
     LaunchedEffect(muted) { player.volume = if (muted) 0f else 1f }
-    LaunchedEffect(playPreview) { player.playWhenReady = playPreview }
+    LaunchedEffect(page, preparedPage, playPreview) { player.playWhenReady = playPreview }
     LaunchedEffect(page, foreground) {
         canvasUrl = null
         if (foreground) canvasUrl = canvasFor(active)
@@ -275,6 +285,8 @@ private fun CollectionStoryPager(
         }
     }
     LaunchedEffect(page, audioAttempt) {
+        preparedPage = null
+        player.playWhenReady = false
         player.stop()
         player.clearMediaItems()
         progress = 0f
@@ -299,8 +311,6 @@ private fun CollectionStoryPager(
         }
         val factory = mediaFactory()
         fun source(url: String) = factory.createMediaSource(MediaItem.fromUri(url))
-        measuring = true
-        player.playWhenReady = false
         val actualDuration = durationCache.get(audio) ?: run {
             player.setMediaSource(source(audio))
             player.prepare()
@@ -311,7 +321,6 @@ private fun CollectionStoryPager(
         }
         if (actualDuration == null) {
             player.stop()
-            measuring = false
             failure = true
             return@LaunchedEffect
         }
@@ -321,9 +330,17 @@ private fun CollectionStoryPager(
         if (restore == null) restore = SongPlayer.pauseForCollectionStories()
         if (video != null) audioFallback = clip(source(audio))
         hasVideo = video != null
-        player.setMediaSource(if (video == null) clip(source(audio)) else clip(MergingMediaSource(true, source(audio), source(video))))
+        val target = if (page == initialPage) pendingPosition.coerceIn(
+            0L, (minOf(actualDuration, STORY_DURATION_MS) - 1L).coerceAtLeast(0L)
+        ) else 0L
+        pendingPosition = 0L
+        player.setMediaSource(
+            if (video == null) clip(source(audio)) else clip(MergingMediaSource(true, source(audio), source(video))),
+            target,
+        )
         player.prepare()
-        measuring = false
+        preparedPage = page
+        player.playWhenReady = latestCanPlayPreview
         delay(10_000L)
         if (status == Player.STATE_BUFFERING) {
             player.stop()

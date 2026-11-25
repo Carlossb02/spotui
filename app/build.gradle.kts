@@ -16,8 +16,8 @@ android {
         applicationId = "com.music.spotidroid"
         minSdk = 26
         targetSdk = 37
-        versionCode = 202608187
-        versionName = "1.9.6.38"
+        versionCode = 202608188
+        versionName = "1.9.6.39"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

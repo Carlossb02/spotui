@@ -363,13 +363,15 @@ class Api @Inject constructor(
             send(Response.Success(SearchResults()))
             return@channelFlow
         }
-        if (!SpotifyTokenProvider.ensureToken(context)) {
+        val spotifyAvailable = SpotifyTokenProvider.ensureToken(context)
+        if (!spotifyAvailable && !includePodcasts) {
             send(Response.Error("Spotify not authenticated — set sp_dc cookie"))
             return@channelFlow
         }
 
         coroutineScope {
             val spotifyJob = async {
+                if (!spotifyAvailable) return@async emptyList<com.metrolist.spotify.models.SpotifyShow>()
                 val spotifyRes = runCatching {
                     Spotify.search(query, types = listOf("track", "album", "artist", "playlist"), limit = 20).getOrNull()
                 }.getOrNull()
@@ -399,6 +401,7 @@ class Api @Inject constructor(
             val podcastJob = if (includePodcasts) launch {
                 try {
                     val spanishCatalog = async {
+                        if (!spotifyAvailable) return@async emptyList<com.metrolist.spotify.models.SpotifyShow>()
                         withTimeoutOrNull(3_500L) {
                             Spotify.searchPodcasts(query, limit = 10, market = "ES")
                                 .getOrNull()?.shows?.items.orEmpty()
@@ -418,7 +421,7 @@ class Api @Inject constructor(
                     }
                     val policy = com.music.spotui.providers.PodcastDiscoveryPolicy
                     var shows = spotifyJob.await() + spanishCatalog.await()
-                    if (shows.none { policy.validShow(it) && policy.relevantShow(query, it.name) }) {
+                    if (spotifyAvailable && shows.none { policy.validShow(it) && policy.relevantShow(query, it.name) }) {
                         policy.broaderQuery(query)?.let { alternate ->
                             shows = withTimeoutOrNull(3_500L) {
                                 coroutineScope {
@@ -432,6 +435,12 @@ class Api @Inject constructor(
                         }
                     }
                     val matches = com.music.spotui.providers.PodcastProvider.discoverSpotifyShows(query, shows, ytShows)
+                        .ifEmpty {
+                            if (ytShows.any { policy.relevantShow(query, it.name) }) emptyList()
+                            else withTimeoutOrNull(7_000L) {
+                                com.music.spotui.providers.PodcastDirectory.search(query)
+                            }.orEmpty()
+                        }
                     if (matches.isNotEmpty()) resultLock.withLock {
                         currentResults = currentResults.copy(shows = (currentResults.shows + matches).distinctBy { it.id })
                         send(Response.Loading(currentResults))

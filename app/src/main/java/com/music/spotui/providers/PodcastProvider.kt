@@ -756,6 +756,7 @@ object PodcastProvider {
         showId: String,
         showName: String = ""
     ): PodcastModel? = withContext(Dispatchers.IO) {
+        PodcastDirectory.show(showId)?.let { return@withContext it }
 
         if (showId.isBlank() || showId.startsWith(ITUNES_PREFIX)) {
             return@withContext null
@@ -814,6 +815,14 @@ object PodcastProvider {
         publishedSince: Long? = null,
         forceRefresh: Boolean = false,
     ): kotlinx.coroutines.flow.Flow<List<SongsModel>> = kotlinx.coroutines.flow.flow {
+        PodcastDirectory.show(showId)?.let { show ->
+            val episodes = SpotifyPodcastEpisodes.youtubeEpisodes(
+                SpotifyShow(name = show.name, publisher = show.publisher), publishedSince,
+            )
+            rememberEpisodes(show.id, show.name, episodes)
+            emit(episodes)
+            return@flow
+        }
         if (showId.isBlank() || showId.startsWith(ITUNES_PREFIX)) {
             emit(emptyList())
             return@flow

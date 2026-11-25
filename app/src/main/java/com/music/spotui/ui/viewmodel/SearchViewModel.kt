@@ -107,7 +107,9 @@ class SearchViewModel @Inject constructor(private val repository: AppRepository,
                         is Response.Success -> {
                             val data = result.data
                             // Don't cache empty/error-like responses or podcast-only partial failures.
-                            if (data.songs.isNotEmpty() || data.albums.isNotEmpty() || data.artists.isNotEmpty() || data.playlists.isNotEmpty()) {
+                            val hasCatalogResults = data.songs.isNotEmpty() || data.albums.isNotEmpty() ||
+                                data.artists.isNotEmpty() || data.playlists.isNotEmpty()
+                            if (if (includePodcasts) data.shows.isNotEmpty() else hasCatalogResults) {
                                 recentSearches.put(key, data)
                             }
                             Response.Success(data.songs)
