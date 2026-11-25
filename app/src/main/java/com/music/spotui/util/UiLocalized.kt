@@ -443,6 +443,7 @@ private val uiLanguagePairs: List<Pair<String, String>> = listOf(
     "Video" to "Vídeo",
     "Following" to "Siguiendo",
     "Follow" to "Seguir",
+    "See all" to "Ver todos",
     "By" to "De",
     "episodes" to "episodios",
     "chapters" to "capítulos",
@@ -524,6 +525,39 @@ private val uiLanguagePairs: List<Pair<String, String>> = listOf(
 
 private val uiEnglishToSpanish = uiLanguagePairs.toMap()
 private val uiSpanishToEnglish = uiLanguagePairs.associate { (en, es) -> es to en }
+
+private val homeLabels = listOf(
+    "Jump back in" to "Vuelve a escuchar",
+    "Your top mixes" to "Tus mixes favoritos",
+    "Your top artists" to "Tus artistas favoritos",
+    "Your favorite artists" to "Tus artistas favoritos",
+    "New releases" to "Novedades",
+    "Recommended for you" to "Recomendado para ti",
+    "Made for you" to "Hecho para ti",
+    "Popular albums" to "Álbumes populares",
+    "Popular artists" to "Artistas populares",
+    "Recently played" to "Escuchado recientemente",
+    "Album" to "Álbum",
+    "Artist" to "Artista",
+    "Playlist" to "Lista",
+)
+private val homeTitlePrefixes = listOf(
+    "Made for " to "Hecho para ",
+    "More like " to "Más como ",
+    "Inspired by " to "Inspirado en ",
+    "Based on " to "Basado en ",
+)
+
+internal fun localizedHomeLabel(text: String, language: String): String {
+    val pairs = if (language == "es") homeLabels else homeLabels.map { (en, es) -> es to en }
+    pairs.firstOrNull { (source, _) -> text.equals(source, ignoreCase = true) }
+        ?.let { return it.second }
+    for ((en, es) in homeTitlePrefixes) {
+        val (source, target) = if (language == "es") en to es else es to en
+        if (text.startsWith(source, ignoreCase = true)) return target + text.drop(source.length)
+    }
+    return localizedUiText(text, language)
+}
 
 @Composable
 fun uiLocalized(text: String): String {

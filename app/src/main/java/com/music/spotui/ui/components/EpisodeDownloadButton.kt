@@ -1,12 +1,8 @@
 package com.music.spotui.ui.components
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.outlined.DownloadForOffline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -54,21 +50,15 @@ fun EpisodeDownloadButton(episode: SongsModel, modifier: Modifier = Modifier) {
             }
         }) {
             when {
-                entry != null -> Box(Modifier.size(26.dp), contentAlignment = Alignment.Center) {
-                    val task = entry
-                    if (task?.stage == SongPlayer.DownloadStage.QUEUED) {
-                        CircularProgressIndicator(Modifier.fillMaxSize(), color = green, strokeWidth = 2.dp)
-                    } else {
-                        CircularProgressIndicator(progress = { ((task?.progress ?: 0) / 100f).coerceIn(0f, 1f) },
-                            modifier = Modifier.fillMaxSize(), color = green, strokeWidth = 2.dp,
-                            trackColor = Color(0xFF434343))
-                    }
+                entry != null -> Box(Modifier.size(38.dp), contentAlignment = Alignment.Center) {
+                    val fraction by androidx.compose.animation.core.animateFloatAsState(
+                        ((entry?.progress ?: 0) / 100f).coerceIn(0f, 1f), label = "episodeDownload",
+                    )
+                    CollectionDownloadRing(fraction, Modifier.fillMaxSize())
                     Icon(Icons.Default.Close, cancelLabel, tint = green, modifier = Modifier.size(15.dp))
                 }
-                downloaded -> Box(Modifier.size(23.dp).background(green, CircleShape), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.ArrowDownward, downloadedLabel, tint = Color(0xFF121212), modifier = Modifier.size(18.dp))
-                }
-                else -> Icon(Icons.Outlined.DownloadForOffline, downloadLabel, tint = Color(0xFFB3B3B3), modifier = Modifier.size(26.dp))
+                downloaded -> CollectionDownloadGlyph(downloadedLabel, complete = true)
+                else -> CollectionDownloadGlyph(downloadLabel, complete = false)
             }
         }
         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {

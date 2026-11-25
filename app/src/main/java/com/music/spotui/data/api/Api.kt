@@ -281,7 +281,8 @@ class Api @Inject constructor(
             if (HomeCache.home == null) emit(Response.Error("Spotify not authenticated — set sp_dc cookie"))
             return@flow
         }
-        Spotify.home(sectionItemsLimit = 20).fold(
+        val language = com.music.spotui.data.preferences.getAppLanguage(context)
+        Spotify.home(sectionItemsLimit = 20, language = if (language == "es") "es-ES,es;q=0.9" else "en").fold(
             onSuccess = { feed ->
                 val sections = feed.sections.mapNotNull { section ->
                     // The GQL feed can repeat an item inside one section (and

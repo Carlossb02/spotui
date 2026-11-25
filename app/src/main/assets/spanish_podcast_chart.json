@@ -8,7 +8,7 @@
       "name": "ROCA PROJECT",
       "publisher": "Carlos Roca",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f3642ba67be6d22279908ae7f",
-      "category": "Bienestar y psicología",
+      "category": "Entrevistas",
       "youtube": "https://www.youtube.com/playlist?list=PL01FNQnUl7YKuI7iD1lwxKz8Ho3J8L8Of"
     },
     {
@@ -99,7 +99,7 @@
       "name": "La Pija y la Quinqui",
       "publisher": "La Pija y la Quinqui",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f9c1209c90575bf30f0b73b9a",
-      "category": "Cultura y Entretenimiento",
+      "category": "Comedia y Humor",
       "youtube": "https://www.youtube.com/channel/UCmaBCSVlBJM87mdkqtNtfIw/videos"
     },
     {
@@ -147,7 +147,7 @@
       "name": "TÓMATELO CON VINO",
       "publisher": "Maria F. Rubies ; Ro Irisarri",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fea811d8013ee4fcde5826412",
-      "category": "Cultura y Entretenimiento",
+      "category": "Entrevistas",
       "youtube": "https://www.youtube.com/channel/UCoj6C5Xh-aaWnDwG5KQlCzg/videos"
     },
     {
@@ -188,7 +188,7 @@
       "name": "Cuarto Milenial",
       "publisher": "PodiumPodcast",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f1a27664856e645058f4314ff",
-      "category": "Cultura y Entretenimiento",
+      "category": "Comedia y Humor",
       "youtube": "https://www.youtube.com/channel/UC0aGY16s_djhBsJFSf3nlWQ/videos",
       "episodeTitle": "Cuarto Milenial"
     },
@@ -264,21 +264,24 @@
       "publisher": "The Voice Village",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f00a74a6f968d3ad069eaec1e",
       "youtube": "https://www.youtube.com/channel/UCWN8BcVZFogTXul-J0GWYgw/videos",
-      "episodeTitle": "Pódcast AM"
+      "episodeTitle": "Pódcast AM",
+      "category": "Noticias y Política"
     },
     {
       "id": "3iM6J3KDbrzqcuWfUw0LLk",
       "name": "¿Qué pasa, Barroso?",
       "publisher": "Alán Barroso",
       "artwork": "https://i.scdn.co/image/ab67656300005f1faf5a5341e50dde5e32119a25",
-      "youtube": "https://www.youtube.com/channel/UCSPD27Cs5gDePZ07G4m70Cg/videos"
+      "youtube": "https://www.youtube.com/channel/UCSPD27Cs5gDePZ07G4m70Cg/videos",
+      "category": "Noticias y Política"
     },
     {
       "id": "56JLkQ1ijviWl0zsPQ6WJr",
       "name": "Carne Cruda Podcast",
       "publisher": "La República Independiente de la Radio",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f55ad975586ea19422d1ceef8",
-      "youtube": "https://www.youtube.com/channel/UC2T5UXo4wIFnkrWi7qKZR1Q/videos"
+      "youtube": "https://www.youtube.com/channel/UC2T5UXo4wIFnkrWi7qKZR1Q/videos",
+      "category": "Noticias y Política"
     },
     {
       "id": "1BZDroPPwtciyo2nICIofF",
@@ -286,56 +289,64 @@
       "publisher": "Con C de Cuentacuentos",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f5a8430198b2eef815f734b62",
       "youtube": "https://www.youtube.com/channel/UC9SnXH07wChYL4E_SszyTvA/videos",
-      "minSeconds": 180
+      "minSeconds": 180,
+      "category": "Infantil y familiar"
     },
     {
       "id": "7x5Q0B2ZWIot59Ah6NWoar",
       "name": "Saldremos Mejores",
       "publisher": "Podium Podcast",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f941c4ea8b54134f676e50637",
-      "youtube": "https://www.youtube.com/channel/UC4842ZL82_IozzYxSxTjkrQ/videos"
+      "youtube": "https://www.youtube.com/channel/UC4842ZL82_IozzYxSxTjkrQ/videos",
+      "category": "Noticias y Política"
     },
     {
       "id": "1jobS8JPQwN1lYg2g8cn9k",
       "name": "Búscate la vida",
       "publisher": "José Elías y Eric Ponce",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fc2dbc91a74b9d2bc7afd2d49",
-      "youtube": "https://www.youtube.com/channel/UC3vyBGCVQoTzt7W9vaaSU6A/videos"
+      "youtube": "https://www.youtube.com/channel/UC3vyBGCVQoTzt7W9vaaSU6A/videos",
+      "category": "Negocios y Emprendimiento"
     },
     {
       "id": "3SQXsvSIgFFl4T2BUqlrV0",
       "name": "Cañones o Mantequilla",
       "publisher": "El Orden Mundial",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f258ce6a24214905d6b59f381",
-      "youtube": "https://www.youtube.com/channel/UCvqppDAJHJW8ksw7ifM6o6Q/videos"
+      "youtube": "https://www.youtube.com/channel/UCvqppDAJHJW8ksw7ifM6o6Q/videos",
+      "category": "Noticias y Política"
     },
     {
       "id": "0Bhyr7HDEijAinRGEyTVmm",
       "name": "El Larguero",
       "publisher": "SER Podcast",
       "artwork": "https://i.scdn.co/image/ab67656300005f1ff08ffcc0a2ea60908172d18f",
-      "youtube": "https://www.youtube.com/channel/UC2BfAWhbAsmPnXHpWYKR7aQ/videos"
+      "youtube": "https://www.youtube.com/channel/UC2BfAWhbAsmPnXHpWYKR7aQ/videos",
+      "category": "Deportes"
     },
     {
       "id": "0oU3xx0mMU0xTO4PyCFxat",
       "name": "Vaquero Podcast",
       "publisher": "RV PODCAST",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fa81090f4d445c4721663fb19",
-      "youtube": "https://www.youtube.com/playlist?list=PLirhzdWiJbq4hhv63O7qj8XuBRhp2ZBVV"
+      "youtube": "https://www.youtube.com/playlist?list=PLirhzdWiJbq4hhv63O7qj8XuBRhp2ZBVV",
+      "category": "Noticias y Política"
     },
     {
       "id": "0XCYa4yepbhx3gc6ANSNoZ",
       "name": "Nido de urracas",
       "publisher": "Nido de Urracas",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f3790f732ad3a8dde8e37c4fc",
-      "youtube": "https://www.youtube.com/channel/UCyN1IBL04CdZv7wQXwtcvaA/videos"
+      "youtube": "https://www.youtube.com/channel/UCyN1IBL04CdZv7wQXwtcvaA/videos",
+      "category": "Comedia y Humor"
     },
     {
       "id": "3DcwEMyFnVftWBS0E0HXM1",
       "name": "Crims",
       "publisher": "Catalunya Ràdio",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f4e6fc78d8121e3af90f5d695",
-      "youtube": "https://www.youtube.com/playlist?list=PL5HwsHboiE9n3OJRgTd5Nl8CN60_uYnVB"
+      "youtube": "https://www.youtube.com/playlist?list=PL5HwsHboiE9n3OJRgTd5Nl8CN60_uYnVB",
+      "category": "Crímenes Reales y Misterio"
     },
     {
       "id": "2iKebgGPe7a1a13zUr0Q20",
@@ -348,35 +359,40 @@
       "name": "A Una Palabra con Adrià Solà Pastor",
       "publisher": "Adrià Solà Pastor",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fdcecc3826a3fb0e5796dca43",
-      "youtube": "https://www.youtube.com/channel/UC9BkL30gHlt1QozCFug7tew/videos"
+      "youtube": "https://www.youtube.com/channel/UC9BkL30gHlt1QozCFug7tew/videos",
+      "category": "Entrevistas"
     },
     {
       "id": "7rgFvrfap2bLcItGw45QZH",
       "name": "Animales Humanos Podcast",
       "publisher": "Ibai Vegan",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fc3dc822cf810f50c5c7b32a9",
-      "youtube": "https://www.youtube.com/channel/UC9DsrJjUSFiQU_hbQUVlOjg/videos"
+      "youtube": "https://www.youtube.com/channel/UC9DsrJjUSFiQU_hbQUVlOjg/videos",
+      "category": "Entrevistas"
     },
     {
       "id": "0w4DxpLgQP0VOMzjDrdKo3",
       "name": "Triun Arts",
       "publisher": "Triun Arts",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f0beedda7628aef4b6064ae0c",
-      "youtube": "https://www.youtube.com/channel/UCua9GL30jRteZEKhIHrZObQ/videos"
+      "youtube": "https://www.youtube.com/channel/UCua9GL30jRteZEKhIHrZObQ/videos",
+      "category": "Crímenes Reales y Misterio"
     },
     {
       "id": "6z2cewLloFTYiBrY84rM7z",
       "name": "EL MUNDO al día",
       "publisher": "El Mundo - Javier Attard",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f7ffbbbdcb471c813935454f6",
-      "youtube": "https://www.youtube.com/playlist?list=PLpaDQu7aewDqyfyJ5NJRb-_aQHRww1IU8"
+      "youtube": "https://www.youtube.com/playlist?list=PLpaDQu7aewDqyfyJ5NJRb-_aQHRww1IU8",
+      "category": "Noticias y Política"
     },
     {
       "id": "5ICb9DcNquyMbJ00GmKzNP",
       "name": "Línea de Cal",
       "publisher": "Línea de Cal",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f0ba1795a965fa6fe6b094dec",
-      "youtube": "https://www.youtube.com/channel/UCAB0QCrVCcm25QGtgX38Fng/videos"
+      "youtube": "https://www.youtube.com/channel/UCAB0QCrVCcm25QGtgX38Fng/videos",
+      "category": "Deportes"
     },
     {
       "id": "1dxFMjf9iZeHqKwVK1OQ9I",
@@ -384,21 +400,24 @@
       "publisher": "esRadio",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f69d7fb2b70f3673952f84c62",
       "youtube": "https://www.youtube.com/playlist?list=PLvxqWGz8ICq8vPZ0D-F7rLEgQWytE2Clu",
-      "minSeconds": 1200
+      "minSeconds": 1200,
+      "category": "Noticias y Política"
     },
     {
       "id": "5cE00JQ8qwk48yLKcHz48a",
       "name": "SABOR A QUEER",
       "publisher": "Neurads",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f8ffe761f03f7d71137ec1dc4",
-      "youtube": "https://www.youtube.com/playlist?list=PLRcsOFYtjkKoKJvbwLSryTjxr_zHxYjw1"
+      "youtube": "https://www.youtube.com/playlist?list=PLRcsOFYtjkKoKJvbwLSryTjxr_zHxYjw1",
+      "category": "Cultura y Entretenimiento"
     },
     {
       "id": "2Ll1XhE7LfXavhzlIUmLsD",
       "name": "Mamarazzis",
       "publisher": "El Periódico",
       "artwork": "https://i.scdn.co/image/ab67656300005f1faa90d55803872b7c3e561b7b",
-      "youtube": "https://www.youtube.com/playlist?list=PLs66PTSPhqMLkOW9O0SSTOcNlDsSw1th1"
+      "youtube": "https://www.youtube.com/playlist?list=PLs66PTSPhqMLkOW9O0SSTOcNlDsSw1th1",
+      "category": "Cultura y Entretenimiento"
     },
     {
       "id": "6adkMgnpZDxHA3DFnNiEVQ",
@@ -406,35 +425,40 @@
       "publisher": "RAC1",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f8fc3bc061c4930bde61aa824",
       "youtube": "https://www.youtube.com/playlist?list=PLwyhnJ320ix8v-FVILeqWQcmDRA2NRxcb",
-      "minSeconds": 1800
+      "minSeconds": 1800,
+      "category": "Comedia y Humor"
     },
     {
       "id": "3KZaXYg5SgfhgxT8jRK4Xp",
       "name": "Hoy por Hoy",
       "publisher": "SER Podcast",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f7976d33e00ea03264991c3d1",
-      "youtube": "https://www.youtube.com/channel/UCOxQk41rWFLWLPAPP_as6uA/videos"
+      "youtube": "https://www.youtube.com/channel/UCOxQk41rWFLWLPAPP_as6uA/videos",
+      "category": "Noticias y Política"
     },
     {
       "id": "0TCJ4VZKU6YFJjxpl0oHNN",
       "name": "Deforme Semanal Ideal Total",
       "publisher": "Deforme Semanal",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fe5783358a0672b3c92e421a9",
-      "youtube": "https://www.youtube.com/channel/UC0jn3aKgXLE1fbWfwu3Y2hg/videos"
+      "youtube": "https://www.youtube.com/channel/UC0jn3aKgXLE1fbWfwu3Y2hg/videos",
+      "category": "Comedia y Humor"
     },
     {
       "id": "5Wr0b3pGkixNFSZUBPsWDD",
       "name": "Un Libro Una Hora",
       "publisher": "SER Podcast",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fa146340ffea4c8e02fc58b57",
-      "youtube": "https://www.youtube.com/playlist?list=PLyiJZcChPSpycjB2s4E_8aP7L0WNDGFx0"
+      "youtube": "https://www.youtube.com/playlist?list=PLyiJZcChPSpycjB2s4E_8aP7L0WNDGFx0",
+      "category": "Cultura y Entretenimiento"
     },
     {
       "id": "4H9hNPW7uTpgCD0wwErLxk",
       "name": "Salud Mental✨ con Alan Disavia",
       "publisher": "Alan Disavia",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f02e4cb8da681e37e40abb639",
-      "youtube": "https://www.youtube.com/channel/UCYUO89NPWrSLFnxYIPw0GjA/videos"
+      "youtube": "https://www.youtube.com/channel/UCYUO89NPWrSLFnxYIPw0GjA/videos",
+      "category": "Bienestar y psicología"
     },
     {
       "id": "25m9YXdbCiNBE47gA2Z4KR",
@@ -442,7 +466,8 @@
       "publisher": "Mowlihawk",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f335eae3d2e505dc5de4b6061",
       "youtube": "https://www.youtube.com/channel/UCdAZllOWA42vcxvno_bvPtw/videos",
-      "minSeconds": 2400
+      "minSeconds": 2400,
+      "category": "Entrevistas"
     },
     {
       "id": "4n2SYRzAXUKDFccZ993ZEh",
@@ -450,21 +475,24 @@
       "publisher": "EL PAÍS",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f18adf6db071456528cfdb214",
       "youtube": "https://www.youtube.com/playlist?list=PLeEzCJHXClX0GMLH7_k6oJOZma7G8qAfI",
-      "minSeconds": 300
+      "minSeconds": 300,
+      "category": "Noticias y Política"
     },
     {
       "id": "7Jw7zyIvKMiTLcMwV66udc",
       "name": "Así Matan",
       "publisher": "Cesar Ibañez",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fbfdacd5260360795979a4ef9",
-      "youtube": "https://www.youtube.com/channel/UCEYlP_paKGBSyl99Lw8qVag/videos"
+      "youtube": "https://www.youtube.com/channel/UCEYlP_paKGBSyl99Lw8qVag/videos",
+      "category": "Crímenes Reales y Misterio"
     },
     {
       "id": "0sGGLIDnnijRPLef7InllD",
       "name": "Entiende Tu Mente",
       "publisher": "Molo Cebrián",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f5c40535d8ea71d28b4286111",
-      "youtube": "https://www.youtube.com/playlist?list=PLrdnH177utuZETvXGcVj8apdtMRiigqVm"
+      "youtube": "https://www.youtube.com/playlist?list=PLrdnH177utuZETvXGcVj8apdtMRiigqVm",
+      "category": "Bienestar y psicología"
     },
     {
       "id": "033fuwhmOCASqNc5XGGYAg",
@@ -477,7 +505,8 @@
       "name": "Reyes del Palique",
       "publisher": "Reyes del Palique",
       "artwork": "https://i.scdn.co/image/ab67656300005f1ff3a1bde6d917a7301b2f2d6a",
-      "youtube": "https://www.youtube.com/channel/UCdPgQGtwso18_IoK9rEpPhg/videos"
+      "youtube": "https://www.youtube.com/channel/UCdPgQGtwso18_IoK9rEpPhg/videos",
+      "category": "Comedia y Humor"
     },
     {
       "id": "5slNbyLCLd1DbVY5p19Liw",
@@ -490,28 +519,32 @@
       "name": "ODIO A LA GENTE",
       "publisher": "ODIO A LA GENTE",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fa6c0f15d184f6cef93fa024a",
-      "youtube": "https://www.youtube.com/playlist?list=PLA24zYpJETkEnIjBfJCdJdX_47SpZQcuY"
+      "youtube": "https://www.youtube.com/playlist?list=PLA24zYpJETkEnIjBfJCdJdX_47SpZQcuY",
+      "category": "Comedia y Humor"
     },
     {
       "id": "3w18J0O2X2VllIJ8fJWZAU",
       "name": "El Podcast de Marc Vidal",
       "publisher": "Marc Vidal",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f39aff1247b18f1d999f2d2e3",
-      "youtube": "https://www.youtube.com/channel/UCKC77AR_zWXRTE2GOD_2Uag/videos"
+      "youtube": "https://www.youtube.com/channel/UCKC77AR_zWXRTE2GOD_2Uag/videos",
+      "category": "Negocios y Emprendimiento"
     },
     {
       "id": "06JgN4AkNage0vqyc8a1AD",
       "name": "Somos Estupendas",
       "publisher": "Somos Estupendas",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f5fa66f770926c7c60b903717",
-      "youtube": "https://www.youtube.com/playlist?list=PLgYnK_GmZx28chc9Ggptt1AD0_-_L9I1M"
+      "youtube": "https://www.youtube.com/playlist?list=PLgYnK_GmZx28chc9Ggptt1AD0_-_L9I1M",
+      "category": "Bienestar y psicología"
     },
     {
       "id": "0akKU27DF09PUU68zSCkWH",
       "name": "Hora 25",
       "publisher": "SER Podcast",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fed3afccf8b552dfe883426aa",
-      "youtube": "https://www.youtube.com/channel/UCispGs-Zec1lVsp32rMgqkg/videos"
+      "youtube": "https://www.youtube.com/channel/UCispGs-Zec1lVsp32rMgqkg/videos",
+      "category": "Noticias y Política"
     },
     {
       "id": "6x9RCowhyb3m5nXtlIhLii",
@@ -519,21 +552,24 @@
       "publisher": "RTVE Play",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f8e1eb7852ba00355f07a671a",
       "youtube": "https://www.youtube.com/channel/UCqlsTzBv49Uiu8Z3IseVgQQ/videos",
-      "episodeTitle": "Al cielo con ella"
+      "episodeTitle": "Al cielo con ella",
+      "category": "Cultura y Entretenimiento"
     },
     {
       "id": "1RHk7FSTrNsGTLKtS2oWw8",
       "name": "CANCELLED ❌",
       "publisher": "Wall Street Wolverine",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fc9fef2d8ff90ac87ad9aa76a",
-      "youtube": "https://www.youtube.com/playlist?list=PLz8e0Tn_pMko6WuONip7yWjaTaiEh5rlS"
+      "youtube": "https://www.youtube.com/playlist?list=PLz8e0Tn_pMko6WuONip7yWjaTaiEh5rlS",
+      "category": "Noticias y Política"
     },
     {
       "id": "52rdsvLfwkCgaoxwgL0QcW",
       "name": "STOICAST",
       "publisher": "PACTO ESTOICO",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f5d208cc87208d148b38cea0c",
-      "youtube": "https://www.youtube.com/channel/UCFzUOSUEAwx4jAP89zclWOQ/videos"
+      "youtube": "https://www.youtube.com/channel/UCFzUOSUEAwx4jAP89zclWOQ/videos",
+      "category": "Filosofía y espiritualidad"
     },
     {
       "id": "2kTcAoYCg6EEKWemq7LTTr",
@@ -546,21 +582,24 @@
       "name": "Sofá, manta y crimen",
       "publisher": "Coral y Yayo",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f064447641fd0da38d765d84e",
-      "youtube": "https://www.youtube.com/channel/UCHGeKe0SP7PpNFrg5HYkHKQ/videos"
+      "youtube": "https://www.youtube.com/channel/UCHGeKe0SP7PpNFrg5HYkHKQ/videos",
+      "category": "Crímenes Reales y Misterio"
     },
     {
       "id": "2aTFxnX4dVyvZhfF8hySn2",
       "name": "LAS MEMORIAS DEL ALMA",
       "publisher": "Memorias del Alma",
       "artwork": "https://i.scdn.co/image/ab67656300005f1ff4e435a1c9d5c6da28bfdf4f",
-      "youtube": "https://www.youtube.com/channel/UCa8-BcLwQYyBVqWBG0As6IQ/videos"
+      "youtube": "https://www.youtube.com/channel/UCa8-BcLwQYyBVqWBG0As6IQ/videos",
+      "category": "Filosofía y espiritualidad"
     },
     {
       "id": "49LUQ97TWYeeMmz0BzIyE1",
       "name": "La Pizarra de Quintana",
       "publisher": "Radio MARCA",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f68f9e7b6d0f98d4788951e24",
-      "youtube": "https://www.youtube.com/playlist?list=PLMJ8gPJC-KeVhxjNmLoxkQxT8l3m7WLxD"
+      "youtube": "https://www.youtube.com/playlist?list=PLMJ8gPJC-KeVhxjNmLoxkQxT8l3m7WLxD",
+      "category": "Deportes"
     },
     {
       "id": "7LonKVvfQIsCp45TM58h7y",
@@ -568,14 +607,16 @@
       "publisher": "10 Minutos con Jesús",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f08043628dbd254d66b2d8c57",
       "youtube": "https://www.youtube.com/playlist?list=PLsZttjEgez26mxg3q6YMuwlwmwQgTQ1dn",
-      "minSeconds": 180
+      "minSeconds": 180,
+      "category": "Filosofía y espiritualidad"
     },
     {
       "id": "1Ce7JPI6qtROclGVDq9HRv",
       "name": "ZZEN Talks",
       "publisher": "René ZZ",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f024514785a4f5a9edb8cfa08",
-      "youtube": "https://www.youtube.com/playlist?list=PLuQ93B3Cj_8CdUQbt5l1QZE7BoV7c-lZg"
+      "youtube": "https://www.youtube.com/playlist?list=PLuQ93B3Cj_8CdUQbt5l1QZE7BoV7c-lZg",
+      "category": "Entrevistas"
     },
     {
       "id": "2XE72dJmQWeglhBF9IOeBK",
@@ -588,42 +629,48 @@
       "name": "B3TTER PODCAST",
       "publisher": "B3TTER",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f3ea830b1cf90498601578a87",
-      "youtube": "https://www.youtube.com/channel/UC1ZyIOz6EENDrSp7l62MaEA/videos"
+      "youtube": "https://www.youtube.com/channel/UC1ZyIOz6EENDrSp7l62MaEA/videos",
+      "category": "Negocios y Emprendimiento"
     },
     {
       "id": "0FmuAsGBWrRYZNTJUIBPP7",
       "name": "La Renaixença",
       "publisher": "3Cat",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fe315eb5d284b3ebd47f6717f",
-      "youtube": "https://www.youtube.com/playlist?list=PLHF437Sz2MHr9a4cbFUmGJdhKsF2RfArp"
+      "youtube": "https://www.youtube.com/playlist?list=PLHF437Sz2MHr9a4cbFUmGJdhKsF2RfArp",
+      "category": "Cultura y Entretenimiento"
     },
     {
       "id": "2rvGjOgeyQTtl5ZgXzUXoQ",
       "name": "Estoicismo Filosofia",
       "publisher": "Estoicismo Filosofia",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f3c6783d7f6d35b78f8e94329",
-      "youtube": "https://www.youtube.com/channel/UCv3mM-4tS-khU8Ug9wqQ2lQ/videos"
+      "youtube": "https://www.youtube.com/channel/UCv3mM-4tS-khU8Ug9wqQ2lQ/videos",
+      "category": "Filosofía y espiritualidad"
     },
     {
       "id": "3VYkhxT38nw3eeLmJu75kd",
       "name": "Keep It Cutre",
       "publisher": "Ángela y Albanta",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f0368a1d032690545968e937d",
-      "youtube": "https://www.youtube.com/channel/UCYfAhie8zb3PX2BuwQQLCeA/videos"
+      "youtube": "https://www.youtube.com/channel/UCYfAhie8zb3PX2BuwQQLCeA/videos",
+      "category": "Comedia y Humor"
     },
     {
       "id": "1QxFZUCXFHrlBB5C0fOB9m",
       "name": "Ni tan bien",
       "publisher": "Cadena SER",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f507eea2d40104d971e448b1b",
-      "youtube": "https://www.youtube.com/channel/UCcBYfqeBwsH_rSAUjS36f2w/videos"
+      "youtube": "https://www.youtube.com/channel/UCcBYfqeBwsH_rSAUjS36f2w/videos",
+      "category": "Comedia y Humor"
     },
     {
       "id": "45wJUsejVuSw4Fzb0EMX0m",
       "name": "El podcast de Ac2ality",
       "publisher": "Atresmedia",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f345fc4712640908a839e1a69",
-      "youtube": "https://www.youtube.com/playlist?list=PLyKjTs0CMXegyaAoS_iOle10_YupECTQP"
+      "youtube": "https://www.youtube.com/playlist?list=PLyKjTs0CMXegyaAoS_iOle10_YupECTQP",
+      "category": "Noticias y Política"
     },
     {
       "id": "2xV7Vx7NQgAC8vMt2vZNnE",
@@ -642,21 +689,24 @@
       "name": "BBVA Aprendemos juntos",
       "publisher": "BBVA Podcast",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fc62350a60c70993bb6b80c09",
-      "youtube": "https://www.youtube.com/playlist?list=PLWCXX8tjkPYsRRdiiNdPlWFD0Pd0eQgsQ"
+      "youtube": "https://www.youtube.com/playlist?list=PLWCXX8tjkPYsRRdiiNdPlWFD0Pd0eQgsQ",
+      "category": "Entrevistas"
     },
     {
       "id": "29GbLTwqBtRZHbWSYuHxdP",
       "name": "LA CAFETERA",
       "publisher": "Radiocable.com",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fc6403308f551badd71afbbf0",
-      "youtube": "https://www.youtube.com/channel/UC4t58IFl3NRhDg5idU9J2XA/videos"
+      "youtube": "https://www.youtube.com/channel/UC4t58IFl3NRhDg5idU9J2XA/videos",
+      "category": "Noticias y Política"
     },
     {
       "id": "6NivA5cWk5nrKpEaQcqKKK",
       "name": "QUORVM PODCAST",
       "publisher": "Javi Cabello",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f58c98e68be3c8ff476f1f435",
-      "youtube": "https://www.youtube.com/playlist?list=PLbWE6BnFsf6kzxj5tBpYI1sGi37EDUuCX"
+      "youtube": "https://www.youtube.com/playlist?list=PLbWE6BnFsf6kzxj5tBpYI1sGi37EDUuCX",
+      "category": "Noticias y Política"
     },
     {
       "id": "0xkHMHfTleDMkGi0DymhMX",
@@ -664,7 +714,8 @@
       "publisher": "Drafteados",
       "artwork": "https://i.scdn.co/image/ab67656300005f1ffa3bd8949ff8dc80c4fe0dd3",
       "youtube": "https://www.youtube.com/channel/UCTJNmeP0HiOU4-qOMNVNoGA/videos",
-      "episodeTitle": "3+1"
+      "episodeTitle": "3+1",
+      "category": "Deportes"
     },
     {
       "id": "7iQXmUT7XGuZSzAMjoNWlX",
@@ -677,28 +728,32 @@
       "name": "Memorias de Pez",
       "publisher": "MemoriasDePez",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f4273a1bc15b4d67a176a48ef",
-      "youtube": "https://www.youtube.com/channel/UCPH3Oz99Y_jrVBCQMjQZNSg/videos"
+      "youtube": "https://www.youtube.com/channel/UCPH3Oz99Y_jrVBCQMjQZNSg/videos",
+      "category": "Ciencia, Historia y Tecnología"
     },
     {
       "id": "6SArrjVIOp56HVhQqoDdlU",
       "name": "Todopoderosos",
       "publisher": "Todopoderosos",
       "artwork": "https://i.scdn.co/image/ab67656300005f1ff379f17c50df50f59af9fff4",
-      "youtube": "https://www.youtube.com/playlist?list=PLgMP8Zkx8Jp8qunLii0voTtD7ZVQ8_ZdJ"
+      "youtube": "https://www.youtube.com/playlist?list=PLgMP8Zkx8Jp8qunLii0voTtD7ZVQ8_ZdJ",
+      "category": "Cultura y Entretenimiento"
     },
     {
       "id": "033l07dtDbb0bSnWs3raDL",
       "name": "Casos Bajo Sumario | True Crime e Investigación",
       "publisher": "Antonio López y Francisco López",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fdea2bbc5009a4089688c408c",
-      "youtube": "https://www.youtube.com/channel/UCGXjnHDIvYNs3GXdPvzzDGQ/videos"
+      "youtube": "https://www.youtube.com/channel/UCGXjnHDIvYNs3GXdPvzzDGQ/videos",
+      "category": "Crímenes Reales y Misterio"
     },
     {
       "id": "24yb6nRi4StqHhxCzGMTc8",
       "name": "Radio Fitness Revolucionario",
       "publisher": "Marcos Vázquez",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f3a12998649da8e2b9fa7a7ba",
-      "youtube": "https://www.youtube.com/playlist?list=PLp-WnzMxiWhrq2Av22j0njF9hhwzQmjqN"
+      "youtube": "https://www.youtube.com/playlist?list=PLp-WnzMxiWhrq2Av22j0njF9hhwzQmjqN",
+      "category": "Bienestar y psicología"
     },
     {
       "id": "59qTWSeD4dstniKmgxlEUM",
@@ -706,7 +761,8 @@
       "publisher": "RTVE Play / RNE Audio",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fa8f5217f80d747677bcdd862",
       "youtube": "https://www.youtube.com/channel/UCqlsTzBv49Uiu8Z3IseVgQQ/videos",
-      "episodeTitle": "Influ-Realismo Mágico"
+      "episodeTitle": "Influ-Realismo Mágico",
+      "category": "Cultura y Entretenimiento"
     },
     {
       "id": "0tjEexypyczHXW9vE3SU3P",
@@ -719,7 +775,8 @@
       "name": "Al aire de Pilar Eyre",
       "publisher": "Pilar Eyre",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fcb1b5d916fb3df19fd57d1e4",
-      "youtube": "https://www.youtube.com/channel/UCZ-cIrhnX67aBGrUbQf7Agw/videos"
+      "youtube": "https://www.youtube.com/channel/UCZ-cIrhnX67aBGrUbQf7Agw/videos",
+      "category": "Cultura y Entretenimiento"
     },
     {
       "id": "3kQ0uOZ9HZ92Rj5yb2GPlh",
@@ -732,14 +789,16 @@
       "name": "Julia en la onda",
       "publisher": "OndaCero",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f277f587450cc3bcc140086ef",
-      "youtube": "https://www.youtube.com/playlist?list=PL9X22BwUacNXdA3m4q_pG_etd2WBUrJI4"
+      "youtube": "https://www.youtube.com/playlist?list=PL9X22BwUacNXdA3m4q_pG_etd2WBUrJI4",
+      "category": "Noticias y Política"
     },
     {
       "id": "033V3VWgx4LGuxhTm1qeBo",
       "name": "Juan Soto Ivars",
       "publisher": "Juan Soto Ivars",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f13ec8a83ec4af0cefe64c504",
-      "youtube": "https://www.youtube.com/channel/UCeAE2Zs3xmDYlcs_-LAESRA/videos"
+      "youtube": "https://www.youtube.com/channel/UCeAE2Zs3xmDYlcs_-LAESRA/videos",
+      "category": "Noticias y Política"
     },
     {
       "id": "3roxBDlXighuvbIGbz7q71",
@@ -747,63 +806,72 @@
       "publisher": "SER Podcast",
       "artwork": "https://i.scdn.co/image/ab67656300005f1feab38fc64e31f041b44c627e",
       "youtube": "https://www.youtube.com/channel/UC77vp-8IpkxYHTDdW4BBSsA/videos",
-      "minSeconds": 120
+      "minSeconds": 120,
+      "category": "Comedia y Humor"
     },
     {
       "id": "44EviFP3r7LlceqQ4AnKPT",
       "name": "Doble de Drama",
       "publisher": "Doble de Drama",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f56f01c993bd625882bc3381b",
-      "youtube": "https://www.youtube.com/channel/UC2zqmFx7-1fUglmnNqs027A/videos"
+      "youtube": "https://www.youtube.com/channel/UC2zqmFx7-1fUglmnNqs027A/videos",
+      "category": "Comedia y Humor"
     },
     {
       "id": "0HtxMCdhMaD8KCsgRYJnJg",
       "name": "Tiene Sentido",
       "publisher": "Eli Romero",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f6614884f45b8991627fb1c4d",
-      "youtube": "https://www.youtube.com/channel/UCbitWKTIHZnoLYuOnZzRBZQ/videos"
+      "youtube": "https://www.youtube.com/channel/UCbitWKTIHZnoLYuOnZzRBZQ/videos",
+      "category": "Bienestar y psicología"
     },
     {
       "id": "0iblRpScKey37XZ5iKfvqG",
       "name": "La Biblioteca Ancestral",
       "publisher": "La Biblioteca Ancestral",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f11c94929fe5be6f984dc269f",
-      "youtube": "https://www.youtube.com/channel/UCrGJSB-RX7iGNqo8bz6UxZw/videos"
+      "youtube": "https://www.youtube.com/channel/UCrGJSB-RX7iGNqo8bz6UxZw/videos",
+      "category": "Filosofía y espiritualidad"
     },
     {
       "id": "1HI8XcuaPlOOvaMyuIoQPR",
       "name": "Aladetres",
       "publisher": "Aladetres",
       "artwork": "https://i.scdn.co/image/ab67656300005f1ff9868fc6ee21e2b4c39f3d9b",
-      "youtube": "https://www.youtube.com/channel/UChUBcLdjUDxa5sUugLJwfYQ/videos"
+      "youtube": "https://www.youtube.com/channel/UChUBcLdjUDxa5sUugLJwfYQ/videos",
+      "category": "Entrevistas"
     },
     {
       "id": "446GZV4gX4aXz6pyVprSFB",
       "name": "Offsiders",
       "publisher": "Historias del fútbol",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f3b50f3eaa45fb078ab541456",
-      "youtube": "https://www.youtube.com/playlist?list=PL4vS-ADeoAM_RdtUpNckltyOVSiOUjqbJ"
+      "youtube": "https://www.youtube.com/playlist?list=PL4vS-ADeoAM_RdtUpNckltyOVSiOUjqbJ",
+      "category": "Deportes"
     },
     {
       "id": "7tvr14hsXPoW36lY98DFFx",
       "name": "Focus ON Podcast",
       "publisher": "Joan López y Xavi López",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f1cca8b70def54b0db8ed931a",
-      "youtube": "https://www.youtube.com/channel/UCkyjBQGLUJKfWIXvO1rrCOw/videos"
+      "youtube": "https://www.youtube.com/channel/UCkyjBQGLUJKfWIXvO1rrCOw/videos",
+      "category": "Entrevistas"
     },
     {
       "id": "0XE08Cr5LbpcozQr8nyLNc",
       "name": "Ojalá lo hubiera sabido antes",
       "publisher": "Álex Rovira",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f7fe58cb027d4cbf0e42354ff",
-      "youtube": "https://www.youtube.com/playlist?list=PLRMygl2-gwpkXntRCK35P8J4KuHAiZuk9"
+      "youtube": "https://www.youtube.com/playlist?list=PLRMygl2-gwpkXntRCK35P8J4KuHAiZuk9",
+      "category": "Bienestar y psicología"
     },
     {
       "id": "4wxU4kPN2h2u5Djrv5f2zw",
       "name": "Bombificadas",
       "publisher": "Bombificadas",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f617ab8f3b60485ca68f8e0f0",
-      "youtube": "https://www.youtube.com/channel/UCIN6PcyG2vmUO444Zb5hQxw/videos"
+      "youtube": "https://www.youtube.com/channel/UCIN6PcyG2vmUO444Zb5hQxw/videos",
+      "category": "Comedia y Humor"
     },
     {
       "id": "3FA9mZ5fWlsNR5rMjofI1Q",
@@ -811,14 +879,16 @@
       "publisher": "Pol Gise",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f617209d6a5c0a17e491f7ec1",
       "youtube": "https://www.youtube.com/channel/UC7HEs-S0DSZ-HW0htVNrTmw/videos",
-      "episodeTitle": "Chisme Mitológico"
+      "episodeTitle": "Chisme Mitológico",
+      "category": "Cultura y Entretenimiento"
     },
     {
       "id": "5lf8QBe0plyw4iM661oRil",
       "name": "La escóbula de la brújula",
       "publisher": "Podium Podcast",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f0a567b5750ee9b51d9db5721",
-      "youtube": "https://www.youtube.com/playlist?list=PLl4KJtUW7dz0Ix7aGG80DLWmO-WVbqTZp"
+      "youtube": "https://www.youtube.com/playlist?list=PLl4KJtUW7dz0Ix7aGG80DLWmO-WVbqTZp",
+      "category": "Ciencia, Historia y Tecnología"
     }
   ]
 }

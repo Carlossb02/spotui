@@ -125,10 +125,13 @@ internal fun CollectionDownloadButton(songs: List<SongsModel>, description: Stri
                             !status.complete -> { requested = true; onClick(false) }
                         }
                     }, onLongClick = { menu = true })) {
-            val color = if (status.complete) CollectionGreen else Color(0xFFB7B6BC)
-            Icon(androidx.compose.ui.res.painterResource(if (paused) com.music.spotui.R.drawable.collection_play else if (status.active) com.music.spotui.R.drawable.collection_pause else com.music.spotui.R.drawable.collection_download),
+            CollectionDownloadGlyph(
                 if (paused) "Reanudar descargas" else if (status.active) "Pausar descargas" else description,
-                tint = color, modifier = Modifier.size(25.dp).border(1.5.dp, color, CircleShape).padding(3.dp))
+                complete = status.complete,
+                drawable = if (paused) com.music.spotui.R.drawable.collection_play
+                    else if (status.active) com.music.spotui.R.drawable.collection_pause
+                    else com.music.spotui.R.drawable.collection_download,
+            )
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text("Cancelar descargas de esta colección") }, onClick = {
@@ -138,7 +141,24 @@ internal fun CollectionDownloadButton(songs: List<SongsModel>, description: Stri
                 menu = false; requested = false; SongPlayer.manageCollectionDownloads(songs, context, delete = true)
             })
         }
-        if (!status.complete && (requested || status.active)) androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+        if (!status.complete && (requested || status.active)) CollectionDownloadRing(fraction, Modifier.fillMaxSize())
+    }
+}
+
+@Composable
+internal fun CollectionDownloadGlyph(
+    description: String,
+    complete: Boolean,
+    drawable: Int = com.music.spotui.R.drawable.collection_download,
+) {
+    val color = if (complete) CollectionGreen else Color(0xFFB7B6BC)
+    Icon(androidx.compose.ui.res.painterResource(drawable), description, tint = color,
+        modifier = Modifier.size(25.dp).border(1.5.dp, color, CircleShape).padding(3.dp))
+}
+
+@Composable
+internal fun CollectionDownloadRing(fraction: Float, modifier: Modifier = Modifier) {
+    androidx.compose.foundation.Canvas(modifier) {
             val stroke = 2.dp.toPx()
             val w = size.width - stroke; val h = size.height - stroke
             val perimeter = 2 * (w - h) + kotlin.math.PI.toFloat() * h
@@ -146,7 +166,6 @@ internal fun CollectionDownloadButton(songs: List<SongsModel>, description: Stri
                 size = androidx.compose.ui.geometry.Size(w, h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(h / 2),
                 style = androidx.compose.ui.graphics.drawscope.Stroke(stroke, cap = StrokeCap.Round,
                     pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(perimeter * fraction.coerceAtLeast(.015f), perimeter))))
-        }
     }
 }
 

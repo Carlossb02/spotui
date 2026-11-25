@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -41,6 +43,11 @@ internal fun FollowingPodcastEpisodesContent(
     val context=LocalContext.current
     val player:PlayerViewModel=hiltViewModel()
     val feed by homeViewModel.followedEpisodes.collectAsState()
+    val subscriptionRevision by SubscribedPodcastPref.revision.collectAsState()
+    val shows by produceState(remember(context) { SubscribedPodcastPref.getSubscribedPodcasts(context) },
+        context, subscriptionRevision) {
+        value = withContext(Dispatchers.IO) { SubscribedPodcastPref.getSubscribedPodcasts(context) }
+    }
     LaunchedEffect(Unit) {
         if(!homeViewModel.followedEpisodes.value.loading)
             homeViewModel.refreshFollowedReleases(kind=ReleaseKind.PODCASTS)
@@ -81,6 +88,26 @@ internal fun FollowingPodcastEpisodesContent(
             onRefresh={homeViewModel.refreshFollowedReleases(force=true,kind=ReleaseKind.PODCASTS)},
             modifier=Modifier.weight(1f).fillMaxWidth()) {
         LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(bottom=140.dp)) {
+            if (shows.isNotEmpty()) item(key = "followed_podcast_shows") {
+                Text(uiLocalized("Following podcasts"), color = Color.White, fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold, modifier = Modifier.padding(20.dp, 16.dp, 20.dp, 10.dp))
+                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(shows, key = { it.id }) { show ->
+                        LaunchedEffect(show.id, show.coverUri) {
+                            if (show.coverUri.isBlank()) withContext(Dispatchers.IO) {
+                                SubscribedPodcastPref.recoverMissingCover(context.applicationContext, show)
+                            }
+                        }
+                        val cover = remember(show.id, show.coverUri) {
+                            com.music.spotui.ui.notification.PodcastCover.preferredShowUri(context, show.id, show.coverUri)
+                        }
+                        PodcastCatalogueCard(show.copy(coverUri = cover)) {
+                            navController.navigate(showRoute(show.id, show.name))
+                        }
+                    }
+                }
+            }
             item {
                 Text(uiLocalized("Latest episodes"),color=Color.White,fontSize=28.sp,fontWeight=FontWeight.Bold,
                     modifier=Modifier.padding(20.dp,18.dp,20.dp,12.dp))

@@ -110,6 +110,7 @@ data class PodcastVideoQuality(
 }
 
 internal object PodcastVideoStreams {
+    const val USER_AGENT = "com.google.ios.youtube/21.03.1 (iPhone16,2; U; CPU iOS 18_2 like Mac OS X;)"
     private val previewCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, PodcastVideoQuality>>()
     private val videoOptionsCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<PodcastVideoQuality>>>()
     // Signed format URLs can expire earlier than YouTube's advertised expiry;
@@ -148,7 +149,7 @@ internal object PodcastVideoStreams {
     suspend fun isReadable(url: String): Boolean = withContext(Dispatchers.IO) {
         runCatching {
             val request = okhttp3.Request.Builder().url(url)
-                .header("User-Agent", "com.google.ios.youtube/21.03.1 (iPhone16,2; U; CPU iOS 18_2 like Mac OS X;)")
+                .header("User-Agent", USER_AGENT)
                 .header("Range", "bytes=0-1023").build()
             videoProbeClient.newCall(request).execute().use { result ->
                 val valid = result.code == 200 || result.code == 206
@@ -380,6 +381,15 @@ internal object PodcastVideoStreams {
     /** Bounded playback preview metadata; no decoder until a tile becomes active. */
     fun warmPreview(videoId: String): PodcastVideoQuality? = previewCache[videoId]
         ?.takeIf { System.currentTimeMillis() - it.first in 0L..VIDEO_OPTIONS_TTL_MS }?.second
+
+    suspend fun resolveStoryPreview(videoId: String): String? {
+        warmPreview(videoId)?.let { return it.url }
+        val now = System.currentTimeMillis()
+        val options = videoOptionsCache[videoId]?.takeIf { now - it.first in 0L..VIDEO_OPTIONS_TTL_MS }
+            ?.second?.takeIf { choices -> choices.any { it.verifiedForStartup } }
+            ?: resolveUnshared(videoId, previewOnly = false)
+        return options.filter { it.verifiedForStartup }.minByOrNull { kotlin.math.abs(it.height - 360) }?.url
+    }
 
     /** Resolve one small, silent hover preview with a short-lived stream URL cache.
      * No high-resolution probing, audio decoder or use of the active MediaSession. */
@@ -818,7 +828,7 @@ object PodcastVideoSession {
         // IMPORTANT: do NOT reuse SongPlayer.exoPlayer here. Only a separate,
         // muted video decoder allows truly seamless audio -> video transition.
         val http = androidx.media3.datasource.DefaultHttpDataSource.Factory()
-            .setUserAgent("com.google.ios.youtube/21.03.1 (iPhone16,2; U; CPU iOS 18_2 like Mac OS X;)")
+            .setUserAgent(PodcastVideoStreams.USER_AGENT)
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(5_000)
             .setReadTimeoutMs(8_000)
