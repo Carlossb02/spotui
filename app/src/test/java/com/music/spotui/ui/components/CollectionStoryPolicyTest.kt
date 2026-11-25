@@ -20,8 +20,8 @@ class CollectionStoryPolicyTest {
     @Test
     fun clipStartsWithinAvailableMedia() {
         assertEquals(0L, storyStartPosition(9_000))
-        assertEquals(0L, storyStartPosition(20_000))
-        assertEquals(85_000L, storyStartPosition(200_000))
-        assertEquals(3_585_000L, storyStartPosition(7_200_000))
+        assertEquals(2_500L, storyStartPosition(20_000))
+        assertEquals(92_500L, storyStartPosition(200_000))
+        assertEquals(3_592_500L, storyStartPosition(7_200_000))
     }
 }

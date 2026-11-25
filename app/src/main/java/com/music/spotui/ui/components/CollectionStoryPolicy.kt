@@ -3,7 +3,7 @@ package com.music.spotui.ui.components
 import com.music.spotui.data.entity.SongsModel
 import kotlin.random.Random
 
-internal const val STORY_DURATION_MS = 30_000L
+internal const val STORY_DURATION_MS = 15_000L
 
 internal fun supportsCollectionStory(song: SongsModel): Boolean =
     song.url.isNotBlank() && !song.url.startsWith("episode:") && !song.url.startsWith("sync_pending:")
