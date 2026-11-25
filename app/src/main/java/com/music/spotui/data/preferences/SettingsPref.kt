@@ -41,7 +41,8 @@ private const val KEY_EQUALIZER_PRESET = "equalizer_preset"
 private const val KEY_EQUALIZER_BANDS = "equalizer_bands"
 private const val KEY_LANGUAGE = "app_language"
 private const val KEY_PLAYER_LYRIC_LINE = "player_current_lyric_line"
-const val DEFAULT_UPDATE_REPO_URL = "https://github.com/Carlossb02/spotui"
+const val DEFAULT_UPDATE_REPO_URL = "https://github.com/Carlossb02/spotidroid"
+internal const val LEGACY_UPDATE_REPO_URL = "https://github.com/Carlossb02/spotui"
 
 /** Off (0s) … 12s. 0 disables crossfade. */
 const val CROSSFADE_MIN_MS = 0
@@ -135,11 +136,9 @@ fun setIgnoreBatteryOptimization(c: Context, v: Boolean) = prefs(c).edit().putBo
 
 fun getUpdateRepoUrl(c: Context): String {
     val stored = prefs(c).getString(KEY_UPDATE_REPO_URL, DEFAULT_UPDATE_REPO_URL).orEmpty()
-    if (stored.isBlank() || !stored.contains("Carlossb02", ignoreCase = true)) {
-        setUpdateRepoUrl(c, DEFAULT_UPDATE_REPO_URL)
-        return DEFAULT_UPDATE_REPO_URL
-    }
-    return stored
+    return if (stored.isBlank() || !stored.contains("Carlossb02", ignoreCase = true) ||
+        stored.trim().trimEnd('/').equals(LEGACY_UPDATE_REPO_URL, ignoreCase = true)
+    ) DEFAULT_UPDATE_REPO_URL else stored
 }
 
 fun setUpdateRepoUrl(c: Context, url: String) =

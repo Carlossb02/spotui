@@ -102,14 +102,10 @@ import com.music.spotui.R
 import com.music.spotui.data.api.Response
 import com.music.spotui.data.api.PlaylistAccess
 import com.music.spotui.data.api.PlaylistAccessInfo
-import com.music.spotui.ui.components.PlaylistSpotifyCollaboratorsDialog
 import com.music.spotui.ui.components.PlaylistSpotifyMenuItems
-import com.music.spotui.ui.components.PlaylistEditingField
-import com.music.spotui.ui.components.PlaylistEditingSheet
 import com.music.spotui.ui.components.SpotifyPlaylistEditor
 import com.music.spotui.ui.components.LibraryPlaylistAction
 import com.music.spotui.ui.components.openSpotifyPlaylist
-import com.music.spotui.ui.components.openSpotifyPlaylistTab
 import com.music.spotui.ui.components.spotifyPlaylistUrl
 import com.music.spotui.data.preferences.LocalPlaylistPref
 import com.music.spotui.data.entity.AlbumsModel
@@ -208,11 +204,10 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     }
     val displayedDescription = originalDescription
     val remotePlaylistId = spotifyUrl?.lastPathSegment
-    val editTargetReady = !isLocalPlaylist || linkedSpotifyId != null
     val canOfferSyncedEditor = remotePlaylistId != null && playlistAccess.isOwner
-    val canEditRemoteDetails = remotePlaylistId != null && playlistAccess.isOwner && playlistAccess.ownerId.isNotBlank()
     var showSpotifyEditor by androidx.compose.runtime.saveable.rememberSaveable(playlistId) { mutableStateOf(false) }
     var showDeleteDialog by remember(playlistId) { mutableStateOf(false) }
+    var removeError by remember(playlistId) { mutableStateOf<String?>(null) }
     val editScope = androidx.compose.runtime.rememberCoroutineScope()
     val libraryRevision by com.music.spotui.sync.OwnLibraryChanges.revision.collectAsState()
     var playlistSaved by remember(remotePlaylistId) { mutableStateOf<Boolean?>(null) }
@@ -232,7 +227,6 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             }
         }
     }
-    var showSpotifyCollaborators by remember(profilePlaylistId) { mutableStateOf(false) }
     var awaitingSpotifyReturn by remember(profilePlaylistId) { mutableStateOf(false) }
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle, playlistId, profilePlaylistId) {
@@ -273,28 +267,18 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                 refreshProfile++
                 playlistViewModel.reloadPlaylist(playlistId)
             },
-            onOpenSpotify = { showSpotifyEditor = false; openInSpotify() },
             onRemoveFromLibrary = { showSpotifyEditor = false; showDeleteDialog = true },
             onDismiss = { showSpotifyEditor = false },
         )
     }
-    if (showSpotifyCollaborators) {
-        PlaylistSpotifyCollaboratorsDialog(
-            onDismiss = { showSpotifyCollaborators = false },
-            onOpenSpotify = openInSpotify,
-            onOpenTab = { spotifyUrl?.let { awaitingSpotifyReturn = openSpotifyPlaylistTab(context, it) } },
-        )
-    }
-
-    fun setPlaylistSaved(saved: Boolean, onQueued: () -> Unit = {}) {
+    fun savePlaylist() {
         val id = remotePlaylistId ?: return
         if (playlistSaveBusy) return
         playlistSaveBusy = true
         editScope.launch {
             try {
-                if (com.music.spotui.data.api.SpotifySync.setPlaylistSaved(context, id, saved)) {
-                    playlistSaved = saved
-                    onQueued()
+                if (com.music.spotui.data.api.SpotifySync.savePlaylist(context, id)) {
+                    playlistSaved = true
                 } else {
                     android.widget.Toast.makeText(context, "No se pudo guardar el cambio en Spotify", android.widget.Toast.LENGTH_LONG).show()
                 }
@@ -306,7 +290,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     val togglePlaylistSaved: () -> Unit = {
         when (playlistSaved) {
             true -> showDeleteDialog = true
-            false -> setPlaylistSaved(true)
+            false -> savePlaylist()
             null -> Unit
         }
     }
@@ -380,7 +364,6 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     val (filteredSongs, stableSongKeys) = displaySongs
 
     var menuSong by remember { mutableStateOf<com.music.spotui.data.entity.SongsModel?>(null) }
-    var showRenameDialog by remember { mutableStateOf(false) }
 
     var editingTracks by remember(playlistId) { mutableStateOf(false) }
     var pendingAction by androidx.compose.runtime.saveable.rememberSaveable(playlistId, initialAction) {
@@ -394,9 +377,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             && !songsSettled) return@LaunchedEffect
         if (action == LibraryPlaylistAction.ADD && !canEditPlaylist && !accessResolved)
             return@LaunchedEffect
-        if (action in listOf(LibraryPlaylistAction.COLLABORATORS, LibraryPlaylistAction.PRIVACY,
-                LibraryPlaylistAction.EDIT, LibraryPlaylistAction.NAME, LibraryPlaylistAction.DETAILS,
-                LibraryPlaylistAction.TRACKS) &&
+        if (action in listOf(LibraryPlaylistAction.EDIT, LibraryPlaylistAction.NAME, LibraryPlaylistAction.DETAILS,
+                LibraryPlaylistAction.TRACKS, LibraryPlaylistAction.REMOVE) &&
             profilePlaylistId.isNotBlank() && !accessResolved)
             return@LaunchedEffect
         if ((action == LibraryPlaylistAction.NAME || action == LibraryPlaylistAction.DETAILS || action == LibraryPlaylistAction.EDIT || action == LibraryPlaylistAction.REMOVE) &&
@@ -423,65 +405,61 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             LibraryPlaylistAction.TRACKS -> if (canEditPlaylist) editingTracks = true
             LibraryPlaylistAction.EDIT, LibraryPlaylistAction.NAME, LibraryPlaylistAction.DETAILS ->
                 if (canOfferSyncedEditor) showSpotifyEditor = true
-                else if (remotePlaylistId == null && isLocalPlaylist) showRenameDialog = true
-            LibraryPlaylistAction.REMOVE -> showDeleteDialog = true
+            LibraryPlaylistAction.REMOVE -> if (remotePlaylistId != null) showDeleteDialog = true
             LibraryPlaylistAction.COPY ->
                 if (songs.isNotEmpty()) showCopyPlaylist = true else message("No hay canciones disponibles para copiar")
-            LibraryPlaylistAction.COLLABORATORS ->
-                if (playlistAccess.isOwner) showSpotifyCollaborators = true
-                else message("Solo el propietario puede invitar a colaboradores")
-            LibraryPlaylistAction.PRIVACY ->
-                if (canEditRemoteDetails) showSpotifyEditor = true
-                else message("Solo el propietario puede cambiar la privacidad")
         }
     }
 
-    if (showRenameDialog && isLocalPlaylist && remotePlaylistId == null) {
-        val currentName = playlist.name.ifBlank { playlistName }
-        var name by remember(currentName) { mutableStateOf(currentName) }
-        PlaylistEditingSheet(
-            title = "Cambiar nombre",
-            cover = visualCover,
-            saving = false,
-            saveEnabled = name.isNotBlank() && name.trim() != currentName,
-            onDismiss = { showRenameDialog = false },
-            onSave = {
-                LocalPlaylistPref.renamePlaylist(context, playlistId, name.trim())
-                com.music.spotui.data.api.Api.HomeCache.library = null
-                com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(playlistId)
-                playlistViewModel.reloadPlaylist(playlistId)
-                showRenameDialog = false
-            },
-            fields = { PlaylistEditingField(name, "Nombre", { name = it }, true) },
-        )
-    }
-
-
-    if (showDeleteDialog && (remotePlaylistId != null || isLocalPlaylist)) {
-        val label = if (playlistAccess.isOwner || remotePlaylistId == null) "Eliminar lista" else "Quitar de Biblioteca"
-        val close = { showDeleteDialog = false; navController.navigateUp(); Unit }
+    if (showDeleteDialog && remotePlaylistId != null) {
+        val owner = playlistAccess.isOwner || isLocalPlaylist
+        val name = playlist.name.ifBlank { playlistName }
+        val dismiss = { showDeleteDialog = false; removeError = null }
         AlertDialog(
-            onDismissRequest = { if (!playlistSaveBusy) showDeleteDialog = false },
-            containerColor = Color(0xFF282828),
-            title = { Text(label, fontWeight = FontWeight.Bold) },
+            onDismissRequest = { if (!playlistSaveBusy) dismiss() },
+            containerColor = Color(0xFF242424),
+            titleContentColor = Color.White,
+            textContentColor = Color(0xFFD0D0D0),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+            title = { Text(if (owner) "¿Eliminar lista?" else "¿Quitar de tu biblioteca?", fontWeight = FontWeight.Bold) },
             text = {
-                Text(if (remotePlaylistId != null) "La lista se quitará de tu biblioteca de Spotify y de Spotidroid."
-                    else "Se eliminará esta lista de Spotidroid.")
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("«$name» se quitará de tu biblioteca de Spotify y de Spotidroid.")
+                    if (playlistSaveBusy) {
+                        androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
+                    }
+                    removeError?.let { Text(it, color = Color(0xFFFFA7A0)) }
+                }
             },
             confirmButton = {
-                androidx.compose.material3.TextButton(enabled = !playlistSaveBusy, onClick = {
-                    if (remotePlaylistId != null) setPlaylistSaved(false, close)
-                    else {
-                        LocalPlaylistPref.deletePlaylist(context, playlistId)
-                        com.music.spotui.data.api.Api.HomeCache.library = null
-                        com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(playlistId)
-                        close()
+                androidx.compose.material3.Button(
+                    enabled = !playlistSaveBusy,
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = Color.White, contentColor = Color(0xFF141414)),
+                    onClick = {
+                        playlistSaveBusy = true
+                        removeError = null
+                        editScope.launch {
+                            try {
+                                com.music.spotui.data.api.SpotifySync.removePlaylistConfirmed(context, remotePlaylistId)
+                                playlistSaved = false
+                                dismiss()
+                                navController.navigateUp()
+                            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                throw cancelled
+                            } catch (failure: Exception) {
+                                android.util.Log.w("PlaylistScreen", "Spotify playlist removal was not confirmed", failure)
+                                removeError = "Spotify no ha confirmado el cambio. Comprueba tu conexión e inténtalo de nuevo."
+                            } finally {
+                                playlistSaveBusy = false
+                            }
+                        }
                     }
-                }) { Text(label, color = Color(0xFFFF7070)) }
+                ) { Text(if (owner) "Eliminar" else "Quitar", fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
-                androidx.compose.material3.TextButton(enabled = !playlistSaveBusy, onClick = { showDeleteDialog = false }) {
-                    Text("Cancelar")
+                androidx.compose.material3.TextButton(enabled = !playlistSaveBusy, onClick = dismiss) {
+                    Text("Cancelar", color = Color.White)
                 }
             },
         )
@@ -764,21 +742,20 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                             }
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            if (remotePlaylistId != null) {
-                                Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 16.dp),
-                                    verticalAlignment = Alignment.CenterVertically) {
-                                    com.music.spotui.ui.components.LibrarySaveIcon(
-                                        saved = playlistSaved == true,
-                                        enabled = playlistSaved != null && !playlistSaveBusy,
-                                        onClick = togglePlaylistSaved,
-                                    )
-                                }
-                                Spacer(Modifier.height(8.dp))
-                            }
 val playing = playlistViewModel.currentSongPlayingState.value
 val currentInList = songs.any { it.id == playlistViewModel.currentSongId.value }
 com.music.spotui.ui.components.CollectionActionBar(
  glass = collectionGlass,
+ storySongs = songs, storyTitle = playlist.name, storyCover = visualCover,
+ savedControl = {
+     if (remotePlaylistId != null) {
+         com.music.spotui.ui.components.LibrarySaveIcon(
+                          saved = playlistSaved == true,
+                          enabled = playlistSaved != null && !playlistSaveBusy,
+                          onClick = togglePlaylistSaved,
+                      )
+     }
+ },
  accent = dominentColor,
  sortMode = currentSort.name, sortDescending = isDescending,
  modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -994,17 +971,16 @@ com.music.spotui.ui.components.CollectionActionBar(
                         fontWeight = FontWeight.Bold, fontSize = 20.sp,
                         modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 18.dp))
                     spotifyUrl?.let { url ->
-                        PlaylistSpotifyMenuItems(url, playlistAccess.isOwner,
+                        PlaylistSpotifyMenuItems(url,
                             onDismiss = { showPlaylistActions = false },
                             onOpenSpotify = openInSpotify,
-                            onManage = { showSpotifyCollaborators = true },
                         )
                     }
                     if (playlistSaved == false && remotePlaylistId != null) {
                         Row(
                             modifier = Modifier.fillMaxWidth().clickable {
                                 showPlaylistActions = false
-                                setPlaylistSaved(true)
+                                savePlaylist()
                             }.padding(horizontal = 24.dp, vertical = 16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -1060,14 +1036,8 @@ com.music.spotui.ui.components.CollectionActionBar(
                             Text("Nombre e información", color = Color.White, fontSize = 16.sp)
                         }
                     }
-                    if (editTargetReady && isLocalPlaylist && remotePlaylistId == null) {
-                        com.music.spotui.ui.components.PlaylistEditingAction(Icons.Default.Edit, "Cambiar nombre", true) {
-                            showPlaylistActions = false
-                            showRenameDialog = true
-                        }
-                    }
-                    if (playlistSaved == true || isLocalPlaylist) {
-                        val removeLabel = if (playlistAccess.isOwner || remotePlaylistId == null) "Eliminar lista" else "Quitar de Biblioteca"
+                    if (remotePlaylistId != null && (playlistSaved == true || playlistAccess.isOwner || isLocalPlaylist)) {
+                        val removeLabel = if (playlistAccess.isOwner || isLocalPlaylist) "Eliminar lista" else "Quitar de tu biblioteca"
                         com.music.spotui.ui.components.PlaylistEditingAction(Icons.Default.Delete, removeLabel, !playlistSaveBusy) {
                             showPlaylistActions = false
                             showDeleteDialog = true

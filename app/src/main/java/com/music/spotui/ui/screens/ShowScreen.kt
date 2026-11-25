@@ -350,6 +350,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         run {
                             com.music.spotui.ui.components.CollectionActionBar(
  glass = collectionGlass,
+ storySongs = episodes, storyTitle = displayShowTitle, storyCover = resolvedCover.orEmpty(),
  accent = com.music.spotui.ui.components.rememberCollectionAccent(show?.coverUri?.takeIf { it.isNotBlank() } ?: episodes.firstOrNull()?.coverUri.orEmpty()),
  sortMode = currentSort.name, sortDescending = isDescending,
  modifier = Modifier.fillMaxWidth(),

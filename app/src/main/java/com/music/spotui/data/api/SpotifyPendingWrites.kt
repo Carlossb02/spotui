@@ -134,6 +134,20 @@ internal object SpotifyPendingWrites {
         }
         !failed && store.entries().isEmpty()
     }
+
+    /** Shares the outbox gate so an earlier pending save cannot restore a removed playlist. */
+    suspend fun removePlaylistConfirmed(context: Context, session: String, playlistId: String) = drainGate.withLock {
+        val owner = checkNotNull(account(context)) { "Vuelve a conectar Spotify." }
+        check(SpotifySession.spDc(context) == session) { "La cuenta de Spotify ha cambiado." }
+        check(SpotifyTokenProvider.ensureToken(context)) { "Vuelve a conectar Spotify." }
+        val user = Spotify.me().getOrThrow().id
+        check(user.isNotBlank() && account(context) == owner) { "La cuenta de Spotify ha cambiado." }
+        val store = journal(context, owner)
+        store.entries().filter { it.kind == "playlist_library" && it.target == playlistId }
+            .forEach { store.acknowledge(it) }
+        SpotifySync.writePlaylistMembership(context, session, user, playlistId, saved = false)
+    }
+
     private suspend fun send(context: Context, owner: String, edit: PendingSpotifyWrite): Boolean = try {
         check(account(context) == owner) { "Spotify account changed" }
         if (edit.kind == "playlist_library") {

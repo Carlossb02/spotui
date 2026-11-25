@@ -23,6 +23,16 @@ It connects to your real Spotify account and mirrors the Spotify experience.
   <img src="https://github.com/user-attachments/assets/a64f54b3-f69c-4073-970d-d189d5ed5da5" width="32%" alt="Screenshot_2026-07-13-20-43-45-056_com music spotui" />
 </p>
 
+## Actualizaciones durante el cambio a Spotidroid
+
+Publica la versión de transición en `Carlossb02/spotui` con el nombre de APK habitual. Después, renombra ese mismo repositorio a `Carlossb02/spotidroid`. El actualizador admite ambos nombres del repositorio y del APK.
+
+Para preparar un APK de una versión posterior, pasa el APK compilado y el último APK publicado a `scripts/Stage-UpdateApk.ps1`. El script comprueba el paquete, la firma y que el código de versión haya aumentado antes de copiar el archivo como `Spotidroid_v<versión>.apk`. Usa `-KeepSpotuiName` para la versión de transición.
+
+```powershell
+./scripts/Stage-UpdateApk.ps1 -Apk ./nuevo.apk -PreviousApk ./publicado.apk -Destination .
+```
+
 ## Credits
 
 spotui builds on the work of several open-source projects:

@@ -7,13 +7,10 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
-import androidx.browser.customtabs.CustomTabsClient
-import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
@@ -53,41 +50,16 @@ internal fun openSpotifyPlaylist(context: Context, url: Uri): Boolean {
     }
 }
 
-/** Opens Spotify's own site in a browser-owned tab over Spotidroid. */
-internal fun openSpotifyPlaylistTab(context: Context, url: Uri): Boolean {
-    val browserPackage = CustomTabsClient.getPackageName(context, null)
-        ?: return openSpotifyPlaylist(context, url)
-    val tab = CustomTabsIntent.Builder()
-        .setShowTitle(true)
-        .setColorScheme(CustomTabsIntent.COLOR_SCHEME_DARK)
-        .build()
-    tab.intent.setPackage(browserPackage)
-    return try {
-        tab.launchUrl(context, url)
-        true
-    } catch (_: ActivityNotFoundException) {
-        openSpotifyPlaylist(context, url)
-    }
-}
-
 @Composable
 internal fun PlaylistSpotifyMenuItems(
     url: Uri,
-    isOwner: Boolean,
     onDismiss: () -> Unit,
     onOpenSpotify: () -> Unit,
-    onManage: () -> Unit,
 ) {
     val context = LocalContext.current
     PlaylistExternalAction(Icons.Default.OpenInNew, "Abrir en Spotify") {
         onDismiss()
         onOpenSpotify()
-    }
-    if (isOwner) {
-        PlaylistExternalAction(Icons.Default.GroupAdd, "Colaboradores en Spotify") {
-            onDismiss()
-            onManage()
-        }
     }
     PlaylistExternalAction(Icons.Default.Share, "Compartir enlace") {
         onDismiss()
@@ -109,31 +81,6 @@ internal fun PlaylistSpotifyMenuItems(
         }
         onDismiss()
     }
-}
-
-@Composable
-internal fun PlaylistSpotifyCollaboratorsDialog(
-    onDismiss: () -> Unit,
-    onOpenSpotify: () -> Unit,
-    onOpenTab: () -> Unit,
-) {
-    AlertDialog(
-            onDismissRequest = onDismiss,
-            title = { Text("Colaboradores") },
-            text = { Text("En Spotify, abre el menú de la lista y elige Invitar a colaboradores. Para quitar un permiso, toca las fotos de perfil bajo el nombre y abre el menú de esa persona.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    onDismiss()
-                    onOpenTab()
-                }) { Text("Abrir pestaña de Spotify") }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    onDismiss()
-                    onOpenSpotify()
-                }) { Text("Usar app de Spotify") }
-            },
-    )
 }
 
 @Composable

@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AddCircle
@@ -393,7 +394,7 @@ fun SongOptionsSheet(
                 onDismiss()
             }
             SongMenuRow(
-                icon = Icons.Outlined.AddCircleOutline,
+                icon = if (liked) Icons.Default.CheckCircle else Icons.Outlined.AddCircleOutline,
                 label = text(if (liked) "Remove from Liked Songs" else "Add to Liked Songs"),
                 iconTint = if (liked) Color(0xFF1ED760) else Color(0xFFB3B3B3),
             ) {

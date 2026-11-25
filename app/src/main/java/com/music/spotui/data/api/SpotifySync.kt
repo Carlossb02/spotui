@@ -153,16 +153,42 @@ object SpotifySync {
         return SpotifyPendingWrites.desired(context, "playlist_library", clean) ?: saved
     }
 
-    internal suspend fun setPlaylistSaved(context: Context, id: String, saved: Boolean): Boolean {
+    internal suspend fun savePlaylist(context: Context, id: String): Boolean {
         val clean = cleanPlaylistId(id)
         if (!clean.matches(Regex("[A-Za-z0-9]{22}"))) return false
-        if (!SpotifyPendingWrites.enqueue(context, "playlist_library", clean, saved = saved)) return false
-        if (!saved) kotlinx.coroutines.withContext(Dispatchers.IO) {
-            com.music.spotui.data.preferences.FavoritePlaylistsPref.removeShortcut(context, clean)
+        val session = SpotifySession.spDc(context)
+        return playlistWrites.computeIfAbsent("library:$clean") { Mutex() }.withLock {
+            if (!SpotifyPendingWrites.enqueue(context, "playlist_library", clean, saved = true, expectedSession = session)) {
+                return@withLock false
+            }
+            Api.HomeCache.library = null
+            com.music.spotui.sync.OwnLibraryChanges.changed()
+            true
         }
-        Api.HomeCache.library = null
-        com.music.spotui.sync.OwnLibraryChanges.changed()
-        return true
+    }
+
+    internal suspend fun removePlaylistConfirmed(context: Context, id: String) = withContext(Dispatchers.IO) {
+        val clean = cleanPlaylistId(id)
+        require(clean.matches(Regex("[A-Za-z0-9]{22}")))
+        val session = SpotifySession.spDc(context)
+        playlistWrites.computeIfAbsent("library:$clean") { Mutex() }.withLock {
+            val confirmed = kotlinx.coroutines.withTimeoutOrNull(30_000L) {
+                SpotifyPendingWrites.removePlaylistConfirmed(context, session, clean)
+                true
+            }
+            check(SpotifySession.spDc(context) == session) { "La cuenta de Spotify ha cambiado." }
+            check(confirmed == true) { "Spotify todavía no ha confirmado la eliminación. Vuelve a intentarlo." }
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                check(SpotifySession.spDc(context) == session) { "La cuenta de Spotify ha cambiado." }
+                LibraryCatalogCache.playlistRemovalConfirmed(context, session, clean)
+                com.music.spotui.data.preferences.FavoritePlaylistsPref.removeShortcut(context, clean)
+                Api.HomeCache.invalidatePlaylist(clean)
+                Api.HomeCache.library = null
+                com.music.spotui.sync.OwnLibraryChanges.changed()
+                com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylists(context)
+                    .filter { it.syncedSpotifyId == clean }.forEach { LocalSpotifyMirror.refresh(context, it.id) }
+            }
+        }
     }
 
     internal suspend fun writePlaylistMembership(

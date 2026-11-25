@@ -31,6 +31,8 @@ import com.music.spotui.data.preferences.downloadsVersion
 import com.music.spotui.data.preferences.getDownloadedEntries
 import com.music.spotui.di.SongPlayer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.withContext
 
 private val LocalCapsuleMetrics = staticCompositionLocalOf { collectionActionMetrics(288f) }
@@ -71,20 +73,31 @@ internal fun collectionDownloadState(keys: Set<String>, saved: Set<String>, task
 @Composable
 internal fun CollectionDownloadButton(songs: List<SongsModel>, description: String, onClick: (Boolean) -> Unit) {
     val context = LocalContext.current
-    val transfers by SongPlayer.downloadQueue.collectAsState()
-    val pausedKeys by SongPlayer.pausedDownloads.collectAsState()
     val version by downloadsVersion.collectAsState()
-    val keys = remember(songs) { songs.map { downloadRecordingKey(it.url, it.spotifyTrackId) }.toSet() }
+    val keys by produceState<Set<String>>(emptySet(), songs) {
+        value = withContext(Dispatchers.Default) {
+            songs.map { downloadRecordingKey(it.url, it.spotifyTrackId) }.toSet()
+        }
+    }
     val saved by produceState<Set<String>>(emptySet(), version) {
         value = withContext(Dispatchers.IO) { getDownloadedEntries(context).map { downloadRecordingKey(it.first.url, it.first.spotifyTrackId) }.toSet() }
     }
-    val status = remember(keys, saved, transfers) { collectionDownloadState(keys, saved, transfers.map {
-        downloadRecordingKey(it.song.url, it.song.spotifyTrackId) to it.progress
-    }) }
+    val downloadStatus by produceState(CollectionDownloadState(0f, false, false) to false, keys, saved) {
+        combine(SongPlayer.downloadQueue, SongPlayer.pausedDownloads) { transfers, paused -> transfers to paused }
+            .conflate().collect { (transfers, paused) ->
+                value = withContext(Dispatchers.Default) {
+                    val tasks = transfers.mapNotNull {
+                        val key = downloadRecordingKey(it.song.url, it.song.spotifyTrackId)
+                        if (key in keys) key to it.progress else null
+                    }
+                    collectionDownloadState(keys, saved, tasks) to paused.any { it in keys }
+                }
+            }
+    }
+    val (status, paused) = downloadStatus
     var requested by remember(keys) { mutableStateOf(false) }
     LaunchedEffect(status.active, status.complete) { if (status.active || status.complete) requested = false }
     var menu by remember { mutableStateOf(false) }
-    val paused = keys.any { it in pausedKeys }
     val fraction by androidx.compose.animation.core.animateFloatAsState(status.progress, label = "collectionDownload")
     val metrics = LocalCapsuleMetrics.current
     val accent = LocalCapsuleAccent.current
@@ -166,23 +179,43 @@ internal fun CollectionSecondaryActions(modifier: Modifier = Modifier, content: 
     }
 }
 
-/** Three matching capsules; phones retain icons and accessible names without visible labels. */
+/** Primary collection controls, followed by ordering and queue actions. */
 @Composable
 internal fun CollectionActionBar(
     modifier: Modifier = Modifier, enabled: Boolean, playing: Boolean,
     download: @Composable () -> Unit, onSort: () -> Unit, onQueue: () -> Unit,
     onShuffle: () -> Unit, onPlay: () -> Unit,
+    storySongs: List<SongsModel>, storyTitle: String, storyCover: String,
+    savedControl: @Composable () -> Unit = {},
     sortMode: String, sortDescending: Boolean, accent: Color = Color(0xFF75648F), glass: CollectionGlassBackdrop,
 ) {
+    var showStories by remember(storyTitle) { mutableStateOf(false) }
     val sortInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val queueInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val tablet = LocalConfiguration.current.smallestScreenWidthDp >= 600
     BoxWithConstraints(modifier) {
         val metrics = remember(maxWidth, tablet) { collectionActionMetrics(maxWidth.value, tablet) }
         CompositionLocalProvider(LocalCapsuleMetrics provides metrics, LocalCapsuleAccent provides accent, LocalGlassBackdrop provides glass) {
-            Row(Modifier.height(68.dp), verticalAlignment = Alignment.CenterVertically) {
-                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(metrics.itemGap.dp), verticalAlignment = Alignment.CenterVertically) {
-                    download()
+            Column {
+                Row(Modifier.height(68.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(metrics.itemGap.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CollectionStoriesButton(storyCover, enabled) { showStories = true }
+                        savedControl()
+                        download()
+                    }
+                    Spacer(Modifier.width(metrics.gap.dp))
+                    IconButton(onClick = onShuffle, enabled = enabled, modifier = Modifier.size(metrics.control.dp)) {
+                        Icon(androidx.compose.ui.res.painterResource(com.music.spotui.R.drawable.collection_shuffle), "Aleatorio", tint = Color.White, modifier = Modifier.size(22.dp))
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    FilledIconButton(onClick = onPlay, enabled = enabled, modifier = Modifier.size(metrics.play.dp),
+                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = CollectionGreen, contentColor = Color.Black,
+                            disabledContainerColor = CollectionGreen.copy(alpha = .35f), disabledContentColor = Color.Black)) {
+                        Icon(androidx.compose.ui.res.painterResource(if (playing) com.music.spotui.R.drawable.collection_pause else com.music.spotui.R.drawable.collection_play), if (playing) "Pausar" else "Reproducir", modifier = Modifier.size(22.dp))
+                    }
+                }
+                Row(Modifier.padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(metrics.itemGap.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
                     val sortIcon = when (sortMode) {
                         "DEFAULT" -> com.music.spotui.R.drawable.collection_sort_track
                         "TITLE" -> com.music.spotui.R.drawable.collection_sort_title
@@ -206,17 +239,8 @@ internal fun CollectionActionBar(
                         Icon(androidx.compose.ui.res.painterResource(com.music.spotui.R.drawable.collection_queue), "Añadir a la cola", tint = Color.White, modifier = Modifier.size(22.dp))
                     }
                 }
-                Spacer(Modifier.width(metrics.gap.dp))
-                IconButton(onClick = onShuffle, enabled = enabled, modifier = Modifier.size(metrics.control.dp)) {
-                    Icon(androidx.compose.ui.res.painterResource(com.music.spotui.R.drawable.collection_shuffle), "Aleatorio", tint = Color.White, modifier = Modifier.size(22.dp))
-                }
-                Spacer(Modifier.width(8.dp))
-                FilledIconButton(onClick = onPlay, enabled = enabled, modifier = Modifier.size(metrics.play.dp),
-                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = CollectionGreen, contentColor = Color.Black,
-                        disabledContainerColor = CollectionGreen.copy(alpha = .35f), disabledContentColor = Color.Black)) {
-                    Icon(androidx.compose.ui.res.painterResource(if (playing) com.music.spotui.R.drawable.collection_pause else com.music.spotui.R.drawable.collection_play), if (playing) "Pausar" else "Reproducir", modifier = Modifier.size(22.dp))
-                }
             }
         }
     }
+    if (showStories) CollectionStories(storyTitle, storyCover, storySongs, accent) { showStories = false }
 }

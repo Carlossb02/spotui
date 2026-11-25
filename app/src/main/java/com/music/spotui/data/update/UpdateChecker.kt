@@ -3,6 +3,8 @@ package com.music.spotui.data.update
 import android.content.Context
 import android.util.Log
 import com.music.spotui.BuildConfig
+import com.music.spotui.data.preferences.DEFAULT_UPDATE_REPO_URL
+import com.music.spotui.data.preferences.LEGACY_UPDATE_REPO_URL
 import com.music.spotui.data.preferences.getUpdateRepoUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -30,9 +32,14 @@ object UpdateChecker {
         .build()
 
     suspend fun check(context: Context): UpdateInfo? = withContext(Dispatchers.IO) {
-        val info = runCatching { fetchLatestRelease(context) }
-            .onFailure { Log.d(TAG, "update check failed: ${it.message}") }
-            .getOrNull() ?: return@withContext null
+        val configured = getUpdateRepoUrl(context).trim().trimEnd('/')
+        val sources = if (configured.equals(DEFAULT_UPDATE_REPO_URL, ignoreCase = true)) {
+            listOf(configured, LEGACY_UPDATE_REPO_URL)
+        } else listOf(configured)
+        val info = sources.firstNotNullOfOrNull { source ->
+            runCatching { fetchLatestRelease(source) }
+                .onFailure { Log.d(TAG, "update check failed: ${it.message}") }.getOrNull()
+        } ?: return@withContext null
         if (!isNewer(info.version, BuildConfig.VERSION_NAME)) return@withContext null
         val skipped = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_SKIP, null)
@@ -45,8 +52,7 @@ object UpdateChecker {
             .edit().putString(KEY_SKIP, info.fingerprint).apply()
     }
 
-    private fun fetchLatestRelease(context: Context): UpdateInfo? {
-        val repoUrl = getUpdateRepoUrl(context).trimEnd('/')
+    private fun fetchLatestRelease(repoUrl: String): UpdateInfo? {
         val repoPath = repoUrl.removePrefix("https://github.com/")
             .removePrefix("http://github.com/")
             .removeSuffix("/releases")
@@ -62,12 +68,9 @@ object UpdateChecker {
             .header("Accept", "application/vnd.github+json")
             .header("User-Agent", "Spotidroid-App")
             .build()
-        val response = client.newCall(request).execute()
-        val body = response.body?.string()
-        var json: JSONObject? = null
-
-        if (response.isSuccessful && !body.isNullOrBlank()) {
-            runCatching { json = JSONObject(body) }
+        var json = client.newCall(request).execute().use { response ->
+            if (response.isSuccessful) response.body?.string()?.let { runCatching { JSONObject(it) }.getOrNull() }
+            else null
         }
 
         // Fallback: if /releases/latest failed or returned invalid json, fetch /releases list and pick the first release
@@ -77,17 +80,10 @@ object UpdateChecker {
                 .header("Accept", "application/vnd.github+json")
                 .header("User-Agent", "Spotidroid-App")
                 .build()
-            val listResponse = client.newCall(listRequest).execute()
-            if (listResponse.isSuccessful) {
-                val listBody = listResponse.body?.string()
-                if (!listBody.isNullOrBlank()) {
-                    runCatching {
-                        val arr = org.json.JSONArray(listBody)
-                        if (arr.length() > 0) {
-                            json = arr.optJSONObject(0)
-                        }
-                    }
-                }
+            json = client.newCall(listRequest).execute().use { response ->
+                if (response.isSuccessful) response.body?.string()?.let { body ->
+                    runCatching { org.json.JSONArray(body).optJSONObject(0) }.getOrNull()
+                } else null
             }
         }
 
@@ -100,10 +96,15 @@ object UpdateChecker {
         val htmlUrl = j.optString("html_url", releasesPage)
             .ifBlank { releasesPage }
         val assets = j.optJSONArray("assets")
-        val apkUrl = (0 until (assets?.length() ?: 0))
+        val apks = (0 until (assets?.length() ?: 0))
             .asSequence()
             .mapNotNull { assets?.optJSONObject(it) }
-            .firstOrNull { it.optString("name").endsWith(".apk") }
+            .filter { it.optString("name").endsWith(".apk", ignoreCase = true) }
+            .filter { it.optString("browser_download_url").isNotBlank() }
+            .toList()
+        val apkUrl = (apks.firstOrNull { it.optString("name").startsWith("Spotidroid", ignoreCase = true) }
+            ?: apks.firstOrNull { it.optString("name").startsWith("Spotui", ignoreCase = true) }
+            ?: apks.firstOrNull())
             ?.optString("browser_download_url")
         return UpdateInfo(
             version = version,

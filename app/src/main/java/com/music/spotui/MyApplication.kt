@@ -5,7 +5,6 @@ import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.YouTubeLocale
 import com.metrolist.music.utils.cipher.CipherDeobfuscator
 import dagger.hilt.android.HiltAndroidApp
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -29,29 +28,6 @@ class MyApplication : Application(){
         com.music.spotui.data.api.SpotifyPendingWrites.install(this)
         com.music.spotui.data.api.LocalSpotifyMirror.install(this)
         com.music.spotui.sync.GoogleDeviceSync.install(this)
-        appScope.launch {
-            kotlinx.coroutines.delay(1_200L)
-            // Reading an old/corrupt local snapshot is optional startup work.
-            // One failed warmup must not terminate the process over the login screen.
-            val tasks=listOf<Pair<String,()->Unit>>(
-                "metadata" to {com.music.spotui.data.preferences.CustomMetadataPref.getAllOverrides(this@MyApplication);Unit},
-                "playlists" to {com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylists(this@MyApplication);Unit},
-                "local tracks" to {com.music.spotui.data.preferences.getLocalTracks(this@MyApplication);Unit},
-                "downloads" to {com.music.spotui.data.preferences.downloadedPathForQuery(this@MyApplication,"");Unit},
-            )
-            tasks.forEach { (name,load)->
-                com.music.spotui.di.SongPlayer.awaitAudioStartup()
-                kotlinx.coroutines.delay(75L)
-                try {
-                    load()
-                } catch (cancelled:CancellationException) {
-                    throw cancelled
-                } catch (failure:Exception) {
-                    android.util.Log.w("SpotidroidStartup","Could not warm $name",failure)
-                }
-            }
-            com.music.spotui.sync.OwnLibraryChanges.changed()
-        }
         // Surface Spotify REST/GQL logs to logcat for diagnosis.
         com.metrolist.spotify.Spotify.logger = { level, msg ->
             android.util.Log.d("SpotifyREST", "[$level] $msg")

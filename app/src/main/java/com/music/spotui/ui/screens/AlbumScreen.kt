@@ -449,37 +449,37 @@ fun SumUpAlbumScreen(
                     )
                     }
                     Spacer(modifier = Modifier.height(12.dp))
-                    if (albumSpotifyId.isNotBlank()) {
-                    Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-com.music.spotui.ui.components.LibrarySaveIcon(
-                                    saved = albumSaved,
-                                    enabled = !albumSaveBusy && albumSpotifyId.isNotBlank(),
-                                    onClick = {
-                                        if (!albumSaveBusy) {
-                                            val desiredSaved = !albumSaved
-                                            albumSaveBusy = true
-                                            albumSaveGeneration++
-                                            albumSaveScope.launch {
-                                                try {
-                                                    if (com.music.spotui.data.api.AlbumLibrary.setSaved(
-                                                            context, albumSpotifyId, album[0].id, desiredSaved)) {
-                                                        albumSaved = desiredSaved
-                                                        albumSaveKnown = true
-                                                        snackbarMessage = if (albumSaved) "Álbum añadido a tu biblioteca" else "Álbum quitado de tu biblioteca"
-                                                    } else snackbarMessage = "No se pudo guardar el cambio."
-                                                    snackbarVisible = true
-                                                } finally { albumSaveBusy = false }
-                                            }
-                                        }
-                                    },
-                                )
-}
-Spacer(Modifier.height(8.dp))
-}
 val playing = albumViewModel.currentSongPlayingState.value
 val currentInList = albumSongs.any { it.id == albumViewModel.currentSongId.value }
 com.music.spotui.ui.components.CollectionActionBar(
  glass = collectionGlass,
+ storySongs = albumSongs, storyTitle = albumName, storyCover = album[0].coverUri,
+ savedControl = {
+     if (albumSpotifyId.isNotBlank()) {
+         com.music.spotui.ui.components.LibrarySaveIcon(
+                          saved = albumSaved,
+                          enabled = !albumSaveBusy && albumSpotifyId.isNotBlank(),
+                          onClick = {
+                              if (!albumSaveBusy) {
+                                  val desiredSaved = !albumSaved
+                                  albumSaveBusy = true
+                                  albumSaveGeneration++
+                                  albumSaveScope.launch {
+                                      try {
+                                          if (com.music.spotui.data.api.AlbumLibrary.setSaved(
+                                                  context, albumSpotifyId, album[0].id, desiredSaved)) {
+                                              albumSaved = desiredSaved
+                                              albumSaveKnown = true
+                                              snackbarMessage = if (albumSaved) "Álbum añadido a tu biblioteca" else "Álbum quitado de tu biblioteca"
+                                          } else snackbarMessage = "No se pudo guardar el cambio."
+                                          snackbarVisible = true
+                                      } finally { albumSaveBusy = false }
+                                  }
+                              }
+                          },
+                      )
+     }
+ },
  accent = dominentColor,
  sortMode = currentSort.name, sortDescending = isDescending,
  modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),

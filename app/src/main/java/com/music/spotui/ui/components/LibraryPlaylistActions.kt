@@ -30,7 +30,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 
 internal enum class LibraryPlaylistAction {
-    DOWNLOAD, ADD, TRACKS, EDIT, REMOVE, QUEUE, COPY, COLLABORATORS, PRIVACY, NAME, DETAILS
+    DOWNLOAD, ADD, TRACKS, EDIT, REMOVE, QUEUE, COPY, NAME, DETAILS
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalGlideComposeApi::class)
@@ -87,11 +87,11 @@ internal fun LibraryPlaylistActions(
                 item { MenuRow(Icons.Default.AddCircleOutline, "Añadir a esta lista") { onAction(LibraryPlaylistAction.ADD) } }
                 item { MenuRow(Icons.Default.List, "Editar canciones") { onAction(LibraryPlaylistAction.TRACKS) } }
             }
-            if (isOwner) item {
-                MenuRow(Icons.Default.Edit, if (url == null) "Cambiar nombre" else "Nombre e información") { onAction(LibraryPlaylistAction.EDIT) }
+            if (isOwner && url != null) item {
+                MenuRow(Icons.Default.Edit, "Nombre e información") { onAction(LibraryPlaylistAction.EDIT) }
             }
-            item {
-                MenuRow(Icons.Default.Delete, if (isOwner) "Eliminar lista" else "Quitar de Biblioteca") {
+            if (url != null) item {
+                MenuRow(Icons.Default.Delete, if (isOwner) "Eliminar lista" else "Quitar de tu biblioteca") {
                     onAction(LibraryPlaylistAction.REMOVE)
                 }
             }
@@ -103,10 +103,6 @@ internal fun LibraryPlaylistActions(
             }
             item { MenuRow(Icons.Default.PlaylistAdd, "Añadir a la cola") { onAction(LibraryPlaylistAction.QUEUE) } }
             item { MenuRow(Icons.Default.Add, "Añadir a otra lista") { onAction(LibraryPlaylistAction.COPY) } }
-            if (url != null && isOwner) {
-                item { MenuRow(Icons.Default.GroupAdd, "Colaboradores en Spotify") { onAction(LibraryPlaylistAction.COLLABORATORS) } }
-                item { MenuRow(Icons.Default.Lock, "Privacidad") { onAction(LibraryPlaylistAction.PRIVACY) } }
-            }
         }
     }
 }
