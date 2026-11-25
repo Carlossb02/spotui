@@ -2736,7 +2736,8 @@ fun PlayerMenuRow(icon:ImageVector,label:String,subtitle:String?=null,iconTint:C
  */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-internal fun CanvasVideo(url: String, modifier: Modifier = Modifier, playing: Boolean = true, onError: (() -> Unit)? = null) {
+internal fun CanvasVideo(url: String, modifier: Modifier = Modifier, playing: Boolean = true,
+    textureSurface: Boolean = false, onError: (() -> Unit)? = null) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val currentOnError by androidx.compose.runtime.rememberUpdatedState(onError)
@@ -2764,8 +2765,11 @@ internal fun CanvasVideo(url: String, modifier: Modifier = Modifier, playing: Bo
                 prepare()
             }
     }
-    val playerView = remember(exo) {
-        androidx.media3.ui.PlayerView(context).apply {
+    val playerView = remember(exo, textureSurface) {
+        val view = if (textureSurface) android.view.LayoutInflater.from(context)
+            .inflate(com.music.spotui.R.layout.story_video_view, null) as androidx.media3.ui.PlayerView
+        else androidx.media3.ui.PlayerView(context)
+        view.apply {
             player = exo
             useController = false
             controllerAutoShow = false

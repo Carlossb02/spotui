@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.VerticalPager
@@ -154,6 +155,7 @@ private fun CollectionStoryPager(
     }
     var foreground by remember { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
     var muted by remember { mutableStateOf(false) }
+    var artistMenu by remember { mutableStateOf(false) }
     var paused by remember { mutableStateOf(false) }
     var measuring by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf<SongsModel?>(null) }
@@ -170,9 +172,39 @@ private fun CollectionStoryPager(
     var progress by remember { mutableFloatStateOf(0f) }
     var restore by remember { mutableStateOf<(() -> Unit)?>(null) }
     val page = pager.settledPage
+    var audioAttempt by remember(page) { mutableIntStateOf(0) }
     val active = clips[page % clips.size]
-    val playPreview = foreground && !pager.isScrollInProgress && !paused && !measuring && menu == null && savedIn == null
+    val playPreview = foreground && !pager.isScrollInProgress && !paused && !measuring && menu == null && savedIn == null && !artistMenu
     val latestDismiss by rememberUpdatedState(onDismiss)
+    val contextApi = remember(context) { Api(context.applicationContext) }
+    val followed by produceState(emptySet<String>(), contextApi) {
+        value = withContext(Dispatchers.IO) { contextApi.storedFollowedArtists().orEmpty().map { it.id }.toSet() }
+        value = withContext(Dispatchers.IO) { contextApi.getFollowedArtists().map { it.id }.toSet() }
+    }
+    val followChoices = remember { mutableStateMapOf<String, Boolean>() }
+    val names = remember(active.singer) { active.singer.split(',').map(String::trim).filter(String::isNotBlank) }
+    val metadata = remember(names, active.artistIds) {
+        val ids = active.artistIds.split(',').map(String::trim)
+        names.mapIndexed { i, name -> name to ids.getOrNull(i).orEmpty() }
+    }
+    val artists by key(active.url) { produceState(metadata, metadata) {
+        value = metadata
+        val id = SpotifySync.cleanTrackId(active.spotifyTrackId.ifBlank {
+            active.url.substringBefore('|').takeIf { it.startsWith("spotify:track:") }.orEmpty()
+        })
+        if (podcast == null && (metadata.isEmpty() || metadata.any { it.second.isBlank() }) &&
+            id.matches(Regex("[A-Za-z0-9]{22}"))) {
+            value = withContext(Dispatchers.IO) {
+                withTimeoutOrNull(5_000L) { com.metrolist.spotify.Spotify.track(id).getOrNull()?.artists }
+                    .orEmpty().map { it.name to it.id.orEmpty() }.ifEmpty { metadata }
+            }
+        }
+    } }
+    fun openArtist(name: String, id: String) {
+        artistMenu = false
+        latestDismiss()
+        navController.navigate(com.music.spotui.ui.navigation.artistRoute(name, id))
+    }
 
     suspend fun audioFor(song: SongsModel): String? = audioCache.get(song.url)
         ?: resolveStoryContent(10_000L) {
@@ -234,7 +266,15 @@ private fun CollectionStoryPager(
         canvasUrl = null
         if (foreground) canvasUrl = canvasFor(active)
     }
-    LaunchedEffect(page) {
+    LaunchedEffect(page) { artistMenu = false }
+    LaunchedEffect(page, failure) {
+        if (failure && audioAttempt == 0) {
+            delay(400)
+            audioCache.remove(active.url)
+            audioAttempt++
+        }
+    }
+    LaunchedEffect(page, audioAttempt) {
         player.stop()
         player.clearMediaItems()
         progress = 0f
@@ -246,10 +286,10 @@ private fun CollectionStoryPager(
             val videoId = song.url.takeIf { it.startsWith("yt_ep:") }
                 ?.removePrefix("yt_ep:")?.substringBefore('|')?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
             val preview = videoId?.let { id -> async {
-                resolveStoryContent(2_500L) { PodcastVideoStreams.resolvePreview(id)?.url }
+                resolveStoryContent(5_000L) { PodcastVideoStreams.resolvePreview(id)?.url }
             } }
             val url = audioFor(song)
-            val videoUrl = if (url == null) null else preview?.let { withTimeoutOrNull(500L) { it.await() } }
+            val videoUrl = if (url == null) null else preview?.let { withTimeoutOrNull(1_600L) { it.await() } }
             preview?.cancel()
             url to videoUrl
         }
@@ -265,7 +305,7 @@ private fun CollectionStoryPager(
             player.setMediaSource(source(audio))
             player.prepare()
             withTimeoutOrNull(6_000L) {
-                while (player.duration <= 0 && !failure) delay(50)
+                while ((player.duration <= 0 || !player.isCurrentMediaItemSeekable) && !failure) delay(50)
                 player.duration.takeIf { it > 0 && player.isCurrentMediaItemSeekable }
             }?.also { durationCache.put(audio, it) }
         }
@@ -338,7 +378,8 @@ private fun CollectionStoryPager(
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Box(Modifier.widthIn(max = 460.dp).fillMaxWidth().fillMaxHeight().clip(RoundedCornerShape(22.dp)).background(Color(0xFF191820))) {
                 if (video != null) {
-                    CanvasVideo(video, Modifier.fillMaxSize(), playing = playPreview, onError = { canvasUrl = null })
+                    CanvasVideo(video, Modifier.fillMaxSize(), playing = playPreview, textureSurface = true,
+                        onError = { canvasUrl = null })
                 } else {
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(
                         accent.copy(alpha = .8f), Color(0xFF292431), Color(0xFF15131B),
@@ -375,10 +416,19 @@ private fun CollectionStoryPager(
                         }
                     }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        if (selected) StoryArtistPhotos(song, podcast, artistPhotos)
+                        if (selected) StoryArtistPhotos(artists, podcast, artistPhotos, ::openArtist)
                         Text(song.singer.ifBlank { song.album }, color = Color.White, fontWeight = FontWeight.Medium,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                        if (selected) StoryFollowButton(song, podcast)
+                        if (selected) {
+                            when {
+                                podcast != null -> StoryPodcastFollowButton(podcast)
+                                artists.size > 1 -> OutlinedButton(onClick = { artistMenu = true },
+                                    contentPadding = PaddingValues(horizontal = 10.dp)) {
+                                    Text("Ver todos", color = Color.White, maxLines = 1)
+                                }
+                                artists.size == 1 -> StoryArtistFollowButton(artists.first(), followed, followChoices)
+                            }
+                        }
                         if (shareLink != null) IconButton(onClick = {
                             val intent = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, shareLink)
                             context.startActivity(Intent.createChooser(intent, "Compartir"))
@@ -386,8 +436,9 @@ private fun CollectionStoryPager(
                         IconButton(onClick = { menu = song }) { Icon(Icons.Default.MoreVert, "Más opciones", tint = Color.White) }
                     }
                     if (selected && failure) {
-                        Text("No se pudo reproducir el fragmento. Desliza para ver otro.", color = Color.LightGray,
-                            style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))
+                        TextButton(onClick = { audioCache.remove(active.url); audioAttempt++ }) {
+                            Text("Reintentar audio", color = Color.White)
+                        }
                     }
                     val saved = if (selected) rememberTrackSaved(song, false) else false
                     val label = if (PodcastResumeStore.isEpisode(song.url)) "Escuchar episodio" else "Escuchar canción"
@@ -426,6 +477,7 @@ private fun CollectionStoryPager(
         }
     }
     }
+    if (artistMenu) StoryArtistsSheet(artists, followed, followChoices, artistPhotos, ::openArtist) { artistMenu = false }
     menu?.let { song -> SongOptionsSheet(song, navController, context, onDismiss = { menu = null }) }
     savedIn?.let { song -> SavedInSheet(song = song, context = context, onDismiss = { savedIn = null }) }
 }
@@ -451,55 +503,91 @@ private object StoryMediaCache {
 }
 
 @Composable
-private fun StoryArtistPhotos(song: SongsModel, podcast: PodcastModel?, cache: ExpiringLruCache<String, String>) {
-    val names = if (podcast != null) listOf(podcast.name) else song.singer.split(',').map(String::trim).filter(String::isNotBlank)
-    val ids = song.artistIds.split(',').map(String::trim)
-    val photos by produceState(emptyList<String>(), song.id, podcast) {
-        value = if (podcast != null) listOf(podcast.coverUri) else withContext(Dispatchers.IO) {
-            coroutineScope {
-                names.indices.map { index -> async {
-                    val id = ids.getOrNull(index)?.takeIf { it.matches(Regex("[A-Za-z0-9]{22}")) }
-                        ?: return@async ""
-                    cache.get(id) ?: resolveStoryContent(4_000L) {
-                        com.metrolist.spotify.Spotify.artist(id).getOrNull()?.images?.firstOrNull()?.url
-                    }.orEmpty().also { if (it.isNotBlank()) cache.put(id, it) }
-                } }.awaitAll()
-            }
-        }
-    }
+private fun StoryArtistPhotos(artists: List<Pair<String, String>>, podcast: PodcastModel?,
+    cache: ExpiringLruCache<String, String>, onOpen: (String, String) -> Unit) {
     Row(Modifier.widthIn(max = 110.dp).horizontalScroll(rememberScrollState()).padding(end = 7.dp),
         horizontalArrangement = Arrangement.spacedBy((-5).dp)) {
-        names.forEachIndexed { index, name ->
-            val photo = photos.getOrNull(index).orEmpty()
-            Box(Modifier.size(25.dp).clip(CircleShape).background(Color(0xFF3A353F)), contentAlignment = Alignment.Center) {
-                if (photo.isNotBlank()) GlideImage(photo, name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                else Text(name.take(1).uppercase(), color = Color.White, style = MaterialTheme.typography.labelSmall)
+        if (podcast != null) StoryArtistAvatar(podcast.name, podcast.coverUri, 28.dp)
+        else artists.forEach { (name, id) ->
+            StoryArtistAvatar(name, storyArtistPhoto(id, cache), 28.dp) { onOpen(name, id) }
+        }
+    }
+}
+
+@Composable
+private fun storyArtistPhoto(id: String, cache: ExpiringLruCache<String, String>): String {
+    val photo by produceState(cache.get(id).orEmpty(), id) {
+        value = cache.get(id).orEmpty()
+        if (value.isEmpty() && id.matches(Regex("[A-Za-z0-9]{22}"))) {
+            value = resolveStoryContent(5_000L) {
+                withContext(Dispatchers.IO) { com.metrolist.spotify.Spotify.artist(id).getOrNull()?.images?.firstOrNull()?.url }
+            }.orEmpty().also { if (it.isNotBlank()) cache.put(id, it) }
+        }
+    }
+    return photo
+}
+
+@Composable
+@OptIn(ExperimentalGlideComposeApi::class)
+private fun StoryArtistAvatar(name: String, photo: String, size: androidx.compose.ui.unit.Dp, open: (() -> Unit)? = null) {
+    Box(Modifier.size(size).clip(CircleShape).background(Color(0xFF3A353F))
+        .then(if (open != null) Modifier.clickable(onClickLabel = "Abrir perfil de $name", onClick = open) else Modifier),
+        contentAlignment = Alignment.Center) {
+        if (photo.isNotBlank()) GlideImage(photo, name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        else Text(name.take(1).uppercase(), color = Color.White, style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StoryArtistsSheet(artists: List<Pair<String, String>>, followed: Set<String>, choices: MutableMap<String, Boolean>,
+    cache: ExpiringLruCache<String, String>, open: (String, String) -> Unit, close: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = close, containerColor = Color(0xFF211F23)) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 440.dp).verticalScroll(rememberScrollState())
+            .navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
+            Text("Artistas", color = Color.White, style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 10.dp))
+            artists.forEach { (name, id) ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    StoryArtistAvatar(name, storyArtistPhoto(id, cache), 44.dp) { open(name, id) }
+                    Text(name, color = Color.White, modifier = Modifier.weight(1f).clickable { open(name, id) }.padding(horizontal = 12.dp))
+                    StoryArtistFollowButton(name to id, followed, choices)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun StoryFollowButton(song: SongsModel, podcast: PodcastModel?) {
+private fun StoryArtistFollowButton(artist: Pair<String, String>, followed: Set<String>, choices: MutableMap<String, Boolean>) {
+    val (name, id) = artist
+    if (!id.matches(Regex("[A-Za-z0-9]{22}"))) return
     val context = LocalContext.current
-    val artistId = song.artistIds.substringBefore(',').trim().takeIf {
-        !PodcastResumeStore.isEpisode(song.url) && it.matches(Regex("[A-Za-z0-9]{22}"))
+    val revision by com.music.spotui.data.preferences.followedArtistRevision.collectAsState()
+    val local = remember(context, id, revision) { isArtistFollowed(context, id) }
+    val pending by produceState<Boolean?>(null, id, revision) {
+        value = withContext(Dispatchers.IO) { com.music.spotui.data.api.SpotifyPendingWrites.desired(context, "artist", id) }
     }
-    if (podcast == null && artistId == null) return
-    var following by remember(podcast?.id, artistId) {
-        mutableStateOf(if (podcast != null) SubscribedPodcastPref.isPodcastSubscribed(context, podcast.id)
-            else isArtistFollowed(context, checkNotNull(artistId)))
+    val following = choices[id] ?: pending ?: (local || id in followed)
+    StoryFollowControl(following) {
+        choices[id] = !following
+        if (following) removeFollowedArtist(context, id) else addFollowedArtist(context, id, name)
+        SpotifySync.setArtistFollowed(context, id, !following)
     }
-    OutlinedButton(onClick = {
-        if (podcast != null) {
-            following = SubscribedPodcastPref.toggleSubscribedPodcast(context, podcast)
-        } else if (artistId != null) {
-            following = !following
-            if (following) addFollowedArtist(context, artistId, song.singer.substringBefore(','))
-            else removeFollowedArtist(context, artistId)
-            SpotifySync.setArtistFollowed(context, artistId, following)
-        }
-    }, colors = ButtonDefaults.outlinedButtonColors(containerColor = if (following) Color(0xFF206047) else Color.Black.copy(alpha = .48f)),
+}
+
+@Composable
+private fun StoryPodcastFollowButton(podcast: PodcastModel) {
+    val context = LocalContext.current
+    val revision by SubscribedPodcastPref.revision.collectAsState()
+    val following = remember(context, podcast.id, revision) { SubscribedPodcastPref.isPodcastSubscribed(context, podcast.id) }
+    StoryFollowControl(following) { SubscribedPodcastPref.toggleSubscribedPodcast(context, podcast) }
+}
+
+@Composable
+private fun StoryFollowControl(following: Boolean, onClick: () -> Unit) {
+    OutlinedButton(onClick = onClick,
+        colors = ButtonDefaults.outlinedButtonColors(containerColor = if (following) Color(0xFF206047) else Color.Black.copy(alpha = .48f)),
         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)) {
         Text(if (following) "Siguiendo" else "Seguir", color = Color.White, maxLines = 1)
     }
@@ -530,7 +618,9 @@ private suspend fun resolveStoryContent(timeoutMs: Long, resolve: suspend () -> 
 @Composable
 private fun StoryVideo(player: Player, modifier: Modifier) {
     val context = LocalContext.current
-    val view = remember(context) { PlayerView(context).apply { useController = false } }
+    val view = remember(context) {
+        android.view.LayoutInflater.from(context).inflate(com.music.spotui.R.layout.story_video_view, null) as PlayerView
+    }
     DisposableEffect(view, player) {
         view.player = player
         onDispose { view.player = null }

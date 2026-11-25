@@ -860,7 +860,10 @@ object PodcastProvider {
             val fallback = if (show == null) emptyList() else SpotifyPodcastEpisodes.youtubeEpisodes(show, publishedSince)
             if (fallback.isNotEmpty() && show != null) {
                 rememberEpisodes(showId, show.name, fallback)
-                val combined = (fallback + spotifyEpisodes).distinctBy { it.title.trim().lowercase(Locale.ROOT) }
+                val youtubeTitles = fallback.map { it.title.trim().lowercase(Locale.ROOT) to it.releaseDate }.toSet()
+                val combined = fallback + spotifyEpisodes.filterNot {
+                    (it.title.trim().lowercase(Locale.ROOT) to it.releaseDate) in youtubeTitles
+                }
                 if (publishedSince == null) episodeMemoryCache[showId] = System.currentTimeMillis() to combined
                 emit(combined)
             } else if (spotifyEpisodes.isEmpty()) emit(emptyList())

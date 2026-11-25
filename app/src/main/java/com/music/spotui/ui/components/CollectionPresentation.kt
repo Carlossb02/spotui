@@ -28,6 +28,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.navigation.NavController
 import com.music.spotui.data.entity.SongsModel
 import com.music.spotui.data.preferences.downloadRecordingKey
@@ -108,7 +110,7 @@ internal fun CollectionDownloadButton(songs: List<SongsModel>, description: Stri
     val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val shape = androidx.compose.foundation.shape.RoundedCornerShape(50)
     val action = if (paused) "Reanudar" else if (status.active) "Pausar" else "Descargar"
-    Box(Modifier.width(metrics.download.dp).height(metrics.control.dp)) {
+    Box(Modifier.size(metrics.control.dp)) {
         CollectionCapsuleBody(action,
             Modifier.fillMaxSize().clip(CircleShape).background(Color.White.copy(alpha = .10f))
 
@@ -201,7 +203,7 @@ internal fun CollectionActionBar(
     val sortInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val queueInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val tablet = LocalConfiguration.current.smallestScreenWidthDp >= 600
-    BoxWithConstraints(modifier) {
+    BoxWithConstraints(modifier.onGloballyPositioned { glass.actionsTop = it.positionInRoot().y }) {
         val metrics = remember(maxWidth, tablet) { collectionActionMetrics(maxWidth.value, tablet) }
         val showLabels = maxWidth >= 360.dp
         val shareInPrimary = maxWidth >= 344.dp
@@ -247,7 +249,7 @@ internal fun CollectionActionBar(
                         "POPULARITY" -> com.music.spotui.R.drawable.collection_sort_popularity
                         else -> com.music.spotui.R.drawable.collection_sort_date
                     }
-                    CollectionCapsuleBody("Ordenar", Modifier.width(metrics.pill.dp).height(metrics.control.dp)
+                    CollectionCapsuleBody("Ordenar", Modifier.width(54.dp).height(metrics.control.dp)
                         .clip(CircleShape).background(Color.White.copy(alpha = .10f))
                         .clickable(interactionSource = sortInteraction, indication = null,
                             role = androidx.compose.ui.semantics.Role.Button, onClick = onSort)) {
@@ -255,7 +257,7 @@ internal fun CollectionActionBar(
                         Icon(androidx.compose.ui.res.painterResource(if (sortDescending) com.music.spotui.R.drawable.collection_sort_down else com.music.spotui.R.drawable.collection_sort_up),
                             if (sortDescending) "Descendente" else "Ascendente", tint = Color.White, modifier = Modifier.size(17.dp))
                     }
-                    CollectionCapsuleBody("Añadir a la cola", Modifier.width(metrics.queue.dp).height(metrics.control.dp)
+                    CollectionCapsuleBody("Añadir a la cola", Modifier.size(metrics.control.dp)
                         .clip(CircleShape).background(Color.White.copy(alpha = .10f))
                         .clickable(interactionSource = queueInteraction, indication = null, enabled = enabled,
                             role = androidx.compose.ui.semantics.Role.Button, onClick = onQueue)) {
