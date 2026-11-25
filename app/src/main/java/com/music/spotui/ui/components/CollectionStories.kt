@@ -2,9 +2,13 @@ package com.music.spotui.ui.components
 
 import android.content.Intent
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -71,6 +75,8 @@ import com.music.spotui.util.ExpiringLruCache
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -152,6 +158,9 @@ private fun CollectionStoryPager(
     var measuring by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf<SongsModel?>(null) }
     var savedIn by remember { mutableStateOf<SongsModel?>(null) }
+    val durationCache = remember { ExpiringLruCache<String, Long>(8, 4 * 60_000L) }
+    val artistPhotos = remember { ExpiringLruCache<String, String>(100, 30 * 60_000L) }
+    val canvasCache = remember { ExpiringLruCache<String, String>(12, 5 * 60_000L) }
     var canvasUrl by remember { mutableStateOf<String?>(null) }
     var hasVideo by remember { mutableStateOf(false) }
     var audioFallback by remember { mutableStateOf<MediaSource?>(null) }
@@ -169,6 +178,23 @@ private fun CollectionStoryPager(
         ?: resolveStoryContent(10_000L) {
             withContext(Dispatchers.IO) { SongPlayer.resolveCollectionStory(song, context.applicationContext) }
         }?.also { audioCache.put(song.url, it) }
+
+    fun trackId(song: SongsModel): String = SpotifySync.cleanTrackId(song.spotifyTrackId.ifBlank {
+        song.url.substringBefore('|').takeIf { it.startsWith("spotify:track:") }.orEmpty()
+    })
+    suspend fun canvasFor(song: SongsModel): String? {
+        val id = trackId(song)
+        if (!id.matches(Regex("[A-Za-z0-9]{22}")) || PodcastResumeStore.isEpisode(song.url)) return null
+        return canvasCache.get(id) ?: resolveStoryContent(9_000L) {
+            withContext(Dispatchers.IO) {
+                Api(context.applicationContext).getCanvasUrl(id)
+                    ?: com.metrolist.spotify.Spotify.canvasUrl(id)
+            }
+        }?.also { canvasCache.put(id, it) }
+    }
+    suspend fun mediaFactory() = withContext(Dispatchers.IO) {
+        ProgressiveMediaSource.Factory(StoryMediaCache.factory(context.applicationContext))
+    }
 
     DisposableEffect(player, lifecycle) {
         val events = object : Player.Listener {
@@ -206,13 +232,7 @@ private fun CollectionStoryPager(
     LaunchedEffect(playPreview) { player.playWhenReady = playPreview }
     LaunchedEffect(page, foreground) {
         canvasUrl = null
-        if (!foreground || PodcastResumeStore.isEpisode(active.url)) return@LaunchedEffect
-        val id = SpotifySync.cleanTrackId(active.spotifyTrackId)
-        if (id.matches(Regex("[A-Za-z0-9]{22}"))) {
-            canvasUrl = resolveStoryContent(5_000L) {
-                withContext(Dispatchers.IO) { Api(context.applicationContext).getCanvasUrl(id) }
-            }
-        }
+        if (foreground) canvasUrl = canvasFor(active)
     }
     LaunchedEffect(page) {
         player.stop()
@@ -237,17 +257,19 @@ private fun CollectionStoryPager(
             failure = true
             return@LaunchedEffect
         }
-        val factory = ProgressiveMediaSource.Factory(DefaultDataSource.Factory(context))
+        val factory = mediaFactory()
         fun source(url: String) = factory.createMediaSource(MediaItem.fromUri(url))
         measuring = true
         player.playWhenReady = false
-        player.setMediaSource(source(audio))
-        player.prepare()
-        val actualDuration = withTimeoutOrNull(4_000L) {
-            while (player.duration <= 0 && !failure) delay(50)
-            player.duration.takeIf { it > 0 }
+        val actualDuration = durationCache.get(audio) ?: run {
+            player.setMediaSource(source(audio))
+            player.prepare()
+            withTimeoutOrNull(6_000L) {
+                while (player.duration <= 0 && !failure) delay(50)
+                player.duration.takeIf { it > 0 && player.isCurrentMediaItemSeekable }
+            }?.also { durationCache.put(audio, it) }
         }
-        if (actualDuration == null || !player.isCurrentMediaItemSeekable) {
+        if (actualDuration == null) {
             player.stop()
             measuring = false
             failure = true
@@ -268,10 +290,34 @@ private fun CollectionStoryPager(
             failure = true
         }
     }
-    LaunchedEffect(page, playing) {
-        if (playing && clips.size > 1) {
-            delay(500)
-            audioFor(clips[(page + 1) % clips.size])
+    LaunchedEffect(page, foreground) {
+        if (!foreground || clips.size < 2) return@LaunchedEffect
+        val next = clips[(page + 1) % clips.size]
+        coroutineScope {
+            launch { canvasFor(next) }
+            launch {
+                val url = audioFor(next) ?: return@launch
+                val factory = mediaFactory()
+                val probe = ExoPlayer.Builder(context).build()
+                try {
+                    probe.setMediaSource(factory.createMediaSource(MediaItem.fromUri(url)))
+                    probe.prepare()
+                    val length = withTimeoutOrNull(6_000L) {
+                        while (probe.duration <= 0 && probe.playerError == null) delay(50)
+                        probe.duration.takeIf { it > 0 && probe.isCurrentMediaItemSeekable }
+                    } ?: return@launch
+                    durationCache.put(url, length)
+                    val start = storyStartPosition(length)
+                    probe.setMediaSource(ClippingMediaSource.Builder(factory.createMediaSource(MediaItem.fromUri(url)))
+                        .setStartPositionMs(start).setEndPositionMs(start + STORY_DURATION_MS).build())
+                    probe.prepare()
+                    delay(7_000L)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    android.util.Log.d("CollectionStories", "Could not preload next story", failure)
+                } finally { probe.release() }
+            }
         }
     }
     LaunchedEffect(page, foreground, playing) {
@@ -283,13 +329,14 @@ private fun CollectionStoryPager(
     }
 
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        VerticalPager(pager, modifier = Modifier.widthIn(max = 460.dp).fillMaxWidth().fillMaxHeight()) { index ->
+        VerticalPager(pager, modifier = Modifier.fillMaxSize()) { index ->
             val song = clips[index % clips.size]
             val selected = index == page
             val artwork = song.coverUri.ifBlank { cover }
             val video = canvasUrl.takeIf { selected }
             val shareLink = remember(song) { storyLink(song) }
-            Box(Modifier.fillMaxSize().background(Color(0xFF191820))) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Box(Modifier.widthIn(max = 460.dp).fillMaxWidth().fillMaxHeight().clip(RoundedCornerShape(22.dp)).background(Color(0xFF191820))) {
                 if (video != null) {
                     CanvasVideo(video, Modifier.fillMaxSize(), playing = playPreview, onError = { canvasUrl = null })
                 } else {
@@ -328,6 +375,7 @@ private fun CollectionStoryPager(
                         }
                     }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        if (selected) StoryArtistPhotos(song, podcast, artistPhotos)
                         Text(song.singer.ifBlank { song.album }, color = Color.White, fontWeight = FontWeight.Medium,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                         if (selected) StoryFollowButton(song, podcast)
@@ -356,7 +404,10 @@ private fun CollectionStoryPager(
                             Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
                                 Text(song.title, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (song.explicit) ExplicitBadge()
+                                    if (song.explicit) {
+                                        ExplicitBadge()
+                                        Spacer(Modifier.width(6.dp))
+                                    }
                                     Text(song.singer, color = Color.White.copy(alpha = .75f), maxLines = 1,
                                         overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
                                 }
@@ -374,8 +425,58 @@ private fun CollectionStoryPager(
             }
         }
     }
+    }
     menu?.let { song -> SongOptionsSheet(song, navController, context, onDismiss = { menu = null }) }
     savedIn?.let { song -> SavedInSheet(song = song, context = context, onDismiss = { savedIn = null }) }
+}
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+private object StoryMediaCache {
+    private var cache: androidx.media3.datasource.cache.SimpleCache? = null
+
+    @Synchronized fun factory(context: android.content.Context): androidx.media3.datasource.DataSource.Factory {
+        val upstream = DefaultDataSource.Factory(context)
+        val store = cache ?: runCatching {
+            androidx.media3.datasource.cache.SimpleCache(
+                java.io.File(context.cacheDir, "story_media"),
+                androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor(16L * 1024 * 1024),
+                androidx.media3.database.StandaloneDatabaseProvider(context),
+            )
+        }.getOrNull()?.also { cache = it } ?: return upstream
+        return androidx.media3.datasource.cache.CacheDataSource.Factory()
+            .setCache(store)
+            .setUpstreamDataSourceFactory(upstream)
+            .setFlags(androidx.media3.datasource.cache.CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+    }
+}
+
+@Composable
+private fun StoryArtistPhotos(song: SongsModel, podcast: PodcastModel?, cache: ExpiringLruCache<String, String>) {
+    val names = if (podcast != null) listOf(podcast.name) else song.singer.split(',').map(String::trim).filter(String::isNotBlank)
+    val ids = song.artistIds.split(',').map(String::trim)
+    val photos by produceState(emptyList<String>(), song.id, podcast) {
+        value = if (podcast != null) listOf(podcast.coverUri) else withContext(Dispatchers.IO) {
+            coroutineScope {
+                names.indices.map { index -> async {
+                    val id = ids.getOrNull(index)?.takeIf { it.matches(Regex("[A-Za-z0-9]{22}")) }
+                        ?: return@async ""
+                    cache.get(id) ?: resolveStoryContent(4_000L) {
+                        com.metrolist.spotify.Spotify.artist(id).getOrNull()?.images?.firstOrNull()?.url
+                    }.orEmpty().also { if (it.isNotBlank()) cache.put(id, it) }
+                } }.awaitAll()
+            }
+        }
+    }
+    Row(Modifier.widthIn(max = 110.dp).horizontalScroll(rememberScrollState()).padding(end = 7.dp),
+        horizontalArrangement = Arrangement.spacedBy((-5).dp)) {
+        names.forEachIndexed { index, name ->
+            val photo = photos.getOrNull(index).orEmpty()
+            Box(Modifier.size(25.dp).clip(CircleShape).background(Color(0xFF3A353F)), contentAlignment = Alignment.Center) {
+                if (photo.isNotBlank()) GlideImage(photo, name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                else Text(name.take(1).uppercase(), color = Color.White, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
 }
 
 @Composable
@@ -398,7 +499,8 @@ private fun StoryFollowButton(song: SongsModel, podcast: PodcastModel?) {
             else removeFollowedArtist(context, artistId)
             SpotifySync.setArtistFollowed(context, artistId, following)
         }
-    }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)) {
+    }, colors = ButtonDefaults.outlinedButtonColors(containerColor = if (following) Color(0xFF206047) else Color.Black.copy(alpha = .48f)),
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)) {
         Text(if (following) "Siguiendo" else "Seguir", color = Color.White, maxLines = 1)
     }
 }

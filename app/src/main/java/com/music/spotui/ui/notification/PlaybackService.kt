@@ -120,6 +120,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun playbackShouldOwnForeground(): Boolean =
         SongPlayer.isResolvingOrPlaying() || SongPlayer.isPreparingTrack() ||
+            (ownsPlaybackForeground && SongPlayer.isWaitingForTransientAudioFocus()) ||
             SongPlayer.isCrossfadeActive() || SpotifyWebPlayer.isPlaying ||
             (SongPlayer.exoPlayer?.playWhenReady == true &&
                 SongPlayer.exoPlayer?.playbackState != Player.STATE_ENDED)
@@ -1692,7 +1693,7 @@ class PlaybackService : MediaLibraryService() {
         // A user switching applications (or clearing Recents) must not silently
         // stop active playback or throw away an in-flight YouTube resolution.
         // Media3's base implementation handles idle service shutdown.
-        val ongoing = isPlaybackOngoing() || SongPlayer.isResolvingOrPlaying() ||
+        val ongoing = isPlaybackOngoing() || playbackShouldOwnForeground() ||
             SongPlayer.isPreparingTrack() || SpotifyWebPlayer.isPlaying
         PlaybackLifecycleDiagnostics.record(this,
             "task_removed ongoing=$ongoing; preserving_service_owned_playback")

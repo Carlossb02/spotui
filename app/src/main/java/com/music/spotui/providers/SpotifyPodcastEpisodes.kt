@@ -42,11 +42,51 @@ internal object SpotifyPodcastEpisodes {
             ?.also(::remember)
     }
 
+    suspend fun youtubeEpisodes(show: SpotifyShow, publishedSince: Long?): List<SongsModel> = coroutineScope {
+        val queries = listOf(show.name, "${show.name} ${show.publisher}".trim()).distinct()
+        val now = System.currentTimeMillis()
+        val typed = queries.map { query -> async {
+            withTimeoutOrNull(6_000L) {
+                YouTube.search(query, YouTube.SearchFilter.FILTER_EPISODE).getOrNull()?.items.orEmpty()
+                    .filterIsInstance<EpisodeItem>().filter { episode ->
+                        val author = episode.author?.name.orEmpty()
+                        val matchesShow = episode.podcast?.name?.let {
+                            PodcastDiscoveryPolicy.showTitleMatches(show.name, it)
+                        } == true
+                        val matchesPublisher = PodcastDiscoveryPolicy.publisherMatches(show.publisher, author)
+                        val matchesTimestamp = publishedSince == null ||
+                            publicationTime(episode.publishDateText.orEmpty(), now)?.let { it >= publishedSince } == true
+                        matchesTimestamp && matchesShow && (matchesPublisher || author.isBlank() || show.publisher.isBlank())
+                    }
+            }.orEmpty()
+        } }.awaitAll().flatten().distinctBy { it.id }
+        if (typed.isNotEmpty() || publishedSince != null || show.publisher.isBlank()) {
+            return@coroutineScope typed.map { PodcastProvider.episodeToSong(it, show.name) }
+        }
+        val ordinary = try {
+            withTimeoutOrNull(6_000L) { YouTubeVideoSearch.find(queries.last()) }.orEmpty()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            emptyList()
+        }
+        ordinary.filter {
+            it.seconds in 480..43_200 && it.id.matches(Regex("[A-Za-z0-9_-]{11}")) &&
+                PodcastDiscoveryPolicy.publisherMatches(show.publisher, it.publisher) &&
+                PodcastDiscoveryPolicy.relevantShow(show.name, it.title) &&
+                !PodcastDiscoveryPolicy.showTitleMatches(show.name, it.title)
+        }.distinctBy { it.id }.map { video ->
+            PodcastProvider.episodeToSong(EpisodeItem(id = video.id, title = video.title,
+                author = com.metrolist.innertube.models.Artist(video.publisher, null),
+                duration = video.seconds.toInt(), thumbnail = "https://i.ytimg.com/vi/${video.id}/hqdefault.jpg"), show.name)
+        }
+    }
+
     fun pages(show: SpotifyShow, publishedSince: Long?) = flow {
         val entries = linkedMapOf<String, SongsModel>()
         val now = System.currentTimeMillis()
         var offset = 0
-        repeat(PAGE_LIMIT) { pageIndex ->
+        repeat(PAGE_LIMIT) {
             val page = withTimeoutOrNull(5_000L) { Spotify.showEpisodes(show.id, PAGE_SIZE, offset).getOrNull() }
                 ?: return@flow
             val episodes = page.items.filter {
@@ -58,11 +98,11 @@ internal object SpotifyPodcastEpisodes {
             }
             if (recent.isNotEmpty()) {
                 val additions = recent.filterNot { it.id in entries }
-                val verified = if (pageIndex == 0) coroutineScope {
+                val verified = coroutineScope {
                     additions.take(VIDEO_LOOKUP_LIMIT).map { episode -> async {
                         episode.id to matchingVideo(show, episode)
                     } }.awaitAll().toMap()
-                } else emptyMap()
+                }
                 additions.forEach { episode ->
                     entries[episode.id] = episode.toSong(show, verified[episode.id] ?: videos.get(episode.id))
                 }

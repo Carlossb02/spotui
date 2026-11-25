@@ -831,17 +831,17 @@ object PodcastProvider {
 
         if (showId.startsWith(SPOTIFY_SHOW_PREFIX)) {
             val show = spotifyShow(showId)
+            var spotifyEpisodes = emptyList<SongsModel>()
             if (show != null) {
-                var foundEpisodes = false
                 SpotifyPodcastEpisodes.pages(show, publishedSince).collect { episodes ->
                     if (episodes.isNotEmpty()) {
-                        foundEpisodes = true
+                        spotifyEpisodes = episodes
                         rememberEpisodes(showId, show.name, episodes)
                         if (publishedSince == null) episodeMemoryCache[showId] = System.currentTimeMillis() to episodes
                         emit(episodes)
                     }
                 }
-                if (foundEpisodes) return@flow
+                if (spotifyEpisodes.any { it.url.startsWith(YOUTUBE_EPISODE_PREFIX) }) return@flow
             }
             val youtubeShow = if (show != null) {
                 val items = withTimeoutOrNull(4_000L) {
@@ -851,8 +851,19 @@ object PodcastProvider {
             } else showName.takeIf { it.isNotBlank() }
                 ?.let { withTimeoutOrNull(15_000L) { resolveCuratedPodcast(it) } }
             if (youtubeShow != null) {
-                getShowEpisodesFlow(youtubeShow.id, youtubeShow.name, publishedSince, forceRefresh).collect { emit(it) }
-            } else emit(emptyList())
+                var available = false
+                getShowEpisodesFlow(youtubeShow.id, youtubeShow.name, publishedSince, forceRefresh).collect {
+                    if (it.isNotEmpty()) { available = true; emit(it) }
+                }
+                if (available) return@flow
+            }
+            val fallback = if (show == null) emptyList() else SpotifyPodcastEpisodes.youtubeEpisodes(show, publishedSince)
+            if (fallback.isNotEmpty() && show != null) {
+                rememberEpisodes(showId, show.name, fallback)
+                val combined = (fallback + spotifyEpisodes).distinctBy { it.title.trim().lowercase(Locale.ROOT) }
+                if (publishedSince == null) episodeMemoryCache[showId] = System.currentTimeMillis() to combined
+                emit(combined)
+            } else if (spotifyEpisodes.isEmpty()) emit(emptyList())
             return@flow
         }
 
