@@ -583,7 +583,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         ) { innerPadding ->
             // The keyboard Back action only hides the IME. A second Back exits
             // search and restores the artwork, exactly like the close button.
-            BackHandler(enabled = (searchReveal.expanded || searchQuery.isNotBlank()) && !keyboardVisible) {
+            BackHandler(enabled = editingTracks) { editingTracks = false }
+            BackHandler(enabled = !editingTracks && (searchReveal.expanded || searchQuery.isNotBlank()) && !keyboardVisible) {
                 searchQuery = ""
                 searchReveal.close()
                 keyboardController?.hide()

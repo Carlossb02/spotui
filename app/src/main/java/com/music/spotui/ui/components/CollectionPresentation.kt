@@ -191,6 +191,7 @@ internal fun CollectionActionBar(
     download: @Composable () -> Unit, onSort: () -> Unit, onQueue: () -> Unit,
     onShuffle: () -> Unit, onPlay: () -> Unit,
     storySongs: List<SongsModel>, storyTitle: String, storyCover: String,
+    storyPodcast: com.music.spotui.data.entity.PodcastModel? = null,
     savedControl: @Composable () -> Unit = {},
     onAdd: (() -> Unit)? = null, onEdit: (() -> Unit)? = null, onShare: (() -> Unit)? = null,
     sortMode: String, sortDescending: Boolean, accent: Color = Color(0xFF75648F), glass: CollectionGlassBackdrop,
@@ -246,8 +247,10 @@ internal fun CollectionActionBar(
                         "POPULARITY" -> com.music.spotui.R.drawable.collection_sort_popularity
                         else -> com.music.spotui.R.drawable.collection_sort_date
                     }
-                    CollectionSecondaryButton("Ordenar", showLabels, onSort,
-                        Modifier.liquidCollectionGlass(accent, sortInteraction), sortInteraction) {
+                    CollectionCapsuleBody("Ordenar", Modifier.width(metrics.pill.dp).height(metrics.control.dp)
+                        .liquidCollectionGlass(accent, sortInteraction)
+                        .clickable(interactionSource = sortInteraction, indication = null,
+                            role = androidx.compose.ui.semantics.Role.Button, onClick = onSort)) {
                         Icon(androidx.compose.ui.res.painterResource(sortIcon), when (sortMode) { "DEFAULT" -> "Ordenar por pistas"; "TITLE" -> "Ordenar por título"; "ARTIST" -> "Ordenar por artista"; "ALBUM" -> "Ordenar por álbum"; "DURATION" -> "Ordenar por duración"; "POPULARITY" -> "Ordenar por popularidad"; else -> "Ordenar por fecha" }, tint = Color.White, modifier = Modifier.size(19.dp))
                         Icon(androidx.compose.ui.res.painterResource(if (sortDescending) com.music.spotui.R.drawable.collection_sort_down else com.music.spotui.R.drawable.collection_sort_up),
                             if (sortDescending) "Descendente" else "Ascendente", tint = Color.White, modifier = Modifier.size(17.dp))
@@ -265,7 +268,7 @@ internal fun CollectionActionBar(
             }
         }
     }
-    if (showStories) CollectionStories(storyTitle, storyCover, storySongs, accent, navController) { showStories = false }
+    if (showStories) CollectionStories(storyTitle, storyCover, storySongs, accent, navController, storyPodcast) { showStories = false }
 }
 
 @Composable
