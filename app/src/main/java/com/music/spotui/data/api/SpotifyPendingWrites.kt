@@ -121,13 +121,28 @@ internal object SpotifyPendingWrites {
                     SavedTrackLibrary.confirmed(edit.target, edit.track, edit.saved)
                     Api.HomeCache.invalidatePlaylist(edit.target)
                 }
+                if (acknowledged && edit.kind == "playlist_library") {
+                    Api.HomeCache.library = null
+                    com.music.spotui.sync.OwnLibraryChanges.changed()
+                    if (!edit.saved) {
+                        com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylists(context)
+                            .filter { it.syncedSpotifyId == edit.target }
+                            .forEach { LocalSpotifyMirror.refresh(context, it.id) }
+                    }
+                }
             } else failed = true
         }
         !failed && store.entries().isEmpty()
     }
     private suspend fun send(context: Context, owner: String, edit: PendingSpotifyWrite): Boolean = try {
         check(account(context) == owner) { "Spotify account changed" }
-        if (edit.kind != "playlist") {
+        if (edit.kind == "playlist_library") {
+            val session = SpotifySession.spDc(context)
+            val user = Spotify.me().getOrThrow().id
+            check(user.isNotBlank() && account(context) == owner) { "Spotify account changed" }
+            SpotifySync.writePlaylistMembership(context, session, user, edit.target, edit.saved)
+            true
+        } else if (edit.kind != "playlist") {
             val uri = "spotify:${edit.kind}:${edit.target}"
             (if (edit.saved) Spotify.addToLibrary(listOf(uri)) else Spotify.removeFromLibrary(listOf(uri))).isSuccess
         } else {

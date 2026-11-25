@@ -10,6 +10,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,6 +41,11 @@ internal fun LibraryPlaylistActions(
 ) {
     val context = LocalContext.current
     val url = spotifyPlaylistUrl(entry.linkedSpotifyPlaylistId.ifBlank { entry.spotifyId })
+    val access by produceState<com.music.spotui.data.api.PlaylistAccessInfo?>(null, url) {
+        value = url?.lastPathSegment?.let { com.music.spotui.data.api.PlaylistAccess.load(context, it) }
+    }
+    val canEditTracks = entry.isLocal || access?.canEdit == true
+    val isOwner = access?.isOwner == true || entry.isLocal
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF202020),
@@ -76,10 +83,18 @@ internal fun LibraryPlaylistActions(
                 }
             }
             item { MenuRow(Icons.Default.Download, "Descargar") { onAction(LibraryPlaylistAction.DOWNLOAD) } }
-            item { MenuRow(Icons.Default.AddCircleOutline, "Añadir a esta lista") { onAction(LibraryPlaylistAction.ADD) } }
-            item { MenuRow(Icons.Default.List, "Editar canciones") { onAction(LibraryPlaylistAction.TRACKS) } }
-            item { MenuRow(Icons.Default.Edit, "Editar") { onAction(LibraryPlaylistAction.EDIT) } }
-            item { MenuRow(Icons.Default.Delete, "Quitar de Biblioteca") { onAction(LibraryPlaylistAction.REMOVE) } }
+            if (canEditTracks) {
+                item { MenuRow(Icons.Default.AddCircleOutline, "Añadir a esta lista") { onAction(LibraryPlaylistAction.ADD) } }
+                item { MenuRow(Icons.Default.List, "Editar canciones") { onAction(LibraryPlaylistAction.TRACKS) } }
+            }
+            if (isOwner) item {
+                MenuRow(Icons.Default.Edit, if (url == null) "Cambiar nombre" else "Nombre e información") { onAction(LibraryPlaylistAction.EDIT) }
+            }
+            item {
+                MenuRow(Icons.Default.Delete, if (isOwner) "Eliminar lista" else "Quitar de Biblioteca") {
+                    onAction(LibraryPlaylistAction.REMOVE)
+                }
+            }
             item {
                 MenuRow(Icons.Default.PushPin, if (pinned) "Desfijar lista" else "Fijar lista") {
                     onTogglePin()
@@ -88,9 +103,9 @@ internal fun LibraryPlaylistActions(
             }
             item { MenuRow(Icons.Default.PlaylistAdd, "Añadir a la cola") { onAction(LibraryPlaylistAction.QUEUE) } }
             item { MenuRow(Icons.Default.Add, "Añadir a otra lista") { onAction(LibraryPlaylistAction.COPY) } }
-            if (url != null) {
+            if (url != null && isOwner) {
                 item { MenuRow(Icons.Default.GroupAdd, "Colaboradores en Spotify") { onAction(LibraryPlaylistAction.COLLABORATORS) } }
-                item { MenuRow(Icons.Default.Lock, "Privacidad en Spotify") { onAction(LibraryPlaylistAction.PRIVACY) } }
+                item { MenuRow(Icons.Default.Lock, "Privacidad") { onAction(LibraryPlaylistAction.PRIVACY) } }
             }
         }
     }

@@ -554,10 +554,7 @@ fun LibraryScreen(navController: NavController) {
                         when {
                             presentation == null -> entry
                             presentation.hiddenAs.isNotBlank() -> null
-                            else -> entry.copy(
-                                name = presentation.alias.ifBlank { entry.name },
-                                coverUri = presentation.coverUri.ifBlank { entry.coverUri },
-                            )
+                            else -> entry
                         }
                     }
                     val filtered = visibleEntries.filter { entry ->

@@ -47,12 +47,10 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhoneAndroid
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -106,7 +104,6 @@ import com.music.spotui.data.api.PlaylistAccess
 import com.music.spotui.data.api.PlaylistAccessInfo
 import com.music.spotui.ui.components.PlaylistSpotifyCollaboratorsDialog
 import com.music.spotui.ui.components.PlaylistSpotifyMenuItems
-import com.music.spotui.ui.components.PlaylistPresentationEditor
 import com.music.spotui.ui.components.PlaylistEditingField
 import com.music.spotui.ui.components.PlaylistEditingSheet
 import com.music.spotui.ui.components.SpotifyPlaylistEditor
@@ -115,7 +112,6 @@ import com.music.spotui.ui.components.openSpotifyPlaylist
 import com.music.spotui.ui.components.openSpotifyPlaylistTab
 import com.music.spotui.ui.components.spotifyPlaylistUrl
 import com.music.spotui.data.preferences.LocalPlaylistPref
-import com.music.spotui.data.preferences.PlaylistPresentationPref
 import com.music.spotui.data.entity.AlbumsModel
 import com.music.spotui.di.Palette
 import com.music.spotui.di.SongPlayer
@@ -136,6 +132,7 @@ import com.music.spotui.data.preferences.setPlaylistSort
 import com.music.spotui.ui.theme.AppPalette
 import com.music.spotui.ui.viewmodel.PlayerViewModel
 import com.music.spotui.ui.viewmodel.PlaylistViewModel
+import kotlinx.coroutines.launch
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalGlideComposeApi::class, ExperimentalFoundationApi::class)
@@ -184,10 +181,6 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
     val spotifyMirrorStatuses by com.music.spotui.data.api.LocalSpotifyMirror.statuses.collectAsState()
     val spotifyMirrorStatus = spotifyMirrorStatuses[playlistId]
     val canEditPlaylist = isLocalPlaylist || playlistAccess.canEdit
-    val externalReadOnly = !isLocalPlaylist && !canEditPlaylist
-    var favoritePlaylist by remember(playlistId) {
-        mutableStateOf(com.music.spotui.data.preferences.FavoritePlaylistsPref.isFavorite(context, playlistId))
-    }
     val belongsToPlaylist = playlistViewModel.snapshotBelongsTo(playlistId)
     val songs=if (belongsToPlaylist) (songsResp as? Response.Success)?.data.orEmpty() else emptyList()
     val basePlaylist = (playlistResp as? Response.Success)?.data?.takeIf { belongsToPlaylist }
@@ -200,24 +193,10 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         )
 
     val spotifyUrl = remember(profilePlaylistId) { spotifyPlaylistUrl(profilePlaylistId) }
-    val presentationId = if (isLocalPlaylist) playlistId else spotifyUrl?.lastPathSegment
-    val presentationRevision by PlaylistPresentationPref.revision.collectAsState()
-    val loadedPresentation by produceState<PlaylistPresentationPref.Presentation?>(null, presentationId, presentationRevision) {
-        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            presentationId?.let { PlaylistPresentationPref.entries(context)[it] }
-                ?: PlaylistPresentationPref.Presentation()
-        }
-    }
-    val presentation = loadedPresentation ?: PlaylistPresentationPref.Presentation()
-    val visualName = presentation.alias.ifBlank {
-        if (isLocalPlaylist) basePlaylist.name else playlistAccess.playlistName.ifBlank { basePlaylist.name }
-    }
+    val visualName = if (isLocalPlaylist) basePlaylist.name else playlistAccess.playlistName.ifBlank { basePlaylist.name }
     val playlist = if (visualName != basePlaylist.name) basePlaylist.copy(name = visualName) else basePlaylist
 
-    val visualCover = presentation.coverUri.ifBlank {
-        if (profilePlaylistId.isNotBlank()) playlistAccess.coverUri.ifBlank { playlist.coverUri }
-        else playlist.coverUri
-    }
+    val visualCover = playlistAccess.coverUri.ifBlank { playlist.coverUri }
     val originalDescription = remember(playlistAccess.description, playlistId, profilePlaylistId) {
         if (profilePlaylistId.isBlank()) ""
         else {
@@ -227,22 +206,38 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                 .fold(text) { description, marker -> description.replace(marker, "") }.trim()
         }
     }
-    val displayedDescription = presentation.description ?: originalDescription
+    val displayedDescription = originalDescription
     val remotePlaylistId = spotifyUrl?.lastPathSegment
     val editTargetReady = !isLocalPlaylist || linkedSpotifyId != null
-    val canOfferSyncedEditor = remotePlaylistId != null && (!playlistAccess.ownershipVerified || playlistAccess.isOwner)
+    val canOfferSyncedEditor = remotePlaylistId != null && playlistAccess.isOwner
     val canEditRemoteDetails = remotePlaylistId != null && playlistAccess.isOwner && playlistAccess.ownerId.isNotBlank()
     var showSpotifyEditor by androidx.compose.runtime.saveable.rememberSaveable(playlistId) { mutableStateOf(false) }
     var showDeleteDialog by remember(playlistId) { mutableStateOf(false) }
-    var showPresentationEditor by androidx.compose.runtime.saveable.rememberSaveable(playlistId) { mutableStateOf(false) }
-    if (showPresentationEditor && presentationId != null && loadedPresentation != null) {
-        PlaylistPresentationEditor(presentationId, presentation, originalDescription, visualCover) { showPresentationEditor = false }
+    val editScope = androidx.compose.runtime.rememberCoroutineScope()
+    val libraryRevision by com.music.spotui.sync.OwnLibraryChanges.revision.collectAsState()
+    var playlistSaved by remember(remotePlaylistId) { mutableStateOf<Boolean?>(null) }
+    var playlistSaveBusy by remember(remotePlaylistId) { mutableStateOf(false) }
+    var membershipResume by remember(remotePlaylistId) { mutableStateOf(0) }
+    LaunchedEffect(remotePlaylistId, libraryRevision, membershipResume) {
+        if (remotePlaylistId != null) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.music.spotui.data.api.SpotifySync.cachedPlaylistMembership(context, remotePlaylistId)
+            }?.let { playlistSaved = it }
+            try {
+                playlistSaved = com.music.spotui.data.api.SpotifySync.playlistMembership(context, remotePlaylistId)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Keep the last confirmed or queued state when the library is offline.
+            }
+        }
     }
     var showSpotifyCollaborators by remember(profilePlaylistId) { mutableStateOf(false) }
     var awaitingSpotifyReturn by remember(profilePlaylistId) { mutableStateOf(false) }
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle, playlistId, profilePlaylistId) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) membershipResume++
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME && awaitingSpotifyReturn) {
                 awaitingSpotifyReturn = false
                 refreshProfile++
@@ -267,14 +262,6 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             cover = visualCover,
             onSaved = { newName, newDescription ->
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    if (presentationId != null) {
-                        PlaylistPresentationPref.update(context, presentationId) {
-                            it.copy(
-                                alias = if (newName == null) it.alias else "",
-                                description = if (newDescription == null) it.description else null,
-                            )
-                        }
-                    }
                     com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(remotePlaylistId)
                     com.music.spotui.data.api.Api.HomeCache.library = null
                     com.music.spotui.data.api.SpotifySync.invalidatePlaylistCatalog()
@@ -299,14 +286,29 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         )
     }
 
-    val togglePlaylistFavorite: () -> Unit = {
-        favoritePlaylist = com.music.spotui.data.preferences.FavoritePlaylistsPref.toggle(
-            context, playlistId, playlist.name.ifBlank { playlistName }, playlist.coverUri,
-            playlistAccess.ownerName.ifBlank { playlist.artists }
-        )
-        android.widget.Toast.makeText(context,
-            if (favoritePlaylist) "Playlist añadida a tu biblioteca" else "Playlist quitada de tu biblioteca",
-            android.widget.Toast.LENGTH_SHORT).show()
+    fun setPlaylistSaved(saved: Boolean, onQueued: () -> Unit = {}) {
+        val id = remotePlaylistId ?: return
+        if (playlistSaveBusy) return
+        playlistSaveBusy = true
+        editScope.launch {
+            try {
+                if (com.music.spotui.data.api.SpotifySync.setPlaylistSaved(context, id, saved)) {
+                    playlistSaved = saved
+                    onQueued()
+                } else {
+                    android.widget.Toast.makeText(context, "No se pudo guardar el cambio en Spotify", android.widget.Toast.LENGTH_LONG).show()
+                }
+            } finally {
+                playlistSaveBusy = false
+            }
+        }
+    }
+    val togglePlaylistSaved: () -> Unit = {
+        when (playlistSaved) {
+            true -> showDeleteDialog = true
+            false -> setPlaylistSaved(true)
+            null -> Unit
+        }
     }
 
 
@@ -385,18 +387,20 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         mutableStateOf(initialAction)
     }
     val songsSettled by playlistViewModel.songsSettled.collectAsState()
-    LaunchedEffect(pendingAction, belongsToPlaylist, songsSettled, canEditPlaylist, accessResolved, presentationId, linkedSpotifyId) {
+    LaunchedEffect(pendingAction, belongsToPlaylist, songsSettled, canEditPlaylist, accessResolved, linkedSpotifyId) {
         val action = LibraryPlaylistAction.entries.firstOrNull { it.name == pendingAction } ?: return@LaunchedEffect
         if (!belongsToPlaylist) return@LaunchedEffect
         if (action in listOf(LibraryPlaylistAction.DOWNLOAD, LibraryPlaylistAction.QUEUE, LibraryPlaylistAction.COPY)
             && !songsSettled) return@LaunchedEffect
         if (action == LibraryPlaylistAction.ADD && !canEditPlaylist && !accessResolved)
             return@LaunchedEffect
-        if (action in listOf(LibraryPlaylistAction.COLLABORATORS, LibraryPlaylistAction.PRIVACY) &&
+        if (action in listOf(LibraryPlaylistAction.COLLABORATORS, LibraryPlaylistAction.PRIVACY,
+                LibraryPlaylistAction.EDIT, LibraryPlaylistAction.NAME, LibraryPlaylistAction.DETAILS,
+                LibraryPlaylistAction.TRACKS) &&
             profilePlaylistId.isNotBlank() && !accessResolved)
             return@LaunchedEffect
         if ((action == LibraryPlaylistAction.NAME || action == LibraryPlaylistAction.DETAILS || action == LibraryPlaylistAction.EDIT || action == LibraryPlaylistAction.REMOVE) &&
-            (presentationId == null || isLocalPlaylist && linkedSpotifyId == null)) return@LaunchedEffect
+            isLocalPlaylist && linkedSpotifyId == null) return@LaunchedEffect
         pendingAction = ""
         fun message(text: String) = android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_SHORT).show()
         when (action) {
@@ -416,9 +420,10 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                 }
             LibraryPlaylistAction.ADD ->
                 if (canEditPlaylist) showAddMusic = true else message("Spotify no confirma permiso para añadir canciones a esta lista")
-            LibraryPlaylistAction.TRACKS -> editingTracks = true
+            LibraryPlaylistAction.TRACKS -> if (canEditPlaylist) editingTracks = true
             LibraryPlaylistAction.EDIT, LibraryPlaylistAction.NAME, LibraryPlaylistAction.DETAILS ->
-                if (remotePlaylistId != null) showSpotifyEditor = true else showPresentationEditor = true
+                if (canOfferSyncedEditor) showSpotifyEditor = true
+                else if (remotePlaylistId == null && isLocalPlaylist) showRenameDialog = true
             LibraryPlaylistAction.REMOVE -> showDeleteDialog = true
             LibraryPlaylistAction.COPY ->
                 if (songs.isNotEmpty()) showCopyPlaylist = true else message("No hay canciones disponibles para copiar")
@@ -426,91 +431,62 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                 if (playlistAccess.isOwner) showSpotifyCollaborators = true
                 else message("Solo el propietario puede invitar a colaboradores")
             LibraryPlaylistAction.PRIVACY ->
-                if (canEditRemoteDetails) openInSpotify()
+                if (canEditRemoteDetails) showSpotifyEditor = true
                 else message("Solo el propietario puede cambiar la privacidad")
         }
     }
 
-    if (showRenameDialog && (isLocalPlaylist || presentationId != null)) {
-        val renameLocalList = isLocalPlaylist && remotePlaylistId == null
+    if (showRenameDialog && isLocalPlaylist && remotePlaylistId == null) {
         val currentName = playlist.name.ifBlank { playlistName }
-        var newPlaylistNameInput by remember(currentName) { mutableStateOf(currentName) }
-        val newName = newPlaylistNameInput.trim()
+        var name by remember(currentName) { mutableStateOf(currentName) }
         PlaylistEditingSheet(
-            title = if (renameLocalList) "Cambiar nombre" else "Nombre en Spotidroid",
+            title = "Cambiar nombre",
             cover = visualCover,
             saving = false,
-            saveEnabled = newName.isNotBlank() && newName != currentName,
+            saveEnabled = name.isNotBlank() && name.trim() != currentName,
             onDismiss = { showRenameDialog = false },
             onSave = {
-                if (renameLocalList) {
-                    LocalPlaylistPref.renamePlaylist(context, playlistId, newName)
-                    com.music.spotui.data.api.Api.HomeCache.library = null
-                    com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(playlistId)
-                    playlistViewModel.reloadPlaylist(playlistId)
-                } else if (presentationId != null) {
-                    PlaylistPresentationPref.update(context, presentationId) { it.copy(alias = newName) }
-                }
+                LocalPlaylistPref.renamePlaylist(context, playlistId, name.trim())
+                com.music.spotui.data.api.Api.HomeCache.library = null
+                com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(playlistId)
+                playlistViewModel.reloadPlaylist(playlistId)
                 showRenameDialog = false
             },
-            fields = {
-                PlaylistEditingField(newPlaylistNameInput, "Nombre", { newPlaylistNameInput = it }, true)
+            fields = { PlaylistEditingField(name, "Nombre", { name = it }, true) },
+        )
+    }
+
+
+    if (showDeleteDialog && (remotePlaylistId != null || isLocalPlaylist)) {
+        val label = if (playlistAccess.isOwner || remotePlaylistId == null) "Eliminar lista" else "Quitar de Biblioteca"
+        val close = { showDeleteDialog = false; navController.navigateUp(); Unit }
+        AlertDialog(
+            onDismissRequest = { if (!playlistSaveBusy) showDeleteDialog = false },
+            containerColor = Color(0xFF282828),
+            title = { Text(label, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(if (remotePlaylistId != null) "La lista se quitará de tu biblioteca de Spotify y de Spotidroid."
+                    else "Se eliminará esta lista de Spotidroid.")
             },
-            extras = {
-                if (!renameLocalList && presentationId != null && presentation.alias.isNotBlank()) {
-                    androidx.compose.material3.TextButton(onClick = {
-                        PlaylistPresentationPref.update(context, presentationId) { it.copy(alias = "") }
-                        showRenameDialog = false
-                    }) { Text("Usar nombre de Spotify") }
+            confirmButton = {
+                androidx.compose.material3.TextButton(enabled = !playlistSaveBusy, onClick = {
+                    if (remotePlaylistId != null) setPlaylistSaved(false, close)
+                    else {
+                        LocalPlaylistPref.deletePlaylist(context, playlistId)
+                        com.music.spotui.data.api.Api.HomeCache.library = null
+                        com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(playlistId)
+                        close()
+                    }
+                }) { Text(label, color = Color(0xFFFF7070)) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(enabled = !playlistSaveBusy, onClick = { showDeleteDialog = false }) {
+                    Text("Cancelar")
                 }
             },
         )
     }
 
-    if (showDeleteDialog && presentationId != null && (!isLocalPlaylist || linkedSpotifyId != null)) {
-        val removeLocally = !isLocalPlaylist || !linkedSpotifyId.isNullOrBlank()
-        val deleteLabel = if (removeLocally) "Quitar de Biblioteca" else uiLocalized("Delete Playlist")
-        AlertDialog(
-            onDismissRequest = { showDeleteDialog = false },
-            containerColor = Color(0xFF282828),
-            title = { Text(deleteLabel, color = Color.White, fontWeight = FontWeight.Bold) },
-            text = { Text(if (removeLocally) "La lista desaparecerá de tu Biblioteca de Spotidroid. Puedes recuperarla en Listas ocultas."
-                else uiLocalized("Are you sure you want to delete this playlist?"), color = Color.LightGray) },
-            confirmButton = {
-                Text(
-                    if (removeLocally) "Quitar" else uiLocalized("Delete"),
-                    color = Color(0xFFFF5252),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    modifier = Modifier
-                        .clickable {
-                            if (removeLocally) {
-                                PlaylistPresentationPref.update(context, presentationId) {
-                                    it.copy(hiddenAs = playlist.name.ifBlank { "Playlist" })
-                                }
-                            } else {
-                                LocalPlaylistPref.deletePlaylist(context, playlistId)
-                                com.music.spotui.data.api.Api.HomeCache.library = null
-                                com.music.spotui.data.api.Api.HomeCache.invalidatePlaylist(playlistId)
-                            }
-                            showDeleteDialog = false
-                            navController.navigateUp()
-                        }
-                        .padding(8.dp)
-                )
-            },
-            dismissButton = {
-                Text(
-                    uiLocalized("Cancel"),
-                    color = Color.Gray,
-                    fontSize = 15.sp,
-                    modifier = Modifier
-                        .clickable { showDeleteDialog = false }
-                        .padding(8.dp)
-                )
-            }
-        )
-    }
 
     val playlistArtists = playlist.artists
     val playlistArtistList = remember(playlistArtists) {
@@ -788,17 +764,17 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
                             }
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            if (externalReadOnly) {
-                            Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-if (externalReadOnly) {
-                                            com.music.spotui.ui.components.LibrarySaveIcon(
-                                                saved = favoritePlaylist, onClick = { togglePlaylistFavorite() },
-                                            )
-                                            Spacer(Modifier.width(8.dp))
-                                        }
-}
-Spacer(Modifier.height(8.dp))
-}
+                            if (remotePlaylistId != null) {
+                                Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 16.dp),
+                                    verticalAlignment = Alignment.CenterVertically) {
+                                    com.music.spotui.ui.components.LibrarySaveIcon(
+                                        saved = playlistSaved == true,
+                                        enabled = playlistSaved != null && !playlistSaveBusy,
+                                        onClick = togglePlaylistSaved,
+                                    )
+                                }
+                                Spacer(Modifier.height(8.dp))
+                            }
 val playing = playlistViewModel.currentSongPlayingState.value
 val currentInList = songs.any { it.id == playlistViewModel.currentSongId.value }
 com.music.spotui.ui.components.CollectionActionBar(
@@ -1024,18 +1000,17 @@ com.music.spotui.ui.components.CollectionActionBar(
                             onManage = { showSpotifyCollaborators = true },
                         )
                     }
-                    if (externalReadOnly) {
+                    if (playlistSaved == false && remotePlaylistId != null) {
                         Row(
                             modifier = Modifier.fillMaxWidth().clickable {
                                 showPlaylistActions = false
-                                togglePlaylistFavorite()
+                                setPlaylistSaved(true)
                             }.padding(horizontal = 24.dp, vertical = 16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(if (favoritePlaylist) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                contentDescription = null, tint = if (favoritePlaylist) Color(0xFF1ED760) else Color.White)
+                            Icon(Icons.Outlined.AddCircleOutline, contentDescription = null, tint = Color(0xFFB3B3B3))
                             Spacer(Modifier.width(20.dp))
-                            Text(if (favoritePlaylist) "Quitar de tu biblioteca" else "Guardar en tu biblioteca",
+                            Text("Guardar en tu biblioteca",
                                 color = Color.White, fontSize = 16.sp)
                         }
                     }
@@ -1085,62 +1060,17 @@ com.music.spotui.ui.components.CollectionActionBar(
                             Text("Nombre e información", color = Color.White, fontSize = 16.sp)
                         }
                     }
-                    if (editTargetReady && !canOfferSyncedEditor && (isLocalPlaylist || presentationId != null)) {
-                        Row(modifier = Modifier.fillMaxWidth().clickable {
+                    if (editTargetReady && isLocalPlaylist && remotePlaylistId == null) {
+                        com.music.spotui.ui.components.PlaylistEditingAction(Icons.Default.Edit, "Cambiar nombre", true) {
                             showPlaylistActions = false
                             showRenameDialog = true
-                        }.padding(horizontal = 24.dp, vertical = 16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White)
-                            Spacer(Modifier.width(20.dp))
-                            Text(if (isLocalPlaylist && remotePlaylistId == null) uiLocalized("Cambiar nombre") else "Cambiar nombre en Spotidroid",
-                                color = Color.White, fontSize = 16.sp)
                         }
                     }
-                    if (presentationId != null) {
-                        if (editTargetReady && !canOfferSyncedEditor) {
-                            Row(modifier = Modifier.fillMaxWidth().clickable {
-                                showPlaylistActions = false
-                                showPresentationEditor = true
-                            }.padding(horizontal = 24.dp, vertical = 16.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White)
-                                Spacer(Modifier.width(20.dp))
-                                Text("Editar descripción y portada en Spotidroid", color = Color.White, fontSize = 16.sp)
-                            }
-                        } else if (canOfferSyncedEditor &&
-                            (presentation.alias.isNotBlank() || presentation.description != null || presentation.coverUri.isNotBlank())) {
-                            Row(modifier = Modifier.fillMaxWidth().clickable {
-                                showPlaylistActions = false
-                                PlaylistPresentationPref.update(context, presentationId) {
-                                    it.copy(alias = "", description = null, coverUri = "")
-                                }
-                            }.padding(horizontal = 24.dp, vertical = 16.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Default.Refresh, contentDescription = null, tint = Color.White)
-                                Spacer(Modifier.width(20.dp))
-                                Text("Usar datos de Spotify", color = Color.White, fontSize = 16.sp)
-                            }
-                        }
-                        val canHide = !isLocalPlaylist || !linkedSpotifyId.isNullOrBlank()
-                        Row(modifier = Modifier.fillMaxWidth().clickable {
+                    if (playlistSaved == true || isLocalPlaylist) {
+                        val removeLabel = if (playlistAccess.isOwner || remotePlaylistId == null) "Eliminar lista" else "Quitar de Biblioteca"
+                        com.music.spotui.ui.components.PlaylistEditingAction(Icons.Default.Delete, removeLabel, !playlistSaveBusy) {
                             showPlaylistActions = false
-                            if (canHide && presentation.hiddenAs.isNotBlank()) {
-                                PlaylistPresentationPref.update(context, presentationId) { it.copy(hiddenAs = "") }
-                            } else showDeleteDialog = true
-                        }.padding(horizontal = 24.dp, vertical = 16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFFF7070))
-                            Spacer(Modifier.width(20.dp))
-                            Text(when {
-                                canHide && presentation.hiddenAs.isNotBlank() -> "Restaurar en Biblioteca"
-                                canHide -> "Quitar de Biblioteca"
-                                else -> uiLocalized("Eliminar lista")
-                            }, color = Color(0xFFFF7070), fontSize = 16.sp)
+                            showDeleteDialog = true
                         }
                     }
                     Spacer(Modifier.height(18.dp))

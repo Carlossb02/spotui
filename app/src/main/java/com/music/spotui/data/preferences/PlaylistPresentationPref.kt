@@ -1,8 +1,6 @@
 package com.music.spotui.data.preferences
 
 import android.content.Context
-import android.net.Uri
-import java.io.File
 import com.music.spotui.data.api.SpotifySession
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -71,56 +69,5 @@ internal object PlaylistPresentationPref {
         changes.update { it + 1 }
     }
 
-    /** Save a private copy because a picked image can live in a cloud provider. Call on IO. */
-    fun saveDetails(
-        context: Context, playlistId: String, description: String?,
-        pickedCover: Uri?, resetCover: Boolean,
-    ) {
-        val folder = File(context.filesDir, "playlist_covers")
-        val storeKey = key(context, playlistId)
-        var newFile: File? = null
-        try {
-            if (pickedCover != null) {
-                check(folder.isDirectory || folder.mkdirs()) { "No se pudo guardar la portada." }
-                val target = File.createTempFile("cover_", ".image", folder)
-                newFile = target
-                val resolver = context.contentResolver
-                check(resolver.getType(pickedCover)?.startsWith("image/") != false) { "Selecciona un archivo de imagen." }
-                val input = resolver.openInputStream(pickedCover) ?: error("No se pudo abrir la imagen.")
-                input.use { stream ->
-                    target.outputStream().use { output ->
-                        val buffer = ByteArray(16 * 1024)
-                        var size = 0L
-                        while (true) {
-                            val count = stream.read(buffer)
-                            if (count < 0) break
-                            size += count
-                            check(size <= 16L * 1024 * 1024) { "La portada supera los 16 MB." }
-                            output.write(buffer, 0, count)
-                        }
-                    }
-                }
-                val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                android.graphics.BitmapFactory.decodeFile(target.path, bounds)
-                check(bounds.outWidth > 0 && bounds.outHeight > 0) { "El archivo no contiene una imagen válida." }
-            }
-            val obsoleteCover = synchronized(this) {
-                check(key(context, playlistId) == storeKey) { "La cuenta de Spotify ha cambiado." }
-                val previous = prefs(context).getString(storeKey, null)?.let(::decode) ?: Presentation()
-                val nextCover = newFile?.let { Uri.fromFile(it).toString() }
-                    ?: if (resetCover) "" else previous.coverUri
-                update(context, playlistId) { it.copy(description = description, coverUri = nextCover) }
-                previous.coverUri.takeIf { it != nextCover }
-            }
-            val previousPath = obsoleteCover?.takeIf { it.isNotBlank() }?.let { Uri.parse(it).path }
-            if (previousPath != null) {
-                val candidate = File(previousPath)
-                if (candidate.parentFile == folder) runCatching { candidate.delete() }
-            }
-        } catch (failure: Exception) {
-            newFile?.delete()
-            throw failure
-        }
-    }
 
 }

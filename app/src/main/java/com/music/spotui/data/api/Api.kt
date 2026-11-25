@@ -24,6 +24,7 @@ import com.music.spotui.data.preferences.getPlaylistSortOption
 import com.music.spotui.data.preferences.isPlaylistSortDescending
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.ensureActive
@@ -368,7 +369,7 @@ class Api @Inject constructor(
         }
 
         coroutineScope {
-            val spotifyJob = launch {
+            val spotifyJob = async {
                 val spotifyRes = runCatching {
                     Spotify.search(query, types = listOf("track", "album", "artist", "playlist"), limit = 20).getOrNull()
                 }.getOrNull()
@@ -392,6 +393,7 @@ class Api @Inject constructor(
                         send(Response.Loading(currentResults))
                     }
                 }
+                spotifyRes?.shows?.items.orEmpty()
             }
 
             val podcastJob = if (includePodcasts) launch {
@@ -403,6 +405,15 @@ class Api @Inject constructor(
                             shows = (currentResults.shows + ytShows).distinctBy { it.id },
                             episodes = (currentResults.episodes + ytEpisodes).distinctBy { it.id },
                         )
+                        send(Response.Loading(currentResults))
+                    }
+                    val spotifyShows = spotifyJob.await().ifEmpty {
+                        withTimeoutOrNull(3_000L) { Spotify.searchPodcasts(query, limit = 6, market = "ES")
+                            .getOrNull()?.shows?.items }.orEmpty()
+                    }
+                    val matches = com.music.spotui.providers.PodcastProvider.matchSpotifyShows(query, spotifyShows, ytShows)
+                    if (matches.isNotEmpty()) resultLock.withLock {
+                        currentResults = currentResults.copy(shows = (currentResults.shows + matches).distinctBy { it.id })
                         send(Response.Loading(currentResults))
                     }
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -923,7 +934,8 @@ class Api @Inject constructor(
         remote: List<com.music.spotui.data.entity.LibraryEntry>,
         cachedOffline: List<com.music.spotui.data.preferences.OfflineCollection>,
     ): List<com.music.spotui.data.entity.LibraryEntry> {
-        val removed = LibraryCatalogCache.removedPlaylistIds(context)
+        val removed = LibraryCatalogCache.removedPlaylistIds(context) +
+            SpotifyPendingWrites.entries(context).filter { it.kind == "playlist_library" && !it.saved }.map { it.target }
         val localPlaylists = com.music.spotui.data.preferences.LocalPlaylistPref.getLocalPlaylists(context)
             .filterNot { it.syncedSpotifyId in removed }
         val mirroredIds = localPlaylists.map { it.spotifyPlaylistId }.filter { it.isNotBlank() }.toSet()
@@ -942,7 +954,7 @@ class Api @Inject constructor(
             )
         }
         val favoriteEntries = com.music.spotui.data.preferences.FavoritePlaylistsPref.entries(context)
-            .filterNot { it.spotifyId in removed }
+            .filterNot { it.spotifyId in removed || it.spotifyId in remotePlaylists }
         val podcastEntries = com.music.spotui.data.preferences.SubscribedPodcastPref.getSubscribedPodcasts(context).map { pod ->
             com.music.spotui.data.entity.LibraryEntry(
                 spotifyId = pod.id,
@@ -960,7 +972,8 @@ class Api @Inject constructor(
             com.music.spotui.data.entity.LibraryEntry(LIKED_SONGS_ID, "Canciones que te gustan", "Playlist • Canciones que te gustan", "https://misc.scdn.co/liked-songs/liked-songs-640.png", true),
             com.music.spotui.data.entity.LibraryEntry(DOWNLOADS_ID, "Downloaded", "Available offline", "", true),
         )
-        val preferred = shortcuts + localEntries + favoriteEntries + podcastEntries + remote.filterNot { it.spotifyId in mirroredIds }
+        val preferred = shortcuts + localEntries + favoriteEntries + podcastEntries +
+            remote.filterNot { it.spotifyId in mirroredIds || it.isPlaylist && it.spotifyId in removed }
         val offline = cachedOffline.filter { col ->
             val id = cleanId(col.id)
             !(col.isPlaylist && (id in removed ||

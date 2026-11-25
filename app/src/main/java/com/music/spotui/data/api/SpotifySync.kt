@@ -140,6 +140,48 @@ object SpotifySync {
         catalogAt = 0L
     }
 
+    internal fun cachedPlaylistMembership(context: Context, id: String): Boolean? {
+        val clean = cleanPlaylistId(id)
+        return SpotifyPendingWrites.desired(context, "playlist_library", clean)
+            ?: LibraryCatalogCache.peek(context)?.any { it.isPlaylist && it.spotifyId == clean }
+    }
+
+    internal suspend fun playlistMembership(context: Context, id: String): Boolean {
+        val clean = cleanPlaylistId(id)
+        SpotifyPendingWrites.desired(context, "playlist_library", clean)?.let { return it }
+        val saved = allLibraryPlaylists(context).any { it.id == clean }
+        return SpotifyPendingWrites.desired(context, "playlist_library", clean) ?: saved
+    }
+
+    internal suspend fun setPlaylistSaved(context: Context, id: String, saved: Boolean): Boolean {
+        val clean = cleanPlaylistId(id)
+        if (!clean.matches(Regex("[A-Za-z0-9]{22}"))) return false
+        if (!SpotifyPendingWrites.enqueue(context, "playlist_library", clean, saved = saved)) return false
+        if (!saved) kotlinx.coroutines.withContext(Dispatchers.IO) {
+            com.music.spotui.data.preferences.FavoritePlaylistsPref.removeShortcut(context, clean)
+        }
+        Api.HomeCache.library = null
+        com.music.spotui.sync.OwnLibraryChanges.changed()
+        return true
+    }
+
+    internal suspend fun writePlaylistMembership(
+        context: Context, session: String, userId: String, playlistId: String, saved: Boolean,
+    ) {
+        suspend fun matches(): Boolean {
+            check(SpotifySession.spDc(context) == session) { "La cuenta de Spotify ha cambiado." }
+            return allLibraryPlaylists(context, forceRefresh = true).any { it.id == playlistId } == saved
+        }
+        if (matches()) return
+        check(SpotifySession.spDc(context) == session) { "La cuenta de Spotify ha cambiado." }
+        Spotify.setPlaylistInLibrary(userId, playlistId, saved).getOrThrow()
+        repeat(4) { attempt ->
+            if (attempt > 0) kotlinx.coroutines.delay(400L * attempt)
+            if (matches()) return
+        }
+        error("Spotify aún no confirma el cambio en tu biblioteca.")
+    }
+
     /** Shared complete catalog: membership and Library never repeat the same concurrent scan. */
     suspend fun allLibraryPlaylists(context: Context, forceRefresh: Boolean = false): List<com.metrolist.spotify.models.SpotifyPlaylist> {
         val session = SpotifySession.spDc(context)

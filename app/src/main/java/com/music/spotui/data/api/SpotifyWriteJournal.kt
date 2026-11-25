@@ -18,14 +18,14 @@ internal class SpotifyWriteJournal(raw: String?, private val persist: (String) -
         for (i in 0 until rows.length()) {
             val o = rows.getJSONObject(i)
             val edit = PendingSpotifyWrite(o.getString("kind"), o.getString("target"), o.optString("track"), o.getBoolean("saved"), o.getLong("version"))
-            require(edit.kind in setOf("track", "album", "artist", "playlist"))
+            require(edit.kind in setOf("track", "album", "artist", "playlist", "playlist_library"))
             pending[edit.key] = edit
             version = maxOf(version, edit.version)
         }
     }
     @Synchronized fun entries(): List<PendingSpotifyWrite> = pending.values.toList()
     @Synchronized fun enqueue(kind: String, target: String, track: String, saved: Boolean): PendingSpotifyWrite {
-        require(kind in setOf("track", "album", "artist", "playlist") && target.isNotBlank())
+        require(kind in setOf("track", "album", "artist", "playlist", "playlist_library") && target.isNotBlank())
         val edit = PendingSpotifyWrite(kind, target, track, saved, ++version)
         val next = LinkedHashMap(pending)
         next.remove(edit.key)
