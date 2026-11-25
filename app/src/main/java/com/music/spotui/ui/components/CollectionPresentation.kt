@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -19,6 +19,8 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -112,7 +114,7 @@ internal fun CollectionDownloadButton(songs: List<SongsModel>, description: Stri
     val action = if (paused) "Reanudar" else if (status.active) "Pausar" else "Descargar"
     Box(Modifier.size(metrics.control.dp)) {
         CollectionCapsuleBody(action,
-            Modifier.fillMaxSize().clip(CircleShape).background(Color.White.copy(alpha = .10f))
+            Modifier.fillMaxSize().clip(CircleShape)
 
                 .combinedClickable(interactionSource = interaction, indication = null,
                     enabled = keys.isNotEmpty(), role = androidx.compose.ui.semantics.Role.Button,
@@ -123,9 +125,10 @@ internal fun CollectionDownloadButton(songs: List<SongsModel>, description: Stri
                             !status.complete -> { requested = true; onClick(false) }
                         }
                     }, onLongClick = { menu = true })) {
+            val color = if (status.complete) CollectionGreen else Color(0xFFB7B6BC)
             Icon(androidx.compose.ui.res.painterResource(if (paused) com.music.spotui.R.drawable.collection_play else if (status.active) com.music.spotui.R.drawable.collection_pause else com.music.spotui.R.drawable.collection_download),
                 if (paused) "Reanudar descargas" else if (status.active) "Pausar descargas" else description,
-                tint = if (status.complete) CollectionGreen else Color.White, modifier = Modifier.size(22.dp))
+                tint = color, modifier = Modifier.size(25.dp).border(1.5.dp, color, CircleShape).padding(3.dp))
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text("Cancelar descargas de esta colección") }, onClick = {
@@ -198,21 +201,32 @@ internal fun CollectionActionBar(
     onAdd: (() -> Unit)? = null, onEdit: (() -> Unit)? = null, onShare: (() -> Unit)? = null,
     sortMode: String, sortDescending: Boolean, accent: Color = Color(0xFF75648F), glass: CollectionGlassBackdrop,
 ) {
-    var showStories by remember(storyTitle) { mutableStateOf(false) }
+    val entry by navController.currentBackStackEntryAsState()
+    var storyOwner by rememberSaveable { mutableStateOf<String?>(null) }
+    var shuffleSeed by rememberSaveable { mutableIntStateOf(0) }
+    var resumeUrl by rememberSaveable { mutableStateOf<String?>(null) }
+    var resumePosition by rememberSaveable { mutableLongStateOf(0L) }
+    var resumePaused by rememberSaveable { mutableStateOf(false) }
+    var resumeMuted by rememberSaveable { mutableStateOf(false) }
     val hasStory = remember(storySongs) { storySongs.any(::supportsCollectionStory) }
     val sortInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val queueInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val tablet = LocalConfiguration.current.smallestScreenWidthDp >= 600
     BoxWithConstraints(modifier.onGloballyPositioned { glass.actionsTop = it.positionInRoot().y }) {
         val metrics = remember(maxWidth, tablet) { collectionActionMetrics(maxWidth.value, tablet) }
-        val showLabels = maxWidth >= 360.dp
+        val showLabels = maxWidth >= 310.dp
         val shareInPrimary = maxWidth >= 344.dp
         CompositionLocalProvider(LocalCapsuleMetrics provides metrics, LocalCapsuleAccent provides accent, LocalGlassBackdrop provides glass) {
             Column {
                 Row(Modifier.height(68.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(metrics.itemGap.dp), verticalAlignment = Alignment.CenterVertically) {
                         CollectionStoriesButton(storySongs.firstOrNull()?.coverUri.orEmpty().ifBlank { storyCover }, hasStory) {
-                            showStories = true
+                            shuffleSeed = kotlin.random.Random.nextInt()
+                            resumeUrl = null
+                            resumePosition = 0L
+                            resumePaused = false
+                            resumeMuted = false
+                            storyOwner = entry?.id
                         }
                         savedControl()
                         download()
@@ -238,7 +252,7 @@ internal fun CollectionActionBar(
                         Icon(Icons.Default.Add, "Añadir canciones", tint = Color.White, modifier = Modifier.size(20.dp))
                     }
                     if (onEdit != null) CollectionSecondaryButton("Editar", showLabels, onEdit) {
-                        Icon(Icons.Default.Edit, "Editar canciones", tint = Color.White, modifier = Modifier.size(19.dp))
+                        Icon(Icons.Default.Menu, "Editar canciones", tint = Color.White, modifier = Modifier.size(19.dp))
                     }
                     val sortIcon = when (sortMode) {
                         "DEFAULT" -> com.music.spotui.R.drawable.collection_sort_track
@@ -249,10 +263,7 @@ internal fun CollectionActionBar(
                         "POPULARITY" -> com.music.spotui.R.drawable.collection_sort_popularity
                         else -> com.music.spotui.R.drawable.collection_sort_date
                     }
-                    CollectionCapsuleBody("Ordenar", Modifier.width(54.dp).height(metrics.control.dp)
-                        .clip(CircleShape).background(Color.White.copy(alpha = .10f))
-                        .clickable(interactionSource = sortInteraction, indication = null,
-                            role = androidx.compose.ui.semantics.Role.Button, onClick = onSort)) {
+                    CollectionSecondaryButton("Ordenar", showLabels, onSort, interaction = sortInteraction) {
                         Icon(androidx.compose.ui.res.painterResource(sortIcon), when (sortMode) { "DEFAULT" -> "Ordenar por pistas"; "TITLE" -> "Ordenar por título"; "ARTIST" -> "Ordenar por artista"; "ALBUM" -> "Ordenar por álbum"; "DURATION" -> "Ordenar por duración"; "POPULARITY" -> "Ordenar por popularidad"; else -> "Ordenar por fecha" }, tint = Color.White, modifier = Modifier.size(19.dp))
                         Icon(androidx.compose.ui.res.painterResource(if (sortDescending) com.music.spotui.R.drawable.collection_sort_down else com.music.spotui.R.drawable.collection_sort_up),
                             if (sortDescending) "Descendente" else "Ascendente", tint = Color.White, modifier = Modifier.size(17.dp))
@@ -270,7 +281,16 @@ internal fun CollectionActionBar(
             }
         }
     }
-    if (showStories) CollectionStories(storyTitle, storyCover, storySongs, accent, navController, storyPodcast) { showStories = false }
+    if (storyOwner != null && entry?.id == storyOwner) {
+        CollectionStories(storyTitle, storyCover, storySongs, accent, navController, storyPodcast,
+            shuffleSeed, resumeUrl, resumePosition, resumePaused, resumeMuted,
+            onVisitArtist = { url, position, paused, muted ->
+                resumeUrl = url
+                resumePosition = position
+                resumePaused = paused
+                resumeMuted = muted
+            }, onDismiss = { storyOwner = null })
+    }
 }
 
 @Composable
