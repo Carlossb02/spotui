@@ -8,282 +8,334 @@
       "name": "ROCA PROJECT",
       "publisher": "Carlos Roca",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f3642ba67be6d22279908ae7f",
-      "category": "Bienestar y psicología"
+      "category": "Bienestar y psicología",
+      "youtube": "https://www.youtube.com/playlist?list=PL01FNQnUl7YKuI7iD1lwxKz8Ho3J8L8Of"
     },
     {
       "id": "5iKz9gAsyuQ1xLG6MFLtQg",
       "name": "The Wild Project",
       "publisher": "Jordi Wild",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f95cb633bdb6ecbf8df6202aa",
-      "category": "Entrevistas"
+      "category": "Entrevistas",
+      "youtube": "https://www.youtube.com/playlist?list=PLzuFY9Ixj9Z6nf7z6t5YmPDTLBgksk8Ts"
     },
     {
       "id": "2hH5wXIG5SCCSxbcbKsyg8",
       "name": "La Ruina",
       "publisher": "La Ruina",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f7a439524f218e1b9477c5944",
-      "category": "Comedia y Humor"
+      "category": "Comedia y Humor",
+      "youtube": "https://www.youtube.com/channel/UCaw0csDOShCAEaC8S5ItIIQ/videos"
     },
     {
       "id": "1jXeGsr1X2gpss332C8cAw",
       "name": "Nadie Sabe Nada",
       "publisher": "Nadie Sabe Nada",
       "artwork": "https://i.scdn.co/image/ab67656300005f1ff9d1f7c02c0085902671ff5b",
-      "category": "Comedia y Humor"
+      "category": "Comedia y Humor",
+      "youtube": "https://www.youtube.com/channel/UCWU8fcAN3X8hjMR9k0rbV5g/videos",
+      "minSeconds": 2400
     },
     {
       "id": "2ZfXmbzilttkGkulk1ORnt",
       "name": "Tengo un Plan",
       "publisher": "Sergio Beguería y Juan Domínguez",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fe7136a66e1184a1fc5011fe6",
-      "category": "Negocios y Emprendimiento"
+      "category": "Negocios y Emprendimiento",
+      "youtube": "https://www.youtube.com/channel/UCJFP-5V2-0BFeVmKifG0H_Q/videos"
     },
     {
       "id": "5hiPtlvSfLe4S9S5S9RCwG",
       "name": "WORLDCAST",
       "publisher": "Pedro Buerbaum",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fad224d3154e8de9248cf891a",
-      "category": "Entrevistas"
+      "category": "Entrevistas",
+      "youtube": "https://www.youtube.com/channel/UCuDm45jKrsTeEpx7BayVaiw/videos"
     },
     {
       "id": "0WEqNybNBwZPZTM1V1iG2i",
       "name": "Black Mango Podcast",
       "publisher": "Black Mango",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f72bc5a3aa2803a9c1702078e",
-      "category": "Crímenes Reales y Misterio"
+      "category": "Crímenes Reales y Misterio",
+      "youtube": "https://www.youtube.com/channel/UCL1ITQtr7ogwPN-5w96kG7Q/videos"
     },
     {
       "id": "7yqiEjCXTX4Lqi0xD8RF87",
       "name": "Criminopatía",
       "publisher": "Clara Tiscar",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f26d4f58d8f55c4dbe5a46f9d",
-      "category": "Crímenes Reales y Misterio"
+      "category": "Crímenes Reales y Misterio",
+      "youtube": "https://www.youtube.com/channel/UClWT3UtfAEQ8VSrEjqlEI-g/videos"
     },
     {
       "id": "7jha3TuDeuL0k3ZF0yuzkL",
       "name": "La Fórmula Del Éxito con Uri Sabat",
       "publisher": "Uri Sabat",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fff737bfa9a9a92b298a2f79b",
-      "category": "Entrevistas"
+      "category": "Entrevistas",
+      "youtube": "https://www.youtube.com/channel/UCfJYyfonhgqd3Pwbx_df4Zw/videos",
+      "episodeTitle": "LFDE",
+      "minSeconds": 1500
     },
     {
       "id": "4gMqUjYpuiNu8phuYeG1gA",
       "name": "Sastre y Maldonado",
       "publisher": "SER Podcast",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f15fd0c230e42f01e69da8e16",
-      "category": "Comedia y Humor"
+      "category": "Comedia y Humor",
+      "youtube": "https://www.youtube.com/channel/UCsFPjjZ98-i8KpMURIVcWFA/videos"
     },
     {
       "id": "444LwT3wHRyVZb6alkDc4c",
       "name": "LO QUE TÚ DIGAS con Alex Fidalgo",
       "publisher": "Alex Fidalgo",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fe77d902050e473d258b83f74",
-      "category": "Entrevistas"
+      "category": "Entrevistas",
+      "youtube": "https://www.youtube.com/channel/UCcpOe_g8sfr2GSoLZISy6yA/videos"
     },
     {
       "id": "22DdWpo8Dipj3PSMxn5yxv",
       "name": "La Pija y la Quinqui",
       "publisher": "La Pija y la Quinqui",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f9c1209c90575bf30f0b73b9a",
-      "category": "Cultura y Entretenimiento"
+      "category": "Cultura y Entretenimiento",
+      "youtube": "https://www.youtube.com/channel/UCmaBCSVlBJM87mdkqtNtfIw/videos"
     },
     {
       "id": "5dbvpKwtqz3X3hcX1BSEzf",
       "name": "No es el fin del mundo",
       "publisher": "El Orden Mundial",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f84f50db4e48110d9504df8ad",
-      "category": "Noticias y Política"
+      "category": "Noticias y Política",
+      "youtube": "https://www.youtube.com/channel/UCU4sBmrCdWKibChqSCp5Y3w/videos"
     },
     {
       "id": "7Iqj5ZMZLoUd4HRoCTGiG0",
       "name": "Quieto todo el mundo",
       "publisher": "QTEM",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fae264c351c14c02d8853ccff",
-      "category": "Comedia y Humor"
+      "category": "Comedia y Humor",
+      "youtube": "https://www.youtube.com/playlist?list=PLOnn5V5W5y1ZQgiCpieNq9lnBcLSSELuF"
     },
     {
       "id": "53oPgL9jPRS2zeapiUWqAa",
       "name": "Poco se Habla! Briten y Xuso Jones",
       "publisher": "Keepers",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f2c442861518ef43d57d988a9",
-      "category": "Comedia y Humor"
+      "category": "Comedia y Humor",
+      "youtube": "https://www.youtube.com/channel/UC0rm9jPGufV7sYvcG2TnItw/videos"
     },
     {
       "id": "6MjgJqm88DAtaay8euRUpP",
       "name": "True Crime con Martha Caballero",
       "publisher": "Martha Caballero",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f82f537f99790a98b2d4d9752",
-      "category": "Crímenes Reales y Misterio"
+      "category": "Crímenes Reales y Misterio",
+      "youtube": "https://www.youtube.com/channel/UCXepLmTcO1wQHR0FVt_SL1A/videos"
     },
     {
       "id": "2QPC17Z9LhTntCA4c3Ijk9",
       "name": "SPICY4TUNA",
       "publisher": "Willyrex, Alvaro845, Euge Oller y Marc Urgell",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fbcf597b611d2885cc11153f6",
-      "category": "Negocios y Emprendimiento"
+      "category": "Negocios y Emprendimiento",
+      "youtube": "https://www.youtube.com/channel/UCUWDBUEo1YFTzZnBV1aFDBw/videos"
     },
     {
       "id": "79DKF0ku54EG9KBzmY7CUd",
       "name": "TÓMATELO CON VINO",
       "publisher": "Maria F. Rubies ; Ro Irisarri",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fea811d8013ee4fcde5826412",
-      "category": "Cultura y Entretenimiento"
+      "category": "Cultura y Entretenimiento",
+      "youtube": "https://www.youtube.com/channel/UCoj6C5Xh-aaWnDwG5KQlCzg/videos"
     },
     {
       "id": "0rY8vkA8ehBX7qBr5RrVgp",
       "name": "A solas con... Vicky Martín Berrocal",
       "publisher": "Podium Podcast",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f60e195dcb6ce009b36404a84",
-      "category": "Entrevistas"
+      "category": "Entrevistas",
+      "youtube": "https://www.youtube.com/playlist?list=PLl4KJtUW7dz0581Fj5XuHnrZ-zH026ftZ"
     },
     {
       "id": "54Vnd9qwrTaINwzCkTTIWO",
       "name": "Un tema Al día",
       "publisher": "elDiario.es",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fd3848cfd74ee31df0bdbf244",
-      "category": "Noticias y Política"
+      "category": "Noticias y Política",
+      "youtube": "https://www.youtube.com/playlist?list=PLSx_wgy5flWardXuhFQEnMrNau6WS_XMo",
+      "minSeconds": 480
     },
     {
       "id": "3ojf91tANXd6VVz4pd6rbF",
       "name": "El Director",
       "publisher": "David Jiménez",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f9d44ea6e52a92c2a51a04f68",
-      "category": "Entrevistas"
+      "category": "Entrevistas",
+      "youtube": "https://www.youtube.com/channel/UCrR2eC_v_tH10E3loT772bw/videos"
     },
     {
       "id": "5KsH5NAvVp3iUPtpLamkYw",
       "name": "La Sotana",
       "publisher": "La Sotana",
       "artwork": "https://i.scdn.co/image/ab67656300005f1ff3056443533520bd411eddc1",
-      "category": "Deportes"
+      "category": "Deportes",
+      "youtube": "https://www.youtube.com/channel/UCNSmn5NLUDrV_paFZl--7qw/videos"
     },
     {
       "id": "4cwPzZ9DKwwYjSBoBV752B",
       "name": "Cuarto Milenial",
       "publisher": "PodiumPodcast",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f1a27664856e645058f4314ff",
-      "category": "Cultura y Entretenimiento"
+      "category": "Cultura y Entretenimiento",
+      "youtube": "https://www.youtube.com/channel/UC0aGY16s_djhBsJFSf3nlWQ/videos",
+      "episodeTitle": "Cuarto Milenial"
     },
     {
       "id": "4EwwdoHHYmbt49UXODQMpi",
       "name": "Las noticias de la SER",
       "publisher": "SER Podcast",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fea130e4e4f35d7b3f3077037",
-      "category": "Noticias y Política"
+      "category": "Noticias y Política",
+      "youtube": "https://www.youtube.com/channel/UC3vDuKX_LFw1W3lSqhNvdiQ/videos",
+      "episodeTitle": "Las noticias de la SER",
+      "minSeconds": 30
     },
     {
       "id": "7w77c0aETrRD6KE5OkxRnn",
       "name": "Close Friends",
       "publisher": "RTVE Play / Playz",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f0fb1274313dd3220c68500c5",
-      "category": "Cultura y Entretenimiento"
+      "category": "Cultura y Entretenimiento",
+      "youtube": "https://www.youtube.com/channel/UCEw4oyJKvmYPoIpSa8cfr7A/videos",
+      "episodeTitle": "Close Friends"
     },
     {
       "id": "1KOIc2AOrYJMsYn56kWiZg",
       "name": "Ahora me entero",
       "publisher": "Juanje Diánez",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fb6f0bb9c52389ad7d0c695df",
-      "category": "Entrevistas"
+      "category": "Entrevistas",
+      "youtube": "https://www.youtube.com/channel/UCSLxhYDjVajY6mD6Paj_t-A/videos"
     },
     {
       "id": "0RHpp9P5ePbiiUfDrgi5Ld",
       "name": "Terrores Nocturnos",
       "publisher": "Terrores Nocturnos",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fcc4e42106e5d014e006480cb",
-      "category": "Crímenes Reales y Misterio"
+      "category": "Crímenes Reales y Misterio",
+      "youtube": "https://www.youtube.com/playlist?list=PLlDZ74Qz5KgxsvEb8KZM2_Y2FSJrPzbGd"
     },
     {
       "id": "6UvniB9RxUnnoN0YzgZqK9",
       "name": "Que no surti d'aquí",
       "publisher": "Catalunya Ràdio",
       "artwork": "https://i.scdn.co/image/ab67656300005f1f085f46aa09f62e9acf6ff321",
-      "category": "Cultura y Entretenimiento"
+      "category": "Cultura y Entretenimiento",
+      "youtube": "https://www.youtube.com/playlist?list=PLp63nM_nVdiPPXYEW2v0oROHDFqYArSK1",
+      "minSeconds": 600
     },
     {
       "id": "1gIOIXYHYKdu2osi0eNsBc",
       "name": "La Crónica Oscura",
       "publisher": "Morellana",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f4d7361678536778612d04809",
-      "category": "Crímenes Reales y Misterio"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f4d7361678536778612d04809"
     },
     {
       "id": "4hz0jLXfWc9jzCsAybaSgI",
       "name": "Dr. Mario Alonso Puig",
       "publisher": "Mario Alonso Puig",
       "artwork": "https://i.scdn.co/image/ab67656300005f1fc5acdc689b866d7788f10202",
-      "category": "Bienestar y psicología"
+      "category": "Bienestar y psicología",
+      "youtube": "https://www.youtube.com/channel/UCI0pkMo-pDjVurZWJQu3bLg/videos"
     },
     {
       "id": "6V7gzGJwYsHg4uJOCPM7C1",
       "name": "Terapia de Parejas",
       "publisher": "Eva Cavero y Óscar Sáenz",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f3d44b621f156c970657114f0"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f3d44b621f156c970657114f0",
+      "youtube": "https://www.youtube.com/channel/UCPPduUL001pY64Ru_CCuOAQ/videos",
+      "category": "Bienestar y psicología"
     },
     {
       "id": "2pXBpdfJoAo2iNz5G25nCP",
       "name": "AM",
       "publisher": "The Voice Village",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f00a74a6f968d3ad069eaec1e"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f00a74a6f968d3ad069eaec1e",
+      "youtube": "https://www.youtube.com/channel/UCWN8BcVZFogTXul-J0GWYgw/videos",
+      "episodeTitle": "Pódcast AM"
     },
     {
       "id": "3iM6J3KDbrzqcuWfUw0LLk",
       "name": "¿Qué pasa, Barroso?",
       "publisher": "Alán Barroso",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1faf5a5341e50dde5e32119a25"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1faf5a5341e50dde5e32119a25",
+      "youtube": "https://www.youtube.com/channel/UCSPD27Cs5gDePZ07G4m70Cg/videos"
     },
     {
       "id": "56JLkQ1ijviWl0zsPQ6WJr",
       "name": "Carne Cruda Podcast",
       "publisher": "La República Independiente de la Radio",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f55ad975586ea19422d1ceef8"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f55ad975586ea19422d1ceef8",
+      "youtube": "https://www.youtube.com/channel/UC2T5UXo4wIFnkrWi7qKZR1Q/videos"
     },
     {
       "id": "1BZDroPPwtciyo2nICIofF",
       "name": "Con C de Cuentacuentos",
       "publisher": "Con C de Cuentacuentos",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f5a8430198b2eef815f734b62"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f5a8430198b2eef815f734b62",
+      "youtube": "https://www.youtube.com/channel/UC9SnXH07wChYL4E_SszyTvA/videos",
+      "minSeconds": 180
     },
     {
       "id": "7x5Q0B2ZWIot59Ah6NWoar",
       "name": "Saldremos Mejores",
       "publisher": "Podium Podcast",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f941c4ea8b54134f676e50637"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f941c4ea8b54134f676e50637",
+      "youtube": "https://www.youtube.com/channel/UC4842ZL82_IozzYxSxTjkrQ/videos"
     },
     {
       "id": "1jobS8JPQwN1lYg2g8cn9k",
       "name": "Búscate la vida",
       "publisher": "José Elías y Eric Ponce",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1fc2dbc91a74b9d2bc7afd2d49"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1fc2dbc91a74b9d2bc7afd2d49",
+      "youtube": "https://www.youtube.com/channel/UC3vyBGCVQoTzt7W9vaaSU6A/videos"
     },
     {
       "id": "3SQXsvSIgFFl4T2BUqlrV0",
       "name": "Cañones o Mantequilla",
       "publisher": "El Orden Mundial",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f258ce6a24214905d6b59f381"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f258ce6a24214905d6b59f381",
+      "youtube": "https://www.youtube.com/channel/UCvqppDAJHJW8ksw7ifM6o6Q/videos"
     },
     {
       "id": "0Bhyr7HDEijAinRGEyTVmm",
       "name": "El Larguero",
       "publisher": "SER Podcast",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1ff08ffcc0a2ea60908172d18f"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1ff08ffcc0a2ea60908172d18f",
+      "youtube": "https://www.youtube.com/channel/UC2BfAWhbAsmPnXHpWYKR7aQ/videos"
     },
     {
       "id": "0oU3xx0mMU0xTO4PyCFxat",
       "name": "Vaquero Podcast",
       "publisher": "RV PODCAST",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1fa81090f4d445c4721663fb19"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1fa81090f4d445c4721663fb19",
+      "youtube": "https://www.youtube.com/playlist?list=PLirhzdWiJbq4hhv63O7qj8XuBRhp2ZBVV"
     },
     {
       "id": "0XCYa4yepbhx3gc6ANSNoZ",
       "name": "Nido de urracas",
       "publisher": "Nido de Urracas",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f3790f732ad3a8dde8e37c4fc"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f3790f732ad3a8dde8e37c4fc",
+      "youtube": "https://www.youtube.com/channel/UCyN1IBL04CdZv7wQXwtcvaA/videos"
     },
     {
       "id": "3DcwEMyFnVftWBS0E0HXM1",
       "name": "Crims",
       "publisher": "Catalunya Ràdio",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f4e6fc78d8121e3af90f5d695"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f4e6fc78d8121e3af90f5d695",
+      "youtube": "https://www.youtube.com/playlist?list=PL5HwsHboiE9n3OJRgTd5Nl8CN60_uYnVB"
     },
     {
       "id": "2iKebgGPe7a1a13zUr0Q20",
@@ -295,103 +347,124 @@
       "id": "7LdndJSgZbRT1WhEpvysKP",
       "name": "A Una Palabra con Adrià Solà Pastor",
       "publisher": "Adrià Solà Pastor",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1fdcecc3826a3fb0e5796dca43"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1fdcecc3826a3fb0e5796dca43",
+      "youtube": "https://www.youtube.com/channel/UC9BkL30gHlt1QozCFug7tew/videos"
     },
     {
       "id": "7rgFvrfap2bLcItGw45QZH",
       "name": "Animales Humanos Podcast",
       "publisher": "Ibai Vegan",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1fc3dc822cf810f50c5c7b32a9"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1fc3dc822cf810f50c5c7b32a9",
+      "youtube": "https://www.youtube.com/channel/UC9DsrJjUSFiQU_hbQUVlOjg/videos"
     },
     {
       "id": "0w4DxpLgQP0VOMzjDrdKo3",
       "name": "Triun Arts",
       "publisher": "Triun Arts",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f0beedda7628aef4b6064ae0c"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f0beedda7628aef4b6064ae0c",
+      "youtube": "https://www.youtube.com/channel/UCua9GL30jRteZEKhIHrZObQ/videos"
     },
     {
       "id": "6z2cewLloFTYiBrY84rM7z",
       "name": "EL MUNDO al día",
       "publisher": "El Mundo - Javier Attard",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f7ffbbbdcb471c813935454f6"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f7ffbbbdcb471c813935454f6",
+      "youtube": "https://www.youtube.com/playlist?list=PLpaDQu7aewDqyfyJ5NJRb-_aQHRww1IU8"
     },
     {
       "id": "5ICb9DcNquyMbJ00GmKzNP",
       "name": "Línea de Cal",
       "publisher": "Línea de Cal",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f0ba1795a965fa6fe6b094dec"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f0ba1795a965fa6fe6b094dec",
+      "youtube": "https://www.youtube.com/channel/UCAB0QCrVCcm25QGtgX38Fng/videos"
     },
     {
       "id": "1dxFMjf9iZeHqKwVK1OQ9I",
       "name": "Es la Mañana de Federico",
       "publisher": "esRadio",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f69d7fb2b70f3673952f84c62"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f69d7fb2b70f3673952f84c62",
+      "youtube": "https://www.youtube.com/playlist?list=PLvxqWGz8ICq8vPZ0D-F7rLEgQWytE2Clu",
+      "minSeconds": 1200
     },
     {
       "id": "5cE00JQ8qwk48yLKcHz48a",
       "name": "SABOR A QUEER",
       "publisher": "Neurads",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f8ffe761f03f7d71137ec1dc4"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f8ffe761f03f7d71137ec1dc4",
+      "youtube": "https://www.youtube.com/playlist?list=PLRcsOFYtjkKoKJvbwLSryTjxr_zHxYjw1"
     },
     {
       "id": "2Ll1XhE7LfXavhzlIUmLsD",
       "name": "Mamarazzis",
       "publisher": "El Periódico",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1faa90d55803872b7c3e561b7b"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1faa90d55803872b7c3e561b7b",
+      "youtube": "https://www.youtube.com/playlist?list=PLs66PTSPhqMLkOW9O0SSTOcNlDsSw1th1"
     },
     {
       "id": "6adkMgnpZDxHA3DFnNiEVQ",
       "name": "La competència - Programa sencer",
       "publisher": "RAC1",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f8fc3bc061c4930bde61aa824"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f8fc3bc061c4930bde61aa824",
+      "youtube": "https://www.youtube.com/playlist?list=PLwyhnJ320ix8v-FVILeqWQcmDRA2NRxcb",
+      "minSeconds": 1800
     },
     {
       "id": "3KZaXYg5SgfhgxT8jRK4Xp",
       "name": "Hoy por Hoy",
       "publisher": "SER Podcast",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f7976d33e00ea03264991c3d1"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f7976d33e00ea03264991c3d1",
+      "youtube": "https://www.youtube.com/channel/UCOxQk41rWFLWLPAPP_as6uA/videos"
     },
     {
       "id": "0TCJ4VZKU6YFJjxpl0oHNN",
       "name": "Deforme Semanal Ideal Total",
       "publisher": "Deforme Semanal",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1fe5783358a0672b3c92e421a9"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1fe5783358a0672b3c92e421a9",
+      "youtube": "https://www.youtube.com/channel/UC0jn3aKgXLE1fbWfwu3Y2hg/videos"
     },
     {
       "id": "5Wr0b3pGkixNFSZUBPsWDD",
       "name": "Un Libro Una Hora",
       "publisher": "SER Podcast",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1fa146340ffea4c8e02fc58b57"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1fa146340ffea4c8e02fc58b57",
+      "youtube": "https://www.youtube.com/playlist?list=PLyiJZcChPSpycjB2s4E_8aP7L0WNDGFx0"
     },
     {
       "id": "4H9hNPW7uTpgCD0wwErLxk",
       "name": "Salud Mental✨ con Alan Disavia",
       "publisher": "Alan Disavia",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f02e4cb8da681e37e40abb639"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f02e4cb8da681e37e40abb639",
+      "youtube": "https://www.youtube.com/channel/UCYUO89NPWrSLFnxYIPw0GjA/videos"
     },
     {
       "id": "25m9YXdbCiNBE47gA2Z4KR",
       "name": "BATMOWLI",
       "publisher": "Mowlihawk",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f335eae3d2e505dc5de4b6061"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f335eae3d2e505dc5de4b6061",
+      "youtube": "https://www.youtube.com/channel/UCdAZllOWA42vcxvno_bvPtw/videos",
+      "minSeconds": 2400
     },
     {
       "id": "4n2SYRzAXUKDFccZ993ZEh",
       "name": "Hoy en EL PAÍS",
       "publisher": "EL PAÍS",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f18adf6db071456528cfdb214"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f18adf6db071456528cfdb214",
+      "youtube": "https://www.youtube.com/playlist?list=PLeEzCJHXClX0GMLH7_k6oJOZma7G8qAfI",
+      "minSeconds": 300
     },
     {
       "id": "7Jw7zyIvKMiTLcMwV66udc",
       "name": "Así Matan",
       "publisher": "Cesar Ibañez",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1fbfdacd5260360795979a4ef9"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1fbfdacd5260360795979a4ef9",
+      "youtube": "https://www.youtube.com/channel/UCEYlP_paKGBSyl99Lw8qVag/videos"
     },
     {
       "id": "0sGGLIDnnijRPLef7InllD",
       "name": "Entiende Tu Mente",
       "publisher": "Molo Cebrián",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f5c40535d8ea71d28b4286111"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f5c40535d8ea71d28b4286111",
+      "youtube": "https://www.youtube.com/playlist?list=PLrdnH177utuZETvXGcVj8apdtMRiigqVm"
     },
     {
       "id": "033fuwhmOCASqNc5XGGYAg",
@@ -403,7 +476,8 @@
       "id": "7dDnp8uBQ2WECET1geXC7E",
       "name": "Reyes del Palique",
       "publisher": "Reyes del Palique",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1ff3a1bde6d917a7301b2f2d6a"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1ff3a1bde6d917a7301b2f2d6a",
+      "youtube": "https://www.youtube.com/channel/UCdPgQGtwso18_IoK9rEpPhg/videos"
     },
     {
       "id": "5slNbyLCLd1DbVY5p19Liw",
@@ -415,43 +489,51 @@
       "id": "1sYunv4SXt1HOmoDdvhOOp",
       "name": "ODIO A LA GENTE",
       "publisher": "ODIO A LA GENTE",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1fa6c0f15d184f6cef93fa024a"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1fa6c0f15d184f6cef93fa024a",
+      "youtube": "https://www.youtube.com/playlist?list=PLA24zYpJETkEnIjBfJCdJdX_47SpZQcuY"
     },
     {
       "id": "3w18J0O2X2VllIJ8fJWZAU",
       "name": "El Podcast de Marc Vidal",
       "publisher": "Marc Vidal",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f39aff1247b18f1d999f2d2e3"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f39aff1247b18f1d999f2d2e3",
+      "youtube": "https://www.youtube.com/channel/UCKC77AR_zWXRTE2GOD_2Uag/videos"
     },
     {
       "id": "06JgN4AkNage0vqyc8a1AD",
       "name": "Somos Estupendas",
       "publisher": "Somos Estupendas",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f5fa66f770926c7c60b903717"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f5fa66f770926c7c60b903717",
+      "youtube": "https://www.youtube.com/playlist?list=PLgYnK_GmZx28chc9Ggptt1AD0_-_L9I1M"
     },
     {
       "id": "0akKU27DF09PUU68zSCkWH",
       "name": "Hora 25",
       "publisher": "SER Podcast",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1fed3afccf8b552dfe883426aa"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1fed3afccf8b552dfe883426aa",
+      "youtube": "https://www.youtube.com/channel/UCispGs-Zec1lVsp32rMgqkg/videos"
     },
     {
       "id": "6x9RCowhyb3m5nXtlIhLii",
       "name": "AL CIELO CON ELLA con Henar Álvarez",
       "publisher": "RTVE Play",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f8e1eb7852ba00355f07a671a"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f8e1eb7852ba00355f07a671a",
+      "youtube": "https://www.youtube.com/channel/UCqlsTzBv49Uiu8Z3IseVgQQ/videos",
+      "episodeTitle": "Al cielo con ella"
     },
     {
       "id": "1RHk7FSTrNsGTLKtS2oWw8",
       "name": "CANCELLED ❌",
       "publisher": "Wall Street Wolverine",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1fc9fef2d8ff90ac87ad9aa76a"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1fc9fef2d8ff90ac87ad9aa76a",
+      "youtube": "https://www.youtube.com/playlist?list=PLz8e0Tn_pMko6WuONip7yWjaTaiEh5rlS"
     },
     {
       "id": "52rdsvLfwkCgaoxwgL0QcW",
       "name": "STOICAST",
       "publisher": "PACTO ESTOICO",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f5d208cc87208d148b38cea0c"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f5d208cc87208d148b38cea0c",
+      "youtube": "https://www.youtube.com/channel/UCFzUOSUEAwx4jAP89zclWOQ/videos"
     },
     {
       "id": "2kTcAoYCg6EEKWemq7LTTr",
@@ -463,31 +545,37 @@
       "id": "0v1o4D5OPo4EVqKeekyWhL",
       "name": "Sofá, manta y crimen",
       "publisher": "Coral y Yayo",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f064447641fd0da38d765d84e"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f064447641fd0da38d765d84e",
+      "youtube": "https://www.youtube.com/channel/UCHGeKe0SP7PpNFrg5HYkHKQ/videos"
     },
     {
       "id": "2aTFxnX4dVyvZhfF8hySn2",
       "name": "LAS MEMORIAS DEL ALMA",
       "publisher": "Memorias del Alma",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1ff4e435a1c9d5c6da28bfdf4f"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1ff4e435a1c9d5c6da28bfdf4f",
+      "youtube": "https://www.youtube.com/channel/UCa8-BcLwQYyBVqWBG0As6IQ/videos"
     },
     {
       "id": "49LUQ97TWYeeMmz0BzIyE1",
       "name": "La Pizarra de Quintana",
       "publisher": "Radio MARCA",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f68f9e7b6d0f98d4788951e24"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f68f9e7b6d0f98d4788951e24",
+      "youtube": "https://www.youtube.com/playlist?list=PLMJ8gPJC-KeVhxjNmLoxkQxT8l3m7WLxD"
     },
     {
       "id": "7LonKVvfQIsCp45TM58h7y",
       "name": "10 minutos con Jesús",
       "publisher": "10 Minutos con Jesús",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f08043628dbd254d66b2d8c57"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f08043628dbd254d66b2d8c57",
+      "youtube": "https://www.youtube.com/playlist?list=PLsZttjEgez26mxg3q6YMuwlwmwQgTQ1dn",
+      "minSeconds": 180
     },
     {
       "id": "1Ce7JPI6qtROclGVDq9HRv",
       "name": "ZZEN Talks",
       "publisher": "René ZZ",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f024514785a4f5a9edb8cfa08"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f024514785a4f5a9edb8cfa08",
+      "youtube": "https://www.youtube.com/playlist?list=PLuQ93B3Cj_8CdUQbt5l1QZE7BoV7c-lZg"
     },
     {
       "id": "2XE72dJmQWeglhBF9IOeBK",
@@ -499,37 +587,43 @@
       "id": "4UTxLjQYhM1RJ4cT6XhcnD",
       "name": "B3TTER PODCAST",
       "publisher": "B3TTER",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f3ea830b1cf90498601578a87"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f3ea830b1cf90498601578a87",
+      "youtube": "https://www.youtube.com/channel/UC1ZyIOz6EENDrSp7l62MaEA/videos"
     },
     {
       "id": "0FmuAsGBWrRYZNTJUIBPP7",
       "name": "La Renaixença",
       "publisher": "3Cat",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1fe315eb5d284b3ebd47f6717f"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1fe315eb5d284b3ebd47f6717f",
+      "youtube": "https://www.youtube.com/playlist?list=PLHF437Sz2MHr9a4cbFUmGJdhKsF2RfArp"
     },
     {
       "id": "2rvGjOgeyQTtl5ZgXzUXoQ",
       "name": "Estoicismo Filosofia",
       "publisher": "Estoicismo Filosofia",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f3c6783d7f6d35b78f8e94329"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f3c6783d7f6d35b78f8e94329",
+      "youtube": "https://www.youtube.com/channel/UCv3mM-4tS-khU8Ug9wqQ2lQ/videos"
     },
     {
       "id": "3VYkhxT38nw3eeLmJu75kd",
       "name": "Keep It Cutre",
       "publisher": "Ángela y Albanta",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f0368a1d032690545968e937d"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f0368a1d032690545968e937d",
+      "youtube": "https://www.youtube.com/channel/UCYfAhie8zb3PX2BuwQQLCeA/videos"
     },
     {
       "id": "1QxFZUCXFHrlBB5C0fOB9m",
       "name": "Ni tan bien",
       "publisher": "Cadena SER",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f507eea2d40104d971e448b1b"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f507eea2d40104d971e448b1b",
+      "youtube": "https://www.youtube.com/channel/UCcBYfqeBwsH_rSAUjS36f2w/videos"
     },
     {
       "id": "45wJUsejVuSw4Fzb0EMX0m",
       "name": "El podcast de Ac2ality",
       "publisher": "Atresmedia",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f345fc4712640908a839e1a69"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f345fc4712640908a839e1a69",
+      "youtube": "https://www.youtube.com/playlist?list=PLyKjTs0CMXegyaAoS_iOle10_YupECTQP"
     },
     {
       "id": "2xV7Vx7NQgAC8vMt2vZNnE",
@@ -547,25 +641,30 @@
       "id": "07rXxtOlzNI0NuB8vpAgvE",
       "name": "BBVA Aprendemos juntos",
       "publisher": "BBVA Podcast",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1fc62350a60c70993bb6b80c09"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1fc62350a60c70993bb6b80c09",
+      "youtube": "https://www.youtube.com/playlist?list=PLWCXX8tjkPYsRRdiiNdPlWFD0Pd0eQgsQ"
     },
     {
       "id": "29GbLTwqBtRZHbWSYuHxdP",
       "name": "LA CAFETERA",
       "publisher": "Radiocable.com",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1fc6403308f551badd71afbbf0"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1fc6403308f551badd71afbbf0",
+      "youtube": "https://www.youtube.com/channel/UC4t58IFl3NRhDg5idU9J2XA/videos"
     },
     {
       "id": "6NivA5cWk5nrKpEaQcqKKK",
       "name": "QUORVM PODCAST",
       "publisher": "Javi Cabello",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f58c98e68be3c8ff476f1f435"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f58c98e68be3c8ff476f1f435",
+      "youtube": "https://www.youtube.com/playlist?list=PLbWE6BnFsf6kzxj5tBpYI1sGi37EDUuCX"
     },
     {
       "id": "0xkHMHfTleDMkGi0DymhMX",
       "name": "3+1 - Tu Podcast NBA",
       "publisher": "Drafteados",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1ffa3bd8949ff8dc80c4fe0dd3"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1ffa3bd8949ff8dc80c4fe0dd3",
+      "youtube": "https://www.youtube.com/channel/UCTJNmeP0HiOU4-qOMNVNoGA/videos",
+      "episodeTitle": "3+1"
     },
     {
       "id": "7iQXmUT7XGuZSzAMjoNWlX",
@@ -577,31 +676,37 @@
       "id": "654RfrgrNOgdLhqnETeeIE",
       "name": "Memorias de Pez",
       "publisher": "MemoriasDePez",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f4273a1bc15b4d67a176a48ef"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f4273a1bc15b4d67a176a48ef",
+      "youtube": "https://www.youtube.com/channel/UCPH3Oz99Y_jrVBCQMjQZNSg/videos"
     },
     {
       "id": "6SArrjVIOp56HVhQqoDdlU",
       "name": "Todopoderosos",
       "publisher": "Todopoderosos",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1ff379f17c50df50f59af9fff4"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1ff379f17c50df50f59af9fff4",
+      "youtube": "https://www.youtube.com/playlist?list=PLgMP8Zkx8Jp8qunLii0voTtD7ZVQ8_ZdJ"
     },
     {
       "id": "033l07dtDbb0bSnWs3raDL",
       "name": "Casos Bajo Sumario | True Crime e Investigación",
       "publisher": "Antonio López y Francisco López",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1fdea2bbc5009a4089688c408c"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1fdea2bbc5009a4089688c408c",
+      "youtube": "https://www.youtube.com/channel/UCGXjnHDIvYNs3GXdPvzzDGQ/videos"
     },
     {
       "id": "24yb6nRi4StqHhxCzGMTc8",
       "name": "Radio Fitness Revolucionario",
       "publisher": "Marcos Vázquez",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f3a12998649da8e2b9fa7a7ba"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f3a12998649da8e2b9fa7a7ba",
+      "youtube": "https://www.youtube.com/playlist?list=PLp-WnzMxiWhrq2Av22j0njF9hhwzQmjqN"
     },
     {
       "id": "59qTWSeD4dstniKmgxlEUM",
       "name": "Influ-Realismo Mágico",
       "publisher": "RTVE Play / RNE Audio",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1fa8f5217f80d747677bcdd862"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1fa8f5217f80d747677bcdd862",
+      "youtube": "https://www.youtube.com/channel/UCqlsTzBv49Uiu8Z3IseVgQQ/videos",
+      "episodeTitle": "Influ-Realismo Mágico"
     },
     {
       "id": "0tjEexypyczHXW9vE3SU3P",
@@ -613,7 +718,8 @@
       "id": "7MxOxvEKY1E2zWdBzfynwx",
       "name": "Al aire de Pilar Eyre",
       "publisher": "Pilar Eyre",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1fcb1b5d916fb3df19fd57d1e4"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1fcb1b5d916fb3df19fd57d1e4",
+      "youtube": "https://www.youtube.com/channel/UCZ-cIrhnX67aBGrUbQf7Agw/videos"
     },
     {
       "id": "3kQ0uOZ9HZ92Rj5yb2GPlh",
@@ -625,13 +731,94 @@
       "id": "6Zsxq4gF0EVvIumdHtNlrn",
       "name": "Julia en la onda",
       "publisher": "OndaCero",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f277f587450cc3bcc140086ef"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f277f587450cc3bcc140086ef",
+      "youtube": "https://www.youtube.com/playlist?list=PL9X22BwUacNXdA3m4q_pG_etd2WBUrJI4"
     },
     {
       "id": "033V3VWgx4LGuxhTm1qeBo",
       "name": "Juan Soto Ivars",
       "publisher": "Juan Soto Ivars",
-      "artwork": "https://i.scdn.co/image/ab67656300005f1f13ec8a83ec4af0cefe64c504"
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f13ec8a83ec4af0cefe64c504",
+      "youtube": "https://www.youtube.com/channel/UCeAE2Zs3xmDYlcs_-LAESRA/videos"
+    },
+    {
+      "id": "3roxBDlXighuvbIGbz7q71",
+      "name": "Las Noches de Ortega",
+      "publisher": "SER Podcast",
+      "artwork": "https://i.scdn.co/image/ab67656300005f1feab38fc64e31f041b44c627e",
+      "youtube": "https://www.youtube.com/channel/UC77vp-8IpkxYHTDdW4BBSsA/videos",
+      "minSeconds": 120
+    },
+    {
+      "id": "44EviFP3r7LlceqQ4AnKPT",
+      "name": "Doble de Drama",
+      "publisher": "Doble de Drama",
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f56f01c993bd625882bc3381b",
+      "youtube": "https://www.youtube.com/channel/UC2zqmFx7-1fUglmnNqs027A/videos"
+    },
+    {
+      "id": "0HtxMCdhMaD8KCsgRYJnJg",
+      "name": "Tiene Sentido",
+      "publisher": "Eli Romero",
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f6614884f45b8991627fb1c4d",
+      "youtube": "https://www.youtube.com/channel/UCbitWKTIHZnoLYuOnZzRBZQ/videos"
+    },
+    {
+      "id": "0iblRpScKey37XZ5iKfvqG",
+      "name": "La Biblioteca Ancestral",
+      "publisher": "La Biblioteca Ancestral",
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f11c94929fe5be6f984dc269f",
+      "youtube": "https://www.youtube.com/channel/UCrGJSB-RX7iGNqo8bz6UxZw/videos"
+    },
+    {
+      "id": "1HI8XcuaPlOOvaMyuIoQPR",
+      "name": "Aladetres",
+      "publisher": "Aladetres",
+      "artwork": "https://i.scdn.co/image/ab67656300005f1ff9868fc6ee21e2b4c39f3d9b",
+      "youtube": "https://www.youtube.com/channel/UChUBcLdjUDxa5sUugLJwfYQ/videos"
+    },
+    {
+      "id": "446GZV4gX4aXz6pyVprSFB",
+      "name": "Offsiders",
+      "publisher": "Historias del fútbol",
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f3b50f3eaa45fb078ab541456",
+      "youtube": "https://www.youtube.com/playlist?list=PL4vS-ADeoAM_RdtUpNckltyOVSiOUjqbJ"
+    },
+    {
+      "id": "7tvr14hsXPoW36lY98DFFx",
+      "name": "Focus ON Podcast",
+      "publisher": "Joan López y Xavi López",
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f1cca8b70def54b0db8ed931a",
+      "youtube": "https://www.youtube.com/channel/UCkyjBQGLUJKfWIXvO1rrCOw/videos"
+    },
+    {
+      "id": "0XE08Cr5LbpcozQr8nyLNc",
+      "name": "Ojalá lo hubiera sabido antes",
+      "publisher": "Álex Rovira",
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f7fe58cb027d4cbf0e42354ff",
+      "youtube": "https://www.youtube.com/playlist?list=PLRMygl2-gwpkXntRCK35P8J4KuHAiZuk9"
+    },
+    {
+      "id": "4wxU4kPN2h2u5Djrv5f2zw",
+      "name": "Bombificadas",
+      "publisher": "Bombificadas",
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f617ab8f3b60485ca68f8e0f0",
+      "youtube": "https://www.youtube.com/channel/UCIN6PcyG2vmUO444Zb5hQxw/videos"
+    },
+    {
+      "id": "3FA9mZ5fWlsNR5rMjofI1Q",
+      "name": "Chisme Mitológico",
+      "publisher": "Pol Gise",
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f617209d6a5c0a17e491f7ec1",
+      "youtube": "https://www.youtube.com/channel/UC7HEs-S0DSZ-HW0htVNrTmw/videos",
+      "episodeTitle": "Chisme Mitológico"
+    },
+    {
+      "id": "5lf8QBe0plyw4iM661oRil",
+      "name": "La escóbula de la brújula",
+      "publisher": "Podium Podcast",
+      "artwork": "https://i.scdn.co/image/ab67656300005f1f0a567b5750ee9b51d9db5721",
+      "youtube": "https://www.youtube.com/playlist?list=PLl4KJtUW7dz0Ix7aGG80DLWmO-WVbqTZp"
     }
   ]
 }

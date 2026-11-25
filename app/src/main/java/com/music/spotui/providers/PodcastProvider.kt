@@ -7,7 +7,7 @@ import com.metrolist.innertube.models.EpisodeItem
 import com.metrolist.innertube.models.PlaylistItem
 import com.metrolist.innertube.models.PodcastItem
 import com.metrolist.innertube.models.YTItem
-import com.metrolist.spotify.models.SpotifyShow
+import com.metrolist.innertube.YouTubeVideoSearch
 import com.music.spotui.data.entity.PodcastModel
 import com.music.spotui.data.entity.SongsModel
 import kotlinx.coroutines.CancellationException
@@ -721,43 +721,11 @@ object PodcastProvider {
             distinctShows to distinctEpisodes
         }
 
-    private val spotifyShowMatches = com.music.spotui.util.ExpiringLruCache<String, PodcastModel>(128, 30 * 60_000L)
-
-    private fun verifiedYouTubeShow(show: SpotifyShow, candidates: List<PodcastModel>): PodcastModel? =
-        candidates.filter {
-            PodcastDiscoveryPolicy.showTitleMatches(show.name, it.name) &&
-                PodcastDiscoveryPolicy.publisherMatches(show.publisher, it.publisher)
-        }.distinctBy { podcastBrowseId(it.id) }.singleOrNull()
-
-    /** Keep the Spotify show even when YouTube has only individual videos of its episodes. */
-    internal suspend fun discoverSpotifyShows(
-        query: String, shows: List<SpotifyShow>, existing: List<PodcastModel>,
-    ): List<PodcastModel> = coroutineScope {
-        shows.filter { PodcastDiscoveryPolicy.validShow(it) && PodcastDiscoveryPolicy.relevantShow(query, it.name) }
-            .distinctBy { it.id }
-            .sortedByDescending { PodcastDiscoveryPolicy.showTitleMatches(query, it.name) }
-            .take(10).mapIndexed { index, show -> async {
-                SpotifyPodcastEpisodes.remember(show)
-                val direct = spotifyShowMatches.get(show.id) ?: verifiedYouTubeShow(show, existing)
-                val resolved = direct ?: if (index < 3 && !query.equals(show.name, ignoreCase = true)) {
-                        withTimeoutOrNull(2_000L) {
-                            val items = YouTube.search(show.name, YouTube.SearchFilter.FILTER_PODCAST)
-                                .getOrNull()?.items.orEmpty().mapNotNull(::itemToShow)
-                            verifiedYouTubeShow(show, items)
-                        }
-                    } else null
-                resolved?.also { spotifyShowMatches.put(show.id, it) } ?: SpotifyPodcastEpisodes.asModel(show)
-            } }.awaitAll()
-    }
-
-    private suspend fun spotifyShow(showId: String): SpotifyShow? {
-        val id = showId.removePrefix(SPOTIFY_SHOW_PREFIX)
-        return SpanishPodcastChart.show(id) ?: SpotifyPodcastEpisodes.show(id)
-    }
     suspend fun getShow(
         showId: String,
         showName: String = ""
     ): PodcastModel? = withContext(Dispatchers.IO) {
+        SpanishPodcastChart.find(showId)?.let { return@withContext it.show }
         PodcastDirectory.show(showId)?.let { return@withContext it }
 
         if (showId.isBlank() || showId.startsWith(ITUNES_PREFIX)) {
@@ -765,8 +733,7 @@ object PodcastProvider {
         }
 
         if (showId.startsWith(SPOTIFY_SHOW_PREFIX)) {
-            return@withContext spotifyShow(showId)?.let(SpotifyPodcastEpisodes::asModel)
-                ?: showName.takeIf { it.isNotBlank() }
+            return@withContext showName.takeIf(String::isNotBlank)
                 ?.let { withTimeoutOrNull(15_000L) { resolveCuratedPodcast(it) } }
         }
 
@@ -817,14 +784,6 @@ object PodcastProvider {
         publishedSince: Long? = null,
         forceRefresh: Boolean = false,
     ): kotlinx.coroutines.flow.Flow<List<SongsModel>> = kotlinx.coroutines.flow.flow {
-        PodcastDirectory.show(showId)?.let { show ->
-            val episodes = SpotifyPodcastEpisodes.youtubeEpisodes(
-                SpotifyShow(name = show.name, publisher = show.publisher), publishedSince,
-            )
-            rememberEpisodes(show.id, show.name, episodes)
-            emit(episodes)
-            return@flow
-        }
         if (showId.isBlank() || showId.startsWith(ITUNES_PREFIX)) {
             emit(emptyList())
             return@flow
@@ -833,51 +792,62 @@ object PodcastProvider {
         // Emisión instantánea desde caché en memoria si está fresco
         val cached = episodeMemoryCache[showId]
         val now = System.currentTimeMillis()
-        if (!forceRefresh && cached != null && now - cached.first < EPISODE_CACHE_TTL_MS && cached.second.isNotEmpty()) {
+        if (!forceRefresh && publishedSince == null && cached != null &&
+            now - cached.first < EPISODE_CACHE_TTL_MS && cached.second.isNotEmpty()) {
             emit(cached.second)
             if (now - cached.first < 3 * 60_000L) {
                 return@flow
             }
         }
 
-        if (showId.startsWith(SPOTIFY_SHOW_PREFIX)) {
-            val show = spotifyShow(showId)
-            var spotifyEpisodes = emptyList<SongsModel>()
-            if (show != null) {
-                SpotifyPodcastEpisodes.pages(show, publishedSince).collect { episodes ->
-                    if (episodes.isNotEmpty()) {
-                        spotifyEpisodes = episodes
-                        rememberEpisodes(showId, show.name, episodes)
-                        if (publishedSince == null) episodeMemoryCache[showId] = System.currentTimeMillis() to episodes
-                        emit(episodes)
+        val chartEntry = SpanishPodcastChart.find(showId)
+        val youtubeSource = chartEntry?.source
+        if (chartEntry != null && youtubeSource != null) {
+            val show = chartEntry.show
+            val episodes = linkedMapOf<String, SongsModel>()
+            try {
+                YouTubeVideoSearch.sourcePages(
+                    youtubeSource.channelId, youtubeSource.playlistId, youtubeSource.streams,
+                    maxPages = if (publishedSince == null) 5 else 2,
+                ).collect { videos ->
+                    val additions = videos.filter { video ->
+                        video.seconds >= youtubeSource.minSeconds &&
+                            (youtubeSource.titleContains?.let { PodcastDiscoveryPolicy.relevantShow(it, video.title) } != false) &&
+                            (publishedSince == null || com.music.spotui.data.publicationTime(video.date, now)
+                                ?.let { it >= publishedSince } != false)
+                    }.filterNot { it.id in episodes }.map { video ->
+                        video.id to episodeToSong(EpisodeItem(
+                            id = video.id, title = video.title,
+                            author = com.metrolist.innertube.models.Artist(video.publisher.ifBlank { show.publisher }, null),
+                            duration = video.seconds.toInt(), publishDateText = video.date,
+                            thumbnail = "https://i.ytimg.com/vi/${video.id}/hqdefault.jpg",
+                        ), show.name)
+                    }
+                    if (additions.isNotEmpty()) {
+                        episodes.putAll(additions)
+                        rememberEpisodes(showId, show.name, additions.map { it.second })
+                        val snapshot = episodes.values.toList()
+                        if (publishedSince == null) episodeMemoryCache[showId] = System.currentTimeMillis() to snapshot
+                        emit(snapshot)
                     }
                 }
-                if (spotifyEpisodes.any { it.url.startsWith(YOUTUBE_EPISODE_PREFIX) }) return@flow
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not load YouTube episodes for ${show.name}", e)
             }
-            val youtubeShow = if (show != null) {
-                val items = withTimeoutOrNull(4_000L) {
-                    YouTube.search(show.name, YouTube.SearchFilter.FILTER_PODCAST).getOrNull()?.items.orEmpty()
-                }.orEmpty()
-                verifiedYouTubeShow(show, items.mapNotNull(::itemToShow))
-            } else showName.takeIf { it.isNotBlank() }
+            if (episodes.isEmpty()) emit(emptyList())
+            return@flow
+        }
+
+        val legacy = PodcastDirectory.show(showId)
+        if (showId.startsWith(SPOTIFY_SHOW_PREFIX) || legacy != null) {
+            val name = chartEntry?.show?.name ?: legacy?.name ?: showName
+            val youtubeShow = name.takeIf(String::isNotBlank)
                 ?.let { withTimeoutOrNull(15_000L) { resolveCuratedPodcast(it) } }
             if (youtubeShow != null) {
-                var available = false
-                getShowEpisodesFlow(youtubeShow.id, youtubeShow.name, publishedSince, forceRefresh).collect {
-                    if (it.isNotEmpty()) { available = true; emit(it) }
-                }
-                if (available) return@flow
-            }
-            val fallback = if (show == null) emptyList() else SpotifyPodcastEpisodes.youtubeEpisodes(show, publishedSince)
-            if (fallback.isNotEmpty() && show != null) {
-                rememberEpisodes(showId, show.name, fallback)
-                val youtubeTitles = fallback.map { it.title.trim().lowercase(Locale.ROOT) to it.releaseDate }.toSet()
-                val combined = fallback + spotifyEpisodes.filterNot {
-                    (it.title.trim().lowercase(Locale.ROOT) to it.releaseDate) in youtubeTitles
-                }
-                if (publishedSince == null) episodeMemoryCache[showId] = System.currentTimeMillis() to combined
-                emit(combined)
-            } else if (spotifyEpisodes.isEmpty()) emit(emptyList())
+                getShowEpisodesFlow(youtubeShow.id, youtubeShow.name, publishedSince, forceRefresh).collect { emit(it) }
+            } else emit(emptyList())
             return@flow
         }
 

@@ -167,9 +167,12 @@ fun UpdatePrompt() {
                             requestInstall(file)
                         } catch (cancelled: CancellationException) {
                             throw cancelled
+                        } catch (failure: UpdateInstaller.VerificationException) {
+                            Log.w("UpdatePrompt", "APK validation failed", failure)
+                            error = failure.message
                         } catch (failure: Exception) {
-                            Log.w("UpdatePrompt", "APK download or validation failed", failure)
-                            error = "No se pudo descargar o verificar la APK. Puedes volver a intentarlo."
+                            Log.w("UpdatePrompt", "APK download failed", failure)
+                            error = "No se pudo completar la descarga de GitHub. Puedes volver a intentarlo."
                         } finally {
                             if (download == job) download = null
                         }
