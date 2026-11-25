@@ -1,3 +1,5 @@
+import java.security.KeyStore
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -14,8 +16,8 @@ android {
         applicationId = "com.music.spotidroid"
         minSdk = 26
         targetSdk = 37
-        versionCode = 202608180
-        versionName = "1.9.6.31"
+        versionCode = 202608182
+        versionName = "1.9.6.33"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -30,11 +32,16 @@ android {
     }
 
     signingConfigs {
+        val defaults = getByName("debug")
+        val sharedDebugFile = layout.projectDirectory.file("debug.keystore").asFile
+        val password = checkNotNull(defaults.storePassword)
+        val keyStore = KeyStore.getInstance(sharedDebugFile, password.toCharArray())
+        val sharedAlias = keyStore.aliases().toList().single(keyStore::isKeyEntry)
         create("sharedDebug") {
-            storeFile = file("debug.keystore")
-            storePassword = "android"
-            keyAlias = "hazhan"
-            keyPassword = "android"
+            storeFile = sharedDebugFile
+            storePassword = password
+            keyAlias = sharedAlias
+            keyPassword = defaults.keyPassword
         }
     }
 
@@ -80,9 +87,11 @@ android {
 }
 
 androidComponents {
+    // Keep the existing asset name for the repository migration release.
+    val apkBrand = if (android.defaultConfig.versionCode == 202608182) "Spotui" else "Spotidroid"
     onVariants { variant ->
         variant.outputs.forEach { output ->
-            output.outputFileName.set("Spotui_v${android.defaultConfig.versionName}.apk")
+            output.outputFileName.set("${apkBrand}_v${android.defaultConfig.versionName}.apk")
         }
     }
 }
