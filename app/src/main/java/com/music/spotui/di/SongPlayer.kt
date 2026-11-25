@@ -68,6 +68,7 @@ object SongPlayer {
     // ExoPlayer's per-instance focus manager must NOT toggle focus on release/swap.
     private var focusOwner: PlaybackAudioFocus? = null
     private var pausedForTransientFocusLoss = false
+    internal fun isWaitingForTransientAudioFocus(): Boolean = pausedForTransientFocusLoss && playWhenResolved
     private var focusDucked = false
 
     private fun ensurePlaybackFocus(context: Context): Boolean {

@@ -110,8 +110,8 @@ internal fun CollectionDownloadButton(songs: List<SongsModel>, description: Stri
     val action = if (paused) "Reanudar" else if (status.active) "Pausar" else "Descargar"
     Box(Modifier.width(metrics.download.dp).height(metrics.control.dp)) {
         CollectionCapsuleBody(action,
-            Modifier.fillMaxSize().liquidCollectionGlass(accent, interaction)
-                .then(if (status.complete) Modifier.border(1.4.dp, CollectionGreen, shape) else Modifier)
+            Modifier.fillMaxSize().clip(CircleShape).background(Color.White.copy(alpha = .10f))
+
                 .combinedClickable(interactionSource = interaction, indication = null,
                     enabled = keys.isNotEmpty(), role = androidx.compose.ui.semantics.Role.Button,
                     onClick = {
@@ -248,7 +248,7 @@ internal fun CollectionActionBar(
                         else -> com.music.spotui.R.drawable.collection_sort_date
                     }
                     CollectionCapsuleBody("Ordenar", Modifier.width(metrics.pill.dp).height(metrics.control.dp)
-                        .liquidCollectionGlass(accent, sortInteraction)
+                        .clip(CircleShape).background(Color.White.copy(alpha = .10f))
                         .clickable(interactionSource = sortInteraction, indication = null,
                             role = androidx.compose.ui.semantics.Role.Button, onClick = onSort)) {
                         Icon(androidx.compose.ui.res.painterResource(sortIcon), when (sortMode) { "DEFAULT" -> "Ordenar por pistas"; "TITLE" -> "Ordenar por título"; "ARTIST" -> "Ordenar por artista"; "ALBUM" -> "Ordenar por álbum"; "DURATION" -> "Ordenar por duración"; "POPULARITY" -> "Ordenar por popularidad"; else -> "Ordenar por fecha" }, tint = Color.White, modifier = Modifier.size(19.dp))
@@ -256,7 +256,7 @@ internal fun CollectionActionBar(
                             if (sortDescending) "Descendente" else "Ascendente", tint = Color.White, modifier = Modifier.size(17.dp))
                     }
                     CollectionCapsuleBody("Añadir a la cola", Modifier.width(metrics.queue.dp).height(metrics.control.dp)
-                        .liquidCollectionGlass(accent, queueInteraction)
+                        .clip(CircleShape).background(Color.White.copy(alpha = .10f))
                         .clickable(interactionSource = queueInteraction, indication = null, enabled = enabled,
                             role = androidx.compose.ui.semantics.Role.Button, onClick = onQueue)) {
                         Icon(androidx.compose.ui.res.painterResource(com.music.spotui.R.drawable.collection_queue), "Añadir a la cola", tint = Color.White, modifier = Modifier.size(22.dp))
