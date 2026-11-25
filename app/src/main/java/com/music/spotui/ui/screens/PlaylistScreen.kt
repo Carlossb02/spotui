@@ -745,8 +745,11 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
 val playing = playlistViewModel.currentSongPlayingState.value
 val currentInList = songs.any { it.id == playlistViewModel.currentSongId.value }
 com.music.spotui.ui.components.CollectionActionBar(
+ navController = navController,
  glass = collectionGlass,
  storySongs = songs, storyTitle = playlist.name, storyCover = visualCover,
+ onAdd = if (canEditPlaylist) ({ showAddMusic = true }) else null,
+ onEdit = if (canEditPlaylist) ({ editingTracks = true }) else null,
  savedControl = {
      if (remotePlaylistId != null) {
          com.music.spotui.ui.components.LibrarySaveIcon(
@@ -838,31 +841,6 @@ com.music.spotui.ui.components.CollectionActionBar(
                             Text("Copiar o añadir canciones a otra lista",
                                 color = Color.White, fontSize = 14.sp,
                                 modifier = Modifier.clickable { showCopyPlaylist = true })
-                        }
-                    }
-                    if (canEditPlaylist) item(key = "add_music_to_playlist") {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().clickable { showAddMusic = true }
-                                .padding(horizontal = 20.dp, vertical = 8.dp).height(48.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Box(
-                                modifier = Modifier.size(48.dp)
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(Color.White.copy(alpha = .08f)),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    androidx.compose.material.icons.Icons.Default.Add,
-                                    contentDescription = null, tint = Color.White,
-                                )
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Text(
-                                androidx.compose.ui.res.stringResource(R.string.add_music_to_playlist),
-                                color = Color.White, fontSize = 15.sp,
-                                fontWeight = FontWeight.SemiBold,
-                            )
                         }
                     }
                     if (editingTracks) item(key = "edit_playlist_tracks") {

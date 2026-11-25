@@ -452,8 +452,14 @@ fun SumUpAlbumScreen(
 val playing = albumViewModel.currentSongPlayingState.value
 val currentInList = albumSongs.any { it.id == albumViewModel.currentSongId.value }
 com.music.spotui.ui.components.CollectionActionBar(
+ navController = navController,
  glass = collectionGlass,
  storySongs = albumSongs, storyTitle = albumName, storyCover = album[0].coverUri,
+ onShare = if (albumSpotifyId.isNotBlank()) ({
+     val intent = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+         .putExtra(android.content.Intent.EXTRA_TEXT, "https://open.spotify.com/album/$albumSpotifyId")
+     context.startActivity(android.content.Intent.createChooser(intent, "Compartir álbum"))
+ }) else null,
  savedControl = {
      if (albumSpotifyId.isNotBlank()) {
          com.music.spotui.ui.components.LibrarySaveIcon(

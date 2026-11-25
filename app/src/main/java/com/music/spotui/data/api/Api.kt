@@ -398,8 +398,17 @@ class Api @Inject constructor(
 
             val podcastJob = if (includePodcasts) launch {
                 try {
-                    kotlinx.coroutines.delay(250L)
-                    val (ytShows, ytEpisodes) = com.music.spotui.providers.PodcastProvider.searchPodcasts(query)
+                    val spanishCatalog = async {
+                        withTimeoutOrNull(3_500L) {
+                            Spotify.searchPodcasts(query, limit = 10, market = "ES")
+                                .getOrNull()?.shows?.items.orEmpty()
+                        }.orEmpty()
+                    }
+                    val youtubeResults = withTimeoutOrNull(4_000L) {
+                        com.music.spotui.providers.PodcastProvider.searchPodcasts(query)
+                    }
+                    val ytShows = youtubeResults?.first.orEmpty()
+                    val ytEpisodes = youtubeResults?.second.orEmpty()
                     resultLock.withLock {
                         currentResults = currentResults.copy(
                             shows = (currentResults.shows + ytShows).distinctBy { it.id },
@@ -407,11 +416,22 @@ class Api @Inject constructor(
                         )
                         send(Response.Loading(currentResults))
                     }
-                    val spotifyShows = spotifyJob.await().ifEmpty {
-                        withTimeoutOrNull(3_000L) { Spotify.searchPodcasts(query, limit = 6, market = "ES")
-                            .getOrNull()?.shows?.items }.orEmpty()
+                    val policy = com.music.spotui.providers.PodcastDiscoveryPolicy
+                    var shows = spotifyJob.await() + spanishCatalog.await()
+                    if (shows.none { policy.validShow(it) && policy.relevantShow(query, it.name) }) {
+                        policy.broaderQuery(query)?.let { alternate ->
+                            shows = withTimeoutOrNull(3_500L) {
+                                coroutineScope {
+                                    val catalog = async { Spotify.searchPodcasts(alternate, limit = 10, market = "ES")
+                                        .getOrNull()?.shows?.items.orEmpty() }
+                                    val desktop = Spotify.search(alternate, types = listOf("show"), limit = 12)
+                                        .getOrNull()?.shows?.items.orEmpty()
+                                    desktop + catalog.await()
+                                }
+                            }.orEmpty()
+                        }
                     }
-                    val matches = com.music.spotui.providers.PodcastProvider.matchSpotifyShows(query, spotifyShows, ytShows)
+                    val matches = com.music.spotui.providers.PodcastProvider.discoverSpotifyShows(query, shows, ytShows)
                     if (matches.isNotEmpty()) resultLock.withLock {
                         currentResults = currentResults.copy(shows = (currentResults.shows + matches).distinctBy { it.id })
                         send(Response.Loading(currentResults))

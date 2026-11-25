@@ -1620,13 +1620,15 @@ object Spotify {
                     parseGqlSearchPlaylist(data)
                 } ?: emptyList()
 
-            val podcastsSection = searchData.obj("podcasts") ?: searchData.obj("podcastsV2")
-            val showItems = podcastsSection?.arr("items")?.mapNotNull { elem ->
-                val wrapper = elem.jsonObject
-                val itemWrapper = wrapper.obj("item") ?: wrapper
-                val data = itemWrapper.obj("data") ?: itemWrapper
-                parseGqlSearchShow(data)
-            } ?: emptyList()
+            val podcastsSection = searchData.obj("podcastsV2") ?: searchData.obj("podcasts")
+            val showItems = listOfNotNull(searchData.obj("podcastsV2"), searchData.obj("podcasts"))
+                .flatMap { it.arr("items").orEmpty() }.mapNotNull { elem ->
+                    val wrapper = elem as? JsonObject ?: return@mapNotNull null
+                    val item = wrapper.obj("item") ?: wrapper
+                    val data = item.obj("data") ?: item
+                    val uri = item.str("_uri") ?: item.str("uri") ?: wrapper.str("_uri") ?: wrapper.str("uri")
+                    parseGqlSearchShow(data, uri)
+                }.distinctBy { it.id }
 
             val episodesSection = searchData.obj("episodes") ?: searchData.obj("episodesV2")
             val episodeItems = episodesSection?.arr("items")?.mapNotNull { elem ->
@@ -1677,18 +1679,21 @@ object Spotify {
             )
         }
 
-    private fun parseGqlSearchShow(data: JsonObject): com.metrolist.spotify.models.SpotifyShow? {
-        val uri = data.str("uri") ?: data.str("_uri") ?: ""
+    private fun parseGqlSearchShow(data: JsonObject, wrapperUri: String?): com.metrolist.spotify.models.SpotifyShow? {
+        val uri = data.str("uri") ?: data.str("_uri") ?: wrapperUri.orEmpty()
         if (!uri.startsWith("spotify:show:") && !uri.startsWith("show:")) return null
+        if (data.str("__typename") in setOf("Audiobook", "Playlist", "Episode", "Track", "Album")) return null
         val publisherName = data.obj("publisher")?.str("name")
             ?: data.str("publisher")
             ?: ""
         val name = data.str("name") ?: ""
+        val id = uri.substringAfterLast(":")
+        if (name.isBlank() || !id.matches(Regex("[A-Za-z0-9]{22}"))) return null
         val coverArt = data.obj("coverArt")?.arr("sources")
             ?: data.obj("images")?.arr("sources")
             ?: data.arr("images")
         return com.metrolist.spotify.models.SpotifyShow(
-            id = uri.substringAfterLast(":"),
+            id = id,
             name = name,
             publisher = publisherName,
             images = parseGqlImages(coverArt),

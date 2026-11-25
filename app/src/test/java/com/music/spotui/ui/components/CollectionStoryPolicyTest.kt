@@ -10,18 +10,18 @@ class CollectionStoryPolicyTest {
     @Test
     fun shuffledStoriesContainOnlyUniquePlayableCollectionItems() {
         val songs = (1..25).map { id -> SongsModel().copy(id = id, url = "track-$id") }
-        val results = collectionStoryItems(songs + songs + SongsModel(), Random(52))
-        assertEquals(MAX_COLLECTION_STORIES, results.size)
+        val results = collectionStoryItems(songs + songs + SongsModel() + SongsModel().copy(url = "episode:web-only"), Random(52))
+        assertEquals(songs.size, results.size)
         assertEquals(results.size, results.map { it.url }.toSet().size)
         assertTrue(results.all { it in songs })
-        assertTrue(results != songs.take(MAX_COLLECTION_STORIES))
+        assertTrue(results != songs)
     }
 
     @Test
     fun clipStartsWithinAvailableMedia() {
-        assertEquals(0L, storyStartPosition(9_000, episode = false))
-        assertEquals(6_000L, storyStartPosition(20_000, episode = false))
-        assertEquals(65_000L, storyStartPosition(200_000, episode = false))
-        assertEquals(480_000L, storyStartPosition(7_200_000, episode = true))
+        assertEquals(0L, storyStartPosition(9_000))
+        assertEquals(2_500L, storyStartPosition(20_000))
+        assertEquals(92_500L, storyStartPosition(200_000))
+        assertEquals(3_592_500L, storyStartPosition(7_200_000))
     }
 }

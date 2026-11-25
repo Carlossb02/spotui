@@ -1,8 +1,10 @@
 package com.music.spotui.ui.components
 
+import android.content.Intent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -10,7 +12,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
@@ -24,6 +29,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -38,20 +45,28 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ClippingMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
+import androidx.navigation.NavController
 import com.bumptech.glide.integration.compose.ExperimentalGlideComposeApi
 import com.bumptech.glide.integration.compose.GlideImage
 import com.music.spotui.data.entity.SongsModel
+import com.music.spotui.data.api.Api
+import com.music.spotui.data.api.SpotifySync
 import com.music.spotui.data.preferences.PodcastResumeStore
 import com.music.spotui.di.SongPlayer
 import com.music.spotui.ui.screens.PodcastVideoStreams
+import com.music.spotui.ui.screens.CanvasVideo
+import com.music.spotui.util.ExpiringLruCache
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -59,7 +74,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 @OptIn(ExperimentalGlideComposeApi::class)
 @Composable
 internal fun CollectionStoriesButton(cover: String, enabled: Boolean, onClick: () -> Unit) {
-    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(44.dp)) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(44.dp)
+        .semantics { contentDescription = "Historias" }) {
         Box(Modifier.size(29.dp, 38.dp), contentAlignment = Alignment.Center) {
             Box(Modifier.offset(x = 4.dp, y = 2.dp).size(24.dp, 31.dp)
                 .background(Color.White.copy(alpha = .25f), RoundedCornerShape(7.dp)))
@@ -71,7 +87,7 @@ internal fun CollectionStoriesButton(cover: String, enabled: Boolean, onClick: (
                     GlideImage(cover, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .27f)))
                 }
-                Icon(Icons.Default.GraphicEq, "Historias", Modifier.size(15.dp), tint = Color.White)
+                if (cover.isBlank()) Icon(Icons.Default.GraphicEq, null, Modifier.size(15.dp), tint = Color.White)
             }
         }
     }
@@ -81,21 +97,25 @@ internal fun CollectionStoriesButton(cover: String, enabled: Boolean, onClick: (
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 internal fun CollectionStories(
-    title: String, cover: String, songs: List<SongsModel>, accent: Color, onDismiss: () -> Unit,
+    title: String, cover: String, songs: List<SongsModel>, accent: Color,
+    navController: NavController, onDismiss: () -> Unit,
 ) {
-    var stories by remember { mutableStateOf<List<SongsModel>?>(null) }
-    LaunchedEffect(Unit) { stories = withContext(Dispatchers.Default) { collectionStoryItems(songs) } }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        val clips = stories
-        if (clips.isNullOrEmpty()) {
-            Surface(shape = RoundedCornerShape(22.dp), color = Color(0xFF151821)) {
-                Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    if (clips == null) CircularProgressIndicator() else Text("No hay fragmentos disponibles.", color = Color.White)
+    val clips by produceState<List<SongsModel>?>(null) {
+        value = withContext(Dispatchers.Default) { collectionStoryItems(songs) }
+    }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(
+        usePlatformDefaultWidth = false, decorFitsSystemWindows = false,
+    )) {
+        Box(Modifier.fillMaxSize().background(Color(0xFF101014)), contentAlignment = Alignment.Center) {
+            val available = clips
+            if (available.isNullOrEmpty()) {
+                Column(Modifier.safeDrawingPadding().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    if (available == null) CircularProgressIndicator() else Text("No hay fragmentos disponibles.", color = Color.White)
                     TextButton(onClick = onDismiss) { Text("Cerrar") }
                 }
+            } else {
+                CollectionStoryPager(title, cover, available, songs, accent, navController, onDismiss)
             }
-        } else {
-            CollectionStoryPager(title, cover, clips, songs, accent, onDismiss)
         }
     }
 }
@@ -105,19 +125,28 @@ internal fun CollectionStories(
 @Composable
 private fun CollectionStoryPager(
     title: String, cover: String, clips: List<SongsModel>, songs: List<SongsModel>,
-    accent: Color, onDismiss: () -> Unit,
+    accent: Color, navController: NavController, onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val pager = rememberPagerState { clips.size }
+    val pages = if (clips.size > 1) Int.MAX_VALUE else 1
+    val pager = rememberPagerState(initialPage = (pages / 2 / clips.size) * clips.size) { pages }
+    val audioCache = remember { ExpiringLruCache<String, String>(8, 4 * 60_000L) }
     val player = remember {
-        ExoPlayer.Builder(context).build().apply {
+        ExoPlayer.Builder(context).setLoadControl(
+            DefaultLoadControl.Builder().setBufferDurationsMs(2_500, 12_000, 350, 700).build(),
+        ).build().apply {
             setAudioAttributes(AudioAttributes.DEFAULT, true)
             setHandleAudioBecomingNoisy(true)
+            repeatMode = Player.REPEAT_MODE_ONE
         }
     }
     var foreground by remember { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
     var muted by remember { mutableStateOf(false) }
+    var paused by remember { mutableStateOf(false) }
+    var menu by remember { mutableStateOf<SongsModel?>(null) }
+    var savedIn by remember { mutableStateOf<SongsModel?>(null) }
+    var canvasUrl by remember { mutableStateOf<String?>(null) }
     var hasVideo by remember { mutableStateOf(false) }
     var audioFallback by remember { mutableStateOf<MediaSource?>(null) }
     var status by remember { mutableIntStateOf(Player.STATE_IDLE) }
@@ -126,7 +155,14 @@ private fun CollectionStoryPager(
     var progress by remember { mutableFloatStateOf(0f) }
     var restore by remember { mutableStateOf<(() -> Unit)?>(null) }
     val page = pager.settledPage
+    val active = clips[page % clips.size]
+    val playPreview = foreground && !pager.isScrollInProgress && !paused && menu == null && savedIn == null
     val latestDismiss by rememberUpdatedState(onDismiss)
+
+    suspend fun audioFor(song: SongsModel): String? = audioCache.get(song.url)
+        ?: resolveStoryContent(10_000L) {
+            withContext(Dispatchers.IO) { SongPlayer.resolveCollectionStory(song, context.applicationContext) }
+        }?.also { audioCache.put(song.url, it) }
 
     DisposableEffect(player, lifecycle) {
         val events = object : Player.Listener {
@@ -161,8 +197,16 @@ private fun CollectionStoryPager(
         }
     }
     LaunchedEffect(muted) { player.volume = if (muted) 0f else 1f }
-    LaunchedEffect(foreground, pager.isScrollInProgress) {
-        player.playWhenReady = foreground && !pager.isScrollInProgress
+    LaunchedEffect(playPreview) { player.playWhenReady = playPreview }
+    LaunchedEffect(page, foreground) {
+        canvasUrl = null
+        if (!foreground || PodcastResumeStore.isEpisode(active.url)) return@LaunchedEffect
+        val id = SpotifySync.cleanTrackId(active.spotifyTrackId)
+        if (id.matches(Regex("[A-Za-z0-9]{22}"))) {
+            canvasUrl = resolveStoryContent(5_000L) {
+                withContext(Dispatchers.IO) { Api(context.applicationContext).getCanvasUrl(id) }
+            }
+        }
     }
     LaunchedEffect(page) {
         player.stop()
@@ -171,18 +215,23 @@ private fun CollectionStoryPager(
         failure = false
         hasVideo = false
         audioFallback = null
-        val song = clips[page]
-        val audio = resolveStoryContent(12_000L) {
-            withContext(Dispatchers.IO) { SongPlayer.resolveCollectionStory(song, context.applicationContext) }
+        val song = active
+        val (audio, video) = coroutineScope {
+            val videoId = song.url.takeIf { it.startsWith("yt_ep:") }
+                ?.removePrefix("yt_ep:")?.substringBefore('|')?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
+            val preview = videoId?.let { id -> async {
+                resolveStoryContent(2_500L) { PodcastVideoStreams.resolvePreview(id)?.url }
+            } }
+            val url = audioFor(song)
+            val videoUrl = if (url == null) null else preview?.let { withTimeoutOrNull(500L) { it.await() } }
+            preview?.cancel()
+            url to videoUrl
         }
         if (audio.isNullOrBlank()) {
             failure = true
             return@LaunchedEffect
         }
-        val videoId = song.url.takeIf { it.startsWith("yt_ep:") }
-            ?.removePrefix("yt_ep:")?.substringBefore('|')?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
-        val video = videoId?.let { resolveStoryContent(2_500L) { PodcastVideoStreams.resolvePreview(it)?.url } }
-        val start = storyStartPosition(song.durationMs, PodcastResumeStore.isEpisode(song.url))
+        val start = storyStartPosition(song.durationMs)
         val factory = ProgressiveMediaSource.Factory(DefaultDataSource.Factory(context))
         fun source(url: String) = factory.createMediaSource(MediaItem.fromUri(url))
         fun clip(media: MediaSource): MediaSource = ClippingMediaSource.Builder(media)
@@ -191,7 +240,6 @@ private fun CollectionStoryPager(
         if (video != null) audioFallback = clip(source(audio))
         hasVideo = video != null
         player.setMediaSource(if (video == null) clip(source(audio)) else clip(MergingMediaSource(true, source(audio), source(video))))
-        player.playWhenReady = foreground && !pager.isScrollInProgress
         player.prepare()
         delay(10_000L)
         if (status == Player.STATE_BUFFERING) {
@@ -199,11 +247,13 @@ private fun CollectionStoryPager(
             failure = true
         }
     }
-    LaunchedEffect(status, page, foreground, playing) {
-        if (status == Player.STATE_ENDED && foreground) {
-            if (page < clips.lastIndex && !pager.isScrollInProgress) pager.animateScrollToPage(page + 1)
-            else if (page == clips.lastIndex && !pager.isScrollInProgress) latestDismiss()
+    LaunchedEffect(page, playing) {
+        if (playing && clips.size > 1) {
+            delay(500)
+            audioFor(clips[(page + 1) % clips.size])
         }
+    }
+    LaunchedEffect(page, foreground, playing) {
         while (playing && foreground) {
             progress = (player.currentPosition / (player.duration.takeIf { it > 0 } ?: STORY_DURATION_MS).toFloat())
                 .coerceIn(0f, 1f)
@@ -211,71 +261,108 @@ private fun CollectionStoryPager(
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Color(0xFF0D1017)).safeDrawingPadding(), contentAlignment = Alignment.Center) {
-        Column(Modifier.widthIn(max = 460.dp).fillMaxWidth().fillMaxHeight().padding(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                IconButton(onClick = latestDismiss) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Cerrar historias", tint = Color.White) }
-                Column(Modifier.weight(1f).padding(horizontal = 6.dp)) {
-                    Text(title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("${page + 1} / ${clips.size}", color = Color.LightGray, style = MaterialTheme.typography.labelMedium)
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        VerticalPager(pager, modifier = Modifier.widthIn(max = 460.dp).fillMaxWidth().fillMaxHeight()) { index ->
+            val song = clips[index % clips.size]
+            val selected = index == page
+            val artwork = song.coverUri.ifBlank { cover }
+            val video = canvasUrl.takeIf { selected }
+            val shareLink = remember(song) { storyLink(song) }
+            Box(Modifier.fillMaxSize().background(Color(0xFF191820))) {
+                if (video != null) {
+                    CanvasVideo(video, Modifier.fillMaxSize(), playing = playPreview, onError = { canvasUrl = null })
+                } else {
+                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(
+                        accent.copy(alpha = .8f), Color(0xFF292431), Color(0xFF15131B),
+                    ))))
                 }
-                IconButton(onClick = { muted = !muted }) {
-                    Icon(if (muted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
-                        if (muted) "Activar sonido" else "Silenciar", tint = Color.White)
-                }
-            }
-            Canvas(Modifier.fillMaxWidth().padding(horizontal = 8.dp).height(10.dp)) {
-                val gap = 4.dp.toPx()
-                val segment = ((size.width - gap * (clips.size - 1)) / clips.size).coerceAtLeast(1f)
-                for (i in clips.indices) {
-                    val x = (segment + gap) * i
-                    val y = center.y
-                    drawLine(Color.White.copy(alpha = .23f), Offset(x, y), Offset(x + segment, y), 2.dp.toPx(), StrokeCap.Round)
-                    val fraction = if (i < page) 1f else if (i == page) progress else 0f
-                    if (fraction > 0f) drawLine(accent, Offset(x, y), Offset(x + segment * fraction, y), 2.dp.toPx(), StrokeCap.Round)
-                }
-            }
-            VerticalPager(pager, modifier = Modifier.weight(1f).fillMaxWidth(), pageSpacing = 10.dp) { index ->
-                val song = clips[index]
-                Column(
-                    Modifier.fillMaxSize().clip(RoundedCornerShape(26.dp)).background(
-                        Brush.verticalGradient(listOf(accent.copy(alpha = .42f), Color(0xFF161D2A), Color(0xFF141923))),
-                    ).padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        if (index == page && hasVideo) {
-                            StoryVideo(player, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(14.dp)))
-                        } else {
-                            GlideImage(song.coverUri.ifBlank { cover }, null,
-                                Modifier.fillMaxWidth(.86f).aspectRatio(1f).clip(RoundedCornerShape(18.dp)),
-                                contentScale = ContentScale.Crop)
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(
+                    Color.Black.copy(alpha = .52f), Color.Transparent, Color.Black.copy(alpha = .86f),
+                ))))
+                Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 16.dp, vertical = 6.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = latestDismiss) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Cerrar historias", tint = Color.White)
                         }
-                        if (index == page && !failure && status != Player.STATE_READY && status != Player.STATE_ENDED) {
-                            CircularProgressIndicator(Modifier.size(34.dp), color = Color.White)
+                        Text(title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 6.dp))
+                        IconButton(onClick = { paused = !paused }) {
+                            Icon(if (paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                if (paused) "Reanudar fragmento" else "Pausar fragmento", tint = Color.White)
+                        }
+                        IconButton(onClick = { muted = !muted }) {
+                            Icon(if (muted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                                if (muted) "Activar sonido" else "Silenciar", tint = Color.White)
                         }
                     }
-                    Column(Modifier.fillMaxWidth().padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(song.title, color = Color.White, style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text(song.singer, color = Color(0xFFC5CBDB), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        if (index == page && failure) Text("No se pudo cargar el fragmento. Desliza para ver otro.", color = Color.LightGray)
-                        TextButton(onClick = {
+                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        when {
+                            selected && hasVideo -> StoryVideo(player, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+                            video == null && artwork.isNotBlank() -> GlideImage(artwork, null,
+                                Modifier.fillMaxWidth(.82f).aspectRatio(1f).clip(RoundedCornerShape(19.dp)),
+                                contentScale = ContentScale.Crop)
+                        }
+                        if (selected && !failure && status != Player.STATE_READY && status != Player.STATE_ENDED) {
+                            CircularProgressIndicator(Modifier.size(28.dp), color = Color.White, strokeWidth = 2.dp)
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(song.singer.ifBlank { song.album }, color = Color.White, fontWeight = FontWeight.Medium,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        if (shareLink != null) IconButton(onClick = {
+                            val intent = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, shareLink)
+                            context.startActivity(Intent.createChooser(intent, "Compartir"))
+                        }) { Icon(Icons.Default.Share, "Compartir", tint = Color.White) }
+                        IconButton(onClick = { menu = song }) { Icon(Icons.Default.MoreVert, "Más opciones", tint = Color.White) }
+                    }
+                    if (selected && failure) {
+                        Text("No se pudo reproducir el fragmento. Desliza para ver otro.", color = Color.LightGray,
+                            style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))
+                    }
+                    val saved = if (selected) rememberTrackSaved(song, false) else false
+                    val label = if (PodcastResumeStore.isEpisode(song.url)) "Escuchar episodio" else "Escuchar canción"
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Color.White.copy(alpha = .14f))
+                        .padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).clickable(onClickLabel = label) {
                             restore = null
                             player.pause()
                             SongPlayer.playFromCollectionStory(context, songs, song, title)
                             latestDismiss()
-                        }) {
-                            Icon(Icons.Default.PlayArrow, null)
-                            Spacer(Modifier.width(6.dp))
-                            Text(if (PodcastResumeStore.isEpisode(song.url)) "Escuchar episodio" else "Escuchar canción",
-                                color = Color.White)
+                        }, verticalAlignment = Alignment.CenterVertically) {
+                            GlideImage(artwork, null, Modifier.size(50.dp).clip(RoundedCornerShape(10.dp)),
+                                contentScale = ContentScale.Crop)
+                            Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                                Text(song.title, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (song.explicit) ExplicitBadge()
+                                    Text(song.singer, color = Color.White.copy(alpha = .75f), maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
                         }
+                        LibrarySaveIcon(saved = saved) { savedIn = song }
+                    }
+                    Canvas(Modifier.fillMaxWidth().padding(horizontal = 4.dp).height(18.dp)) {
+                        val y = center.y
+                        drawLine(Color.White.copy(alpha = .23f), Offset(0f, y), Offset(size.width, y), 2.dp.toPx(), StrokeCap.Round)
+                        if (selected && progress > 0f) drawLine(Color.White, Offset(0f, y),
+                            Offset(size.width * progress, y), 2.dp.toPx(), StrokeCap.Round)
                     }
                 }
             }
         }
     }
+    menu?.let { song -> SongOptionsSheet(song, navController, context, onDismiss = { menu = null }) }
+    savedIn?.let { song -> SavedInSheet(song = song, context = context, onDismiss = { savedIn = null }) }
+}
+
+private fun storyLink(song: SongsModel): String? = when {
+    song.url.startsWith("yt_ep:") -> song.url.removePrefix("yt_ep:").substringBefore('|')
+        .takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }?.let { "https://www.youtube.com/watch?v=$it" }
+    song.url.startsWith("episode:") -> song.url.removePrefix("episode:")
+        .takeIf { it.matches(Regex("[A-Za-z0-9]{22}")) }?.let { "https://open.spotify.com/episode/$it" }
+    else -> SpotifySync.cleanTrackId(song.spotifyTrackId)
+        .takeIf { it.matches(Regex("[A-Za-z0-9]{22}")) }?.let { "https://open.spotify.com/track/$it" }
 }
 
 private suspend fun resolveStoryContent(timeoutMs: Long, resolve: suspend () -> String?): String? =

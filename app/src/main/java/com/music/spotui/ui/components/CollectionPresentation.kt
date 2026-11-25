@@ -9,6 +9,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Download
@@ -25,6 +28,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavController
 import com.music.spotui.data.entity.SongsModel
 import com.music.spotui.data.preferences.downloadRecordingKey
 import com.music.spotui.data.preferences.downloadsVersion
@@ -182,26 +186,36 @@ internal fun CollectionSecondaryActions(modifier: Modifier = Modifier, content: 
 /** Primary collection controls, followed by ordering and queue actions. */
 @Composable
 internal fun CollectionActionBar(
+    navController: NavController,
     modifier: Modifier = Modifier, enabled: Boolean, playing: Boolean,
     download: @Composable () -> Unit, onSort: () -> Unit, onQueue: () -> Unit,
     onShuffle: () -> Unit, onPlay: () -> Unit,
     storySongs: List<SongsModel>, storyTitle: String, storyCover: String,
     savedControl: @Composable () -> Unit = {},
+    onAdd: (() -> Unit)? = null, onEdit: (() -> Unit)? = null, onShare: (() -> Unit)? = null,
     sortMode: String, sortDescending: Boolean, accent: Color = Color(0xFF75648F), glass: CollectionGlassBackdrop,
 ) {
     var showStories by remember(storyTitle) { mutableStateOf(false) }
+    val hasStory = remember(storySongs) { storySongs.any(::supportsCollectionStory) }
     val sortInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val queueInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val tablet = LocalConfiguration.current.smallestScreenWidthDp >= 600
     BoxWithConstraints(modifier) {
         val metrics = remember(maxWidth, tablet) { collectionActionMetrics(maxWidth.value, tablet) }
+        val showLabels = maxWidth >= 360.dp
+        val shareInPrimary = maxWidth >= 344.dp
         CompositionLocalProvider(LocalCapsuleMetrics provides metrics, LocalCapsuleAccent provides accent, LocalGlassBackdrop provides glass) {
             Column {
                 Row(Modifier.height(68.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(metrics.itemGap.dp), verticalAlignment = Alignment.CenterVertically) {
-                        CollectionStoriesButton(storyCover, enabled) { showStories = true }
+                        CollectionStoriesButton(storySongs.firstOrNull()?.coverUri.orEmpty().ifBlank { storyCover }, hasStory) {
+                            showStories = true
+                        }
                         savedControl()
                         download()
+                        if (onShare != null && shareInPrimary) IconButton(onClick = onShare, modifier = Modifier.size(metrics.control.dp)) {
+                            Icon(Icons.Default.Share, "Compartir", tint = Color.White, modifier = Modifier.size(22.dp))
+                        }
                     }
                     Spacer(Modifier.width(metrics.gap.dp))
                     IconButton(onClick = onShuffle, enabled = enabled, modifier = Modifier.size(metrics.control.dp)) {
@@ -214,8 +228,15 @@ internal fun CollectionActionBar(
                         Icon(androidx.compose.ui.res.painterResource(if (playing) com.music.spotui.R.drawable.collection_pause else com.music.spotui.R.drawable.collection_play), if (playing) "Pausar" else "Reproducir", modifier = Modifier.size(22.dp))
                     }
                 }
-                Row(Modifier.padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(metrics.itemGap.dp),
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(metrics.itemGap.dp),
                     verticalAlignment = Alignment.CenterVertically) {
+                    if (onAdd != null) CollectionSecondaryButton("Añadir", showLabels, onAdd) {
+                        Icon(Icons.Default.Add, "Añadir canciones", tint = Color.White, modifier = Modifier.size(20.dp))
+                    }
+                    if (onEdit != null) CollectionSecondaryButton("Editar", showLabels, onEdit) {
+                        Icon(Icons.Default.Edit, "Editar canciones", tint = Color.White, modifier = Modifier.size(19.dp))
+                    }
                     val sortIcon = when (sortMode) {
                         "DEFAULT" -> com.music.spotui.R.drawable.collection_sort_track
                         "TITLE" -> com.music.spotui.R.drawable.collection_sort_title
@@ -225,12 +246,11 @@ internal fun CollectionActionBar(
                         "POPULARITY" -> com.music.spotui.R.drawable.collection_sort_popularity
                         else -> com.music.spotui.R.drawable.collection_sort_date
                     }
-                    CollectionCapsuleBody("Ordenar", Modifier.width(metrics.pill.dp).height(metrics.control.dp)
-                        .liquidCollectionGlass(accent, sortInteraction)
-                        .clickable(interactionSource = sortInteraction, indication = null, role = androidx.compose.ui.semantics.Role.Button, onClick = onSort)) {
-                        Icon(androidx.compose.ui.res.painterResource(sortIcon), when (sortMode) { "DEFAULT" -> "Ordenar por pistas"; "TITLE" -> "Ordenar por título"; "ARTIST" -> "Ordenar por artista"; "ALBUM" -> "Ordenar por álbum"; "DURATION" -> "Ordenar por duración"; "POPULARITY" -> "Ordenar por popularidad"; else -> "Ordenar por fecha" }, tint = Color.White, modifier = Modifier.size(22.dp))
+                    CollectionSecondaryButton("Ordenar", showLabels, onSort,
+                        Modifier.liquidCollectionGlass(accent, sortInteraction), sortInteraction) {
+                        Icon(androidx.compose.ui.res.painterResource(sortIcon), when (sortMode) { "DEFAULT" -> "Ordenar por pistas"; "TITLE" -> "Ordenar por título"; "ARTIST" -> "Ordenar por artista"; "ALBUM" -> "Ordenar por álbum"; "DURATION" -> "Ordenar por duración"; "POPULARITY" -> "Ordenar por popularidad"; else -> "Ordenar por fecha" }, tint = Color.White, modifier = Modifier.size(19.dp))
                         Icon(androidx.compose.ui.res.painterResource(if (sortDescending) com.music.spotui.R.drawable.collection_sort_down else com.music.spotui.R.drawable.collection_sort_up),
-                            if (sortDescending) "Descendente" else "Ascendente", tint = Color.White, modifier = Modifier.size(22.dp))
+                            if (sortDescending) "Descendente" else "Ascendente", tint = Color.White, modifier = Modifier.size(17.dp))
                     }
                     CollectionCapsuleBody("Añadir a la cola", Modifier.width(metrics.queue.dp).height(metrics.control.dp)
                         .liquidCollectionGlass(accent, queueInteraction)
@@ -238,9 +258,28 @@ internal fun CollectionActionBar(
                             role = androidx.compose.ui.semantics.Role.Button, onClick = onQueue)) {
                         Icon(androidx.compose.ui.res.painterResource(com.music.spotui.R.drawable.collection_queue), "Añadir a la cola", tint = Color.White, modifier = Modifier.size(22.dp))
                     }
+                    if (onShare != null && !shareInPrimary) CollectionSecondaryButton("Compartir", showLabels, onShare) {
+                        Icon(Icons.Default.Share, "Compartir", tint = Color.White, modifier = Modifier.size(20.dp))
+                    }
                 }
             }
         }
     }
-    if (showStories) CollectionStories(storyTitle, storyCover, storySongs, accent) { showStories = false }
+    if (showStories) CollectionStories(storyTitle, storyCover, storySongs, accent, navController) { showStories = false }
+}
+
+@Composable
+private fun CollectionSecondaryButton(
+    label: String, showLabel: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier,
+    interaction: androidx.compose.foundation.interaction.MutableInteractionSource? = null,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Row(Modifier.height(40.dp).clip(CircleShape).background(Color.White.copy(alpha = .09f))
+        .then(modifier).clickable(interactionSource = interaction, indication = androidx.compose.foundation.LocalIndication.current,
+            role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
+        .padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        content()
+        if (showLabel) Text(label, color = Color.White, style = MaterialTheme.typography.labelLarge,
+            maxLines = 1, modifier = Modifier.padding(start = 5.dp))
+    }
 }

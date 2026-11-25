@@ -25,9 +25,9 @@ It connects to your real Spotify account and mirrors the Spotify experience.
 
 ## Actualizaciones durante el cambio a Spotidroid
 
-Publica la versión de transición en `Carlossb02/spotui` con el nombre de APK habitual. Después, renombra ese mismo repositorio a `Carlossb02/spotidroid`. El actualizador admite ambos nombres del repositorio y del APK.
+Gradle genera `Spotidroid_v<versión>.apk`. El actualizador consulta primero `Carlossb02/spotidroid` y usa `Carlossb02/spotui` como respaldo.
 
-Para preparar un APK de una versión posterior, pasa el APK compilado y el último APK publicado a `scripts/Stage-UpdateApk.ps1`. El script comprueba el paquete, la firma y que el código de versión haya aumentado antes de copiar el archivo como `Spotidroid_v<versión>.apk`. Usa `-KeepSpotuiName` para la versión de transición.
+Para preparar un APK, pasa el APK compilado y el último APK publicado a `scripts/Stage-UpdateApk.ps1`. El script comprueba el paquete, la firma y que el código de versión haya aumentado antes de copiar el archivo como `Spotidroid_v<versión>.apk`.
 
 ```powershell
 ./scripts/Stage-UpdateApk.ps1 -Apk ./nuevo.apk -PreviousApk ./publicado.apk -Destination .

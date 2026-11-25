@@ -1,7 +1,6 @@
 package com.music.spotui.data.update
 
 import android.content.Context
-import android.util.Log
 import com.music.spotui.BuildConfig
 import com.music.spotui.data.preferences.DEFAULT_UPDATE_REPO_URL
 import com.music.spotui.data.preferences.LEGACY_UPDATE_REPO_URL
@@ -15,7 +14,6 @@ import java.util.concurrent.TimeUnit
 
 object UpdateChecker {
 
-    private const val TAG = "UpdateChecker"
     private const val PREFS = "update_prefs"
     private const val KEY_SKIP = "skip_fingerprint"
 
@@ -37,8 +35,7 @@ object UpdateChecker {
             listOf(configured, LEGACY_UPDATE_REPO_URL)
         } else listOf(configured)
         val info = sources.firstNotNullOfOrNull { source ->
-            runCatching { fetchLatestRelease(source) }
-                .onFailure { Log.d(TAG, "update check failed: ${it.message}") }.getOrNull()
+            runCatching { fetchLatestRelease(source) }.getOrNull()
         } ?: return@withContext null
         if (!isNewer(info.version, BuildConfig.VERSION_NAME)) return@withContext null
         val skipped = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

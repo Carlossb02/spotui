@@ -16,8 +16,8 @@ android {
         applicationId = "com.music.spotidroid"
         minSdk = 26
         targetSdk = 37
-        versionCode = 202608182
-        versionName = "1.9.6.33"
+        versionCode = 202608183
+        versionName = "1.9.6.34"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -87,11 +87,9 @@ android {
 }
 
 androidComponents {
-    // Keep the existing asset name for the repository migration release.
-    val apkBrand = if (android.defaultConfig.versionCode == 202608182) "Spotui" else "Spotidroid"
     onVariants { variant ->
         variant.outputs.forEach { output ->
-            output.outputFileName.set("${apkBrand}_v${android.defaultConfig.versionName}.apk")
+            output.outputFileName.set("Spotidroid_v${android.defaultConfig.versionName}.apk")
         }
     }
 }

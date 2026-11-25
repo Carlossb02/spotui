@@ -319,6 +319,7 @@ fun LikedSongsScreen(navController: NavController) {
                             val playing = likedSongsViewModel.currentSongPlayingState.value
 val currentInList = songs.any { it.id == likedSongsViewModel.currentSongId.value }
 com.music.spotui.ui.components.CollectionActionBar(
+ navController = navController,
  glass = collectionGlass,
  storySongs = songs, storyTitle = "Canciones que te gustan",
  storyCover = "https://misc.scdn.co/liked-songs/liked-songs-640.png",

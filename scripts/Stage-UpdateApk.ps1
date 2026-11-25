@@ -1,8 +1,7 @@
 param(
     [Parameter(Mandatory)] [string] $Apk,
     [Parameter(Mandatory)] [string] $PreviousApk,
-    [Parameter(Mandatory)] [string] $Destination,
-    [switch] $KeepSpotuiName
+    [Parameter(Mandatory)] [string] $Destination
 )
 
 $ErrorActionPreference = 'Stop'
@@ -40,8 +39,7 @@ if ($current.Package -cne $previous.Package -or
 }
 if ($current.Version -notmatch '^[0-9]+(?:\.[0-9]+)+$') { throw 'El nombre de versión del APK no es válido.' }
 
-$name = if ($KeepSpotuiName) { 'Spotui' } else { 'Spotidroid' }
-$target = Join-Path $Destination ("${name}_v" + $current.Version + '.apk')
+$target = Join-Path $Destination ("Spotidroid_v" + $current.Version + '.apk')
 if (Test-Path -LiteralPath $target) { throw "El archivo de destino ya existe: $target" }
 Copy-Item -LiteralPath $candidate -Destination $target
 Get-Item -LiteralPath $target

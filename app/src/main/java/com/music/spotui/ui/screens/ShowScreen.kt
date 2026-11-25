@@ -349,6 +349,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                         // The common bar keeps identical slots while episodes load.
                         run {
                             com.music.spotui.ui.components.CollectionActionBar(
+ navController = navController,
  glass = collectionGlass,
  storySongs = episodes, storyTitle = displayShowTitle, storyCover = resolvedCover.orEmpty(),
  accent = com.music.spotui.ui.components.rememberCollectionAccent(show?.coverUri?.takeIf { it.isNotBlank() } ?: episodes.firstOrNull()?.coverUri.orEmpty()),
