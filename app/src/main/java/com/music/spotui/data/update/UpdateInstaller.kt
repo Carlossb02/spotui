@@ -21,6 +21,8 @@ import java.util.concurrent.TimeUnit
 class UpdateFileProvider : FileProvider()
 
 internal object UpdateInstaller {
+    class VerificationException(message: String) : IOException(message)
+
     private const val MAX_BYTES = 300L * 1024 * 1024
     private val downloadHosts = setOf(
         "github.com", "release-assets.githubusercontent.com",
@@ -110,20 +112,34 @@ internal object UpdateInstaller {
                 }
             }
             val actual = sha256.digest().joinToString("") { "%02x".format(it) }
-            require(expectedHash.equals(actual, ignoreCase = true))
+            if (!expectedHash.equals(actual, ignoreCase = true)) {
+                throw VerificationException("El archivo descargado no coincide con la huella de GitHub. Vuelve a descargarlo.")
+            }
         }
         val manager = context.packageManager
-        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES
-            else PackageManager.GET_SIGNATURES
-        val incoming = requireNotNull(manager.getPackageArchiveInfo(apk.absolutePath, flags))
+        // Some Android builds only collect archive certificates when the legacy flag is also set.
+        val flags = PackageManager.GET_SIGNATURES or
+            (if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else 0)
+        val incoming = manager.getPackageArchiveInfo(apk.absolutePath, flags)
+            ?: throw VerificationException("Android no pudo leer la APK descargada.")
         val installed = manager.getPackageInfo(context.packageName, flags)
         fun signers(info: PackageInfo) =
-            (if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners else info.signatures)
-                .orEmpty().toSet()
+            (if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners else null)
+                ?.takeIf { it.isNotEmpty() }?.toSet() ?: info.signatures.orEmpty().toSet()
         val installedSigners = signers(installed)
-        require(incoming.packageName == installed.packageName)
-        require(PackageInfoCompat.getLongVersionCode(incoming) > PackageInfoCompat.getLongVersionCode(installed))
-        require(installedSigners.isNotEmpty() && signers(incoming) == installedSigners)
+        val incomingSigners = signers(incoming)
+        if (incoming.packageName != installed.packageName) {
+            throw VerificationException("La APK de GitHub pertenece a otro paquete de Android.")
+        }
+        if (PackageInfoCompat.getLongVersionCode(incoming) <= PackageInfoCompat.getLongVersionCode(installed)) {
+            throw VerificationException("La APK de GitHub tiene la misma versión interna o una anterior a la instalada.")
+        }
+        if (installedSigners.isEmpty() || incomingSigners.isEmpty()) {
+            throw VerificationException("Android no pudo leer los certificados de la APK o de la app instalada.")
+        }
+        if (incomingSigners != installedSigners) {
+            throw VerificationException("La APK de GitHub está firmada con un certificado distinto al de la app instalada.")
+        }
     }
 
     fun launch(context: Context, apk: File) {

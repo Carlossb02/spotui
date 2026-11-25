@@ -374,8 +374,8 @@ class Api @Inject constructor(
         }
 
         coroutineScope {
-            val spotifyJob = async {
-                if (!spotifyAvailable) return@async emptyList<com.metrolist.spotify.models.SpotifyShow>()
+            val spotifyJob = launch {
+                if (!spotifyAvailable) return@launch
                 val spotifyRes = runCatching {
                     Spotify.search(query, types = listOf("track", "album", "artist", "playlist"), limit = 20).getOrNull()
                 }.getOrNull()
@@ -399,18 +399,10 @@ class Api @Inject constructor(
                         send(Response.Loading(currentResults))
                     }
                 }
-                spotifyRes?.shows?.items.orEmpty()
             }
 
             val podcastJob = if (includePodcasts) launch {
                 try {
-                    val spanishCatalog = async {
-                        if (!spotifyAvailable) return@async emptyList<com.metrolist.spotify.models.SpotifyShow>()
-                        withTimeoutOrNull(3_500L) {
-                            Spotify.searchPodcasts(query, limit = 10, market = "ES")
-                                .getOrNull()?.shows?.items.orEmpty()
-                        }.orEmpty()
-                    }
                     val youtubeResults = withTimeoutOrNull(4_000L) {
                         com.music.spotui.providers.PodcastProvider.searchPodcasts(query)
                     }
@@ -421,32 +413,6 @@ class Api @Inject constructor(
                             shows = mergePodcastShows(currentResults.shows, ytShows),
                             episodes = (currentResults.episodes + ytEpisodes).distinctBy { it.id },
                         )
-                        send(Response.Loading(currentResults))
-                    }
-                    val policy = com.music.spotui.providers.PodcastDiscoveryPolicy
-                    var shows = spotifyJob.await() + spanishCatalog.await()
-                    if (spotifyAvailable && shows.none { policy.validShow(it) && policy.relevantShow(query, it.name) }) {
-                        policy.broaderQuery(query)?.let { alternate ->
-                            shows = withTimeoutOrNull(3_500L) {
-                                coroutineScope {
-                                    val catalog = async { Spotify.searchPodcasts(alternate, limit = 10, market = "ES")
-                                        .getOrNull()?.shows?.items.orEmpty() }
-                                    val desktop = Spotify.search(alternate, types = listOf("show"), limit = 12)
-                                        .getOrNull()?.shows?.items.orEmpty()
-                                    desktop + catalog.await()
-                                }
-                            }.orEmpty()
-                        }
-                    }
-                    val matches = com.music.spotui.providers.PodcastProvider.discoverSpotifyShows(query, shows, ytShows)
-                        .ifEmpty {
-                            if (ytShows.any { policy.relevantShow(query, it.name) }) emptyList()
-                            else withTimeoutOrNull(7_000L) {
-                                com.music.spotui.providers.PodcastDirectory.search(query)
-                            }.orEmpty()
-                        }
-                    if (matches.isNotEmpty()) resultLock.withLock {
-                        currentResults = currentResults.copy(shows = mergePodcastShows(currentResults.shows, matches))
                         send(Response.Loading(currentResults))
                     }
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -469,7 +435,8 @@ class Api @Inject constructor(
             if (shows.any { existing ->
                     existing.id == candidate.id ||
                         (policy.showTitleMatches(existing.name, candidate.name) &&
-                            policy.publisherMatches(existing.publisher, candidate.publisher))
+                            (existing.id.startsWith("spotify:show:") ||
+                                policy.publisherMatches(existing.publisher, candidate.publisher)))
                 }
             ) shows else shows + candidate
         }
@@ -480,6 +447,7 @@ class Api @Inject constructor(
         val session = SpotifySession.spDc(context)
         val key = "podcast:$showId"
         val cached = LibraryContentMemory.read(context, key)
+            ?.filter { it.url.startsWith("yt_ep:") }?.takeIf { it.isNotEmpty() }
         if (cached != null) emit(Response.Success(cached)) else emit(Response.Loading())
         var latest: List<SongsModel>? = null
         com.music.spotui.providers.PodcastProvider.getShowEpisodesFlow(showId, showName).collect { episodes ->
@@ -491,7 +459,7 @@ class Api @Inject constructor(
         latest?.let { episodes ->
             LibraryContentMemory.put(context, key, episodes, session)
             emit(Response.Success(episodes))
-        } ?: run { if (cached == null) emit(Response.Error("No hay episodios disponibles para este programa. Comprueba la conexión y la sesión de Spotify.")) }
+        } ?: run { if (cached == null) emit(Response.Error("No hay episodios de YouTube disponibles para este programa.")) }
     }
 
     /** Show header (name/publisher/cover) for the detail screen. */
