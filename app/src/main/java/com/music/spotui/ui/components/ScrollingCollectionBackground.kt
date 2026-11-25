@@ -64,8 +64,10 @@ internal fun Modifier.scrollingCollectionBackground(
             val header = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == headerKey }
             if (header != null && header.size > 0) {
                 val top = header.offset.toFloat()
-                val bottom = top + header.size
+                val actions = glass.actionsTop?.let { y -> glass.origin?.let { y - it.y } }
+                val bottom = minOf(top + header.size * .76f, actions ?: Float.MAX_VALUE).coerceAtLeast(top + 1f)
                 if (bottom > 0f) {
+                    clipRect(bottom = bottom) {
                     drawRect(Brush.verticalGradient(
                         0f to topColor.copy(alpha = .8f), .78f to topColor.copy(alpha = .34f), 1f to baseColor,
                         startY = top, endY = bottom,
@@ -81,6 +83,7 @@ internal fun Modifier.scrollingCollectionBackground(
                                 startY = top, endY = imageBottom,
                             ))
                         }
+                    }
                     }
                 }
             }

@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 /** Kept for backwards compatibility across collection screens. */
 internal class CollectionGlassBackdrop(val layer: GraphicsLayer) {
     var origin by mutableStateOf<Offset?>(null)
+    var actionsTop by mutableStateOf<Float?>(null)
 }
 
 @Composable

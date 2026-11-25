@@ -6,7 +6,11 @@ import kotlin.math.abs
 internal object PodcastVideoClockPolicy {
     fun recover(driftMs: Long, sinceSeekMs: Long, sinceReadyMs: Long) =
         abs(driftMs) > 1_200 && sinceSeekMs > 5_000 && sinceReadyMs > 1_000
-    fun speed(driftMs: Long) = when {
+    fun readyToReveal(driftMs: Long) = abs(driftMs) <= 250L
+
+    fun speed(driftMs: Long, catchingUp: Boolean = false) = when {
+        catchingUp && driftMs > 250 -> 1.25f
+        catchingUp && driftMs < -250 -> 0.8f
         driftMs > 600 -> 1.08f
         driftMs > 180 -> 1.03f
         driftMs < -600 -> 0.92f

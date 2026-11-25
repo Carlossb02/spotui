@@ -60,11 +60,21 @@ internal object SpotifyPodcastEpisodes {
                     }
             }.orEmpty()
         } }.awaitAll().flatten().distinctBy { it.id }
-        if (typed.isNotEmpty() || publishedSince != null || show.publisher.isBlank()) {
+        if (typed.isNotEmpty() || show.publisher.isBlank()) {
             return@coroutineScope typed.map { PodcastProvider.episodeToSong(it, show.name) }
         }
         val ordinary = try {
-            withTimeoutOrNull(6_000L) { YouTubeVideoSearch.find(queries.last()) }.orEmpty()
+            coroutineScope {
+                listOf(queries.last(), "${queries.last()} emisión en directo").map { query -> async {
+                    try {
+                        withTimeoutOrNull(10_000L) { YouTubeVideoSearch.find(query) }.orEmpty()
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                } }.awaitAll().flatten()
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -74,11 +84,12 @@ internal object SpotifyPodcastEpisodes {
             it.seconds in 480..43_200 && it.id.matches(Regex("[A-Za-z0-9_-]{11}")) &&
                 PodcastDiscoveryPolicy.publisherMatches(show.publisher, it.publisher) &&
                 PodcastDiscoveryPolicy.relevantShow(show.name, it.title) &&
-                !PodcastDiscoveryPolicy.showTitleMatches(show.name, it.title)
+                (publishedSince == null || publicationTime(it.date, now)?.let { date -> date >= publishedSince } == true)
         }.distinctBy { it.id }.map { video ->
             PodcastProvider.episodeToSong(EpisodeItem(id = video.id, title = video.title,
                 author = com.metrolist.innertube.models.Artist(video.publisher, null),
-                duration = video.seconds.toInt(), thumbnail = "https://i.ytimg.com/vi/${video.id}/hqdefault.jpg"), show.name)
+                duration = video.seconds.toInt(), publishDateText = video.date,
+                thumbnail = "https://i.ytimg.com/vi/${video.id}/hqdefault.jpg"), show.name)
         }
     }
 
