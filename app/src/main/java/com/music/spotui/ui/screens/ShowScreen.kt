@@ -85,6 +85,7 @@ import com.music.spotui.R
 import com.music.spotui.data.api.Response
 import com.music.spotui.data.entity.SongsModel
 import com.music.spotui.data.preferences.ShowSortOption
+import com.music.spotui.data.preferences.SubscribedPodcastPref
 import com.music.spotui.data.preferences.getShowSortOption
 import com.music.spotui.data.preferences.isShowSortDescending
 import com.music.spotui.data.preferences.setShowSortOption
@@ -110,7 +111,10 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
 
     val episodesState by vm.episodes.collectAsState()
     val show by vm.show.collectAsState()
-    val isSubscribed by vm.isSubscribed.collectAsState()
+    val subscriptionRevision by SubscribedPodcastPref.revision.collectAsState()
+    val isSubscribed = remember(context, show?.id, showId, subscriptionRevision) {
+        SubscribedPodcastPref.isPodcastSubscribed(context, show?.id ?: showId)
+    }
     val visibleCount by vm.visibleCount.collectAsState()
     val episodes = (episodesState as? Response.Success)?.data.orEmpty()
     val displayShowTitle = show?.name?.takeIf { it.isNotBlank() && it != "Podcast" }
@@ -351,6 +355,7 @@ fun ShowScreen(navController: NavController, showId: String, showName: String = 
                             com.music.spotui.ui.components.CollectionActionBar(
  navController = navController,
  glass = collectionGlass,
+ storyPodcast = com.music.spotui.data.entity.PodcastModel(show?.id ?: showId, displayShowTitle, resolvedPublisher, resolvedCover.orEmpty()),
  storySongs = episodes, storyTitle = displayShowTitle, storyCover = resolvedCover.orEmpty(),
  accent = com.music.spotui.ui.components.rememberCollectionAccent(show?.coverUri?.takeIf { it.isNotBlank() } ?: episodes.firstOrNull()?.coverUri.orEmpty()),
  sortMode = currentSort.name, sortDescending = isDescending,

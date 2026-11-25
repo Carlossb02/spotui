@@ -56,6 +56,11 @@ import androidx.navigation.NavController
 import com.bumptech.glide.integration.compose.ExperimentalGlideComposeApi
 import com.bumptech.glide.integration.compose.GlideImage
 import com.music.spotui.data.entity.SongsModel
+import com.music.spotui.data.entity.PodcastModel
+import com.music.spotui.data.preferences.SubscribedPodcastPref
+import com.music.spotui.data.preferences.isArtistFollowed
+import com.music.spotui.data.preferences.addFollowedArtist
+import com.music.spotui.data.preferences.removeFollowedArtist
 import com.music.spotui.data.api.Api
 import com.music.spotui.data.api.SpotifySync
 import com.music.spotui.data.preferences.PodcastResumeStore
@@ -98,7 +103,7 @@ internal fun CollectionStoriesButton(cover: String, enabled: Boolean, onClick: (
 @Composable
 internal fun CollectionStories(
     title: String, cover: String, songs: List<SongsModel>, accent: Color,
-    navController: NavController, onDismiss: () -> Unit,
+    navController: NavController, podcast: PodcastModel?, onDismiss: () -> Unit,
 ) {
     val clips by produceState<List<SongsModel>?>(null) {
         value = withContext(Dispatchers.Default) { collectionStoryItems(songs) }
@@ -114,7 +119,7 @@ internal fun CollectionStories(
                     TextButton(onClick = onDismiss) { Text("Cerrar") }
                 }
             } else {
-                CollectionStoryPager(title, cover, available, songs, accent, navController, onDismiss)
+                CollectionStoryPager(title, cover, available, songs, accent, navController, podcast, onDismiss)
             }
         }
     }
@@ -125,7 +130,7 @@ internal fun CollectionStories(
 @Composable
 private fun CollectionStoryPager(
     title: String, cover: String, clips: List<SongsModel>, songs: List<SongsModel>,
-    accent: Color, navController: NavController, onDismiss: () -> Unit,
+    accent: Color, navController: NavController, podcast: PodcastModel?, onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -144,6 +149,7 @@ private fun CollectionStoryPager(
     var foreground by remember { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
     var muted by remember { mutableStateOf(false) }
     var paused by remember { mutableStateOf(false) }
+    var measuring by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf<SongsModel?>(null) }
     var savedIn by remember { mutableStateOf<SongsModel?>(null) }
     var canvasUrl by remember { mutableStateOf<String?>(null) }
@@ -156,7 +162,7 @@ private fun CollectionStoryPager(
     var restore by remember { mutableStateOf<(() -> Unit)?>(null) }
     val page = pager.settledPage
     val active = clips[page % clips.size]
-    val playPreview = foreground && !pager.isScrollInProgress && !paused && menu == null && savedIn == null
+    val playPreview = foreground && !pager.isScrollInProgress && !paused && !measuring && menu == null && savedIn == null
     val latestDismiss by rememberUpdatedState(onDismiss)
 
     suspend fun audioFor(song: SongsModel): String? = audioCache.get(song.url)
@@ -231,9 +237,23 @@ private fun CollectionStoryPager(
             failure = true
             return@LaunchedEffect
         }
-        val start = storyStartPosition(song.durationMs)
         val factory = ProgressiveMediaSource.Factory(DefaultDataSource.Factory(context))
         fun source(url: String) = factory.createMediaSource(MediaItem.fromUri(url))
+        measuring = true
+        player.playWhenReady = false
+        player.setMediaSource(source(audio))
+        player.prepare()
+        val actualDuration = withTimeoutOrNull(4_000L) {
+            while (player.duration <= 0 && !failure) delay(50)
+            player.duration.takeIf { it > 0 }
+        }
+        if (actualDuration == null || !player.isCurrentMediaItemSeekable) {
+            player.stop()
+            measuring = false
+            failure = true
+            return@LaunchedEffect
+        }
+        val start = storyStartPosition(actualDuration)
         fun clip(media: MediaSource): MediaSource = ClippingMediaSource.Builder(media)
             .setStartPositionMs(start).setEndPositionMs(start + STORY_DURATION_MS).build()
         if (restore == null) restore = SongPlayer.pauseForCollectionStories()
@@ -241,6 +261,7 @@ private fun CollectionStoryPager(
         hasVideo = video != null
         player.setMediaSource(if (video == null) clip(source(audio)) else clip(MergingMediaSource(true, source(audio), source(video))))
         player.prepare()
+        measuring = false
         delay(10_000L)
         if (status == Player.STATE_BUFFERING) {
             player.stop()
@@ -309,6 +330,7 @@ private fun CollectionStoryPager(
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(song.singer.ifBlank { song.album }, color = Color.White, fontWeight = FontWeight.Medium,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        if (selected) StoryFollowButton(song, podcast)
                         if (shareLink != null) IconButton(onClick = {
                             val intent = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, shareLink)
                             context.startActivity(Intent.createChooser(intent, "Compartir"))
@@ -354,6 +376,31 @@ private fun CollectionStoryPager(
     }
     menu?.let { song -> SongOptionsSheet(song, navController, context, onDismiss = { menu = null }) }
     savedIn?.let { song -> SavedInSheet(song = song, context = context, onDismiss = { savedIn = null }) }
+}
+
+@Composable
+private fun StoryFollowButton(song: SongsModel, podcast: PodcastModel?) {
+    val context = LocalContext.current
+    val artistId = song.artistIds.substringBefore(',').trim().takeIf {
+        !PodcastResumeStore.isEpisode(song.url) && it.matches(Regex("[A-Za-z0-9]{22}"))
+    }
+    if (podcast == null && artistId == null) return
+    var following by remember(podcast?.id, artistId) {
+        mutableStateOf(if (podcast != null) SubscribedPodcastPref.isPodcastSubscribed(context, podcast.id)
+            else isArtistFollowed(context, checkNotNull(artistId)))
+    }
+    OutlinedButton(onClick = {
+        if (podcast != null) {
+            following = SubscribedPodcastPref.toggleSubscribedPodcast(context, podcast)
+        } else if (artistId != null) {
+            following = !following
+            if (following) addFollowedArtist(context, artistId, song.singer.substringBefore(','))
+            else removeFollowedArtist(context, artistId)
+            SpotifySync.setArtistFollowed(context, artistId, following)
+        }
+    }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)) {
+        Text(if (following) "Siguiendo" else "Seguir", color = Color.White, maxLines = 1)
+    }
 }
 
 private fun storyLink(song: SongsModel): String? = when {
