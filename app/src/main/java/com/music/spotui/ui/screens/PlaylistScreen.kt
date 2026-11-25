@@ -395,7 +395,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         if (action in listOf(LibraryPlaylistAction.COLLABORATORS, LibraryPlaylistAction.PRIVACY) &&
             profilePlaylistId.isNotBlank() && !accessResolved)
             return@LaunchedEffect
-        if ((action == LibraryPlaylistAction.NAME || action == LibraryPlaylistAction.DETAILS || action == LibraryPlaylistAction.REMOVE) &&
+        if ((action == LibraryPlaylistAction.NAME || action == LibraryPlaylistAction.DETAILS || action == LibraryPlaylistAction.EDIT || action == LibraryPlaylistAction.REMOVE) &&
             (presentationId == null || isLocalPlaylist && linkedSpotifyId == null)) return@LaunchedEffect
         pendingAction = ""
         fun message(text: String) = android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_SHORT).show()
@@ -417,8 +417,8 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
             LibraryPlaylistAction.ADD ->
                 if (canEditPlaylist) showAddMusic = true else message("Spotify no confirma permiso para añadir canciones a esta lista")
             LibraryPlaylistAction.TRACKS -> editingTracks = true
-            LibraryPlaylistAction.NAME -> if (remotePlaylistId != null) showSpotifyEditor = true else showRenameDialog = true
-            LibraryPlaylistAction.DETAILS -> if (remotePlaylistId != null) showSpotifyEditor = true else showPresentationEditor = true
+            LibraryPlaylistAction.EDIT, LibraryPlaylistAction.NAME, LibraryPlaylistAction.DETAILS ->
+                if (remotePlaylistId != null) showSpotifyEditor = true else showPresentationEditor = true
             LibraryPlaylistAction.REMOVE -> showDeleteDialog = true
             LibraryPlaylistAction.COPY ->
                 if (songs.isNotEmpty()) showCopyPlaylist = true else message("No hay canciones disponibles para copiar")
@@ -568,7 +568,7 @@ fun PlaylistScreen(navController: NavController, playlistId: String, playlistNam
         }
 
 
-        com.music.spotui.ui.components.VisibleSongPreload(listState, remember(filteredSongs) { filteredSongs.mapIndexed { i, song -> stableSongKeys[i] to song } })
+        com.music.spotui.ui.components.VisibleSongPreload(listState, remember(filteredSongs, stableSongKeys) { filteredSongs.mapIndexed { i, song -> (stableSongKeys.getOrNull(i) ?: song.id.toString()) to song } })
     val collapsedTitle = com.music.spotui.ui.components.rememberCollectionTitleState(listState, "playlist_header")
         val searchReveal = rememberCollectionSearchState(listState, playlistId)
         val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
@@ -918,7 +918,7 @@ com.music.spotui.ui.components.CollectionActionBar(
                             androidx.compose.material3.TextButton(onClick = { editingTracks = false }) { Text("Listo") }
                         }
                     }
-                    itemsIndexed(filteredSongs, key = { index, _ -> stableSongKeys[index] }) { index, song ->
+                    itemsIndexed(filteredSongs, key = { index, song -> stableSongKeys.getOrNull(index) ?: song.id.toString() }) { index, song ->
                         val currentColor = if (song.id == playlistViewModel.currentSongId.value)
                             Color(0xFF1ED760) else Color.White
 

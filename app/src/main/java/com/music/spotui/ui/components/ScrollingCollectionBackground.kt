@@ -11,8 +11,6 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.layer.drawLayer
-import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.unit.IntSize
@@ -88,12 +86,7 @@ internal fun Modifier.scrollingCollectionBackground(
             }
         }
         onDrawBehind {
-            if (drawContext.canvas.nativeCanvas.isHardwareAccelerated) {
-                glass.layer.record(block = paintBackdrop)
-                drawLayer(glass.layer)
-            } else {
-                paintBackdrop()
-            }
+            paintBackdrop()
         }
     }
 }

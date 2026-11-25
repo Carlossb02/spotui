@@ -178,7 +178,7 @@ fun LikedSongsScreen(navController: NavController) {
 
         val stableSongKeys=remember(filteredSongs){com.music.spotui.ui.utils.stableSongKeys(filteredSongs)}
         val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-        com.music.spotui.ui.components.VisibleSongPreload(listState, remember(filteredSongs) { filteredSongs.mapIndexed { i, song -> stableSongKeys[i] to song } })
+        com.music.spotui.ui.components.VisibleSongPreload(listState, remember(filteredSongs, stableSongKeys) { filteredSongs.mapIndexed { i, song -> (stableSongKeys.getOrNull(i) ?: song.id.toString()) to song } })
         val collapsedTitle = com.music.spotui.ui.components.rememberCollectionTitleState(listState, "liked_header")
         val searchReveal = rememberCollectionSearchState(listState, "liked_songs")
         val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
@@ -395,7 +395,7 @@ com.music.spotui.ui.components.CollectionActionBar(
                             }
                         }
                     } else {
-                        itemsIndexed(filteredSongs, key = { index, song -> stableSongKeys[index] }) { index, song ->
+                        itemsIndexed(filteredSongs, key = { index, song -> stableSongKeys.getOrNull(index) ?: song.id.toString() }) { index, song ->
                             val currentColor = if (song.id == likedSongsViewModel.currentSongId.value)
                                 Color(0xFF1ED760) else Color.White
 

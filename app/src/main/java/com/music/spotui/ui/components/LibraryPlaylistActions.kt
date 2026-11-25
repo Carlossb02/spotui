@@ -5,9 +5,7 @@ import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -26,8 +24,11 @@ import com.bumptech.glide.integration.compose.ExperimentalGlideComposeApi
 import com.bumptech.glide.integration.compose.GlideImage
 import com.music.spotui.data.entity.LibraryEntry
 
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+
 internal enum class LibraryPlaylistAction {
-    DOWNLOAD, ADD, TRACKS, NAME, DETAILS, REMOVE, QUEUE, COPY, COLLABORATORS, PRIVACY
+    DOWNLOAD, ADD, TRACKS, EDIT, REMOVE, QUEUE, COPY, COLLABORATORS, PRIVACY, NAME, DETAILS
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalGlideComposeApi::class)
@@ -43,49 +44,54 @@ internal fun LibraryPlaylistActions(
         containerColor = Color(0xFF202020),
         shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
     ) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                GlideImage(model = entry.coverUri, contentDescription = null, contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(52.dp).clip(RoundedCornerShape(8.dp)))
-                Column(Modifier.padding(start = 14.dp)) {
-                    Text(entry.name, color = Color.White, fontWeight = FontWeight.SemiBold,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(entry.subtitle, color = Color.LightGray, style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
+            contentPadding = PaddingValues(bottom = 16.dp),
+        ) {
+            item {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    GlideImage(model = entry.coverUri, contentDescription = null, contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(52.dp).clip(RoundedCornerShape(8.dp)))
+                    Column(Modifier.padding(start = 14.dp)) {
+                        Text(entry.name, color = Color.White, fontWeight = FontWeight.SemiBold,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(entry.subtitle, color = Color.LightGray, style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                HorizontalDivider(Modifier.padding(horizontal = 22.dp, vertical = 8.dp), color = Color.White.copy(alpha = .12f))
+            }
+            if (url != null) item {
+                MenuRow(Icons.Default.Share, "Compartir") {
+                    onDismiss()
+                    try {
+                        context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, url.toString())
+                        }, "Compartir lista"))
+                    } catch (_: ActivityNotFoundException) {
+                        Toast.makeText(context, "No hay una app para compartir", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
-            HorizontalDivider(Modifier.padding(horizontal = 22.dp, vertical = 8.dp), color = Color.White.copy(alpha = .12f))
-            if (url != null) MenuRow(Icons.Default.Share, "Compartir") {
-                onDismiss()
-                try {
-                    context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_TEXT, url.toString())
-                    }, "Compartir lista"))
-                } catch (_: ActivityNotFoundException) {
-                    Toast.makeText(context, "No hay una app para compartir", Toast.LENGTH_SHORT).show()
+            item { MenuRow(Icons.Default.Download, "Descargar") { onAction(LibraryPlaylistAction.DOWNLOAD) } }
+            item { MenuRow(Icons.Default.AddCircleOutline, "Añadir a esta lista") { onAction(LibraryPlaylistAction.ADD) } }
+            item { MenuRow(Icons.Default.List, "Editar canciones") { onAction(LibraryPlaylistAction.TRACKS) } }
+            item { MenuRow(Icons.Default.Edit, "Editar") { onAction(LibraryPlaylistAction.EDIT) } }
+            item { MenuRow(Icons.Default.Delete, "Quitar de Biblioteca") { onAction(LibraryPlaylistAction.REMOVE) } }
+            item {
+                MenuRow(Icons.Default.PushPin, if (pinned) "Desfijar lista" else "Fijar lista") {
+                    onTogglePin()
+                    onDismiss()
                 }
             }
-            MenuRow(Icons.Default.Download, "Descargar") { onAction(LibraryPlaylistAction.DOWNLOAD) }
-            MenuRow(Icons.Default.AddCircleOutline, "Añadir a esta lista") { onAction(LibraryPlaylistAction.ADD) }
-            MenuRow(Icons.Default.List, "Editar canciones") { onAction(LibraryPlaylistAction.TRACKS) }
-            MenuRow(Icons.Default.Edit, "Cambiar nombre") { onAction(LibraryPlaylistAction.NAME) }
-            MenuRow(Icons.Default.Image, if (url == null) "Descripción y portada" else "Descripción") {
-                onAction(LibraryPlaylistAction.DETAILS)
-            }
-            MenuRow(Icons.Default.Delete, "Quitar de Biblioteca") { onAction(LibraryPlaylistAction.REMOVE) }
-            MenuRow(Icons.Default.PushPin, if (pinned) "Desfijar lista" else "Fijar lista") {
-                onTogglePin()
-                onDismiss()
-            }
-            MenuRow(Icons.Default.PlaylistAdd, "Añadir a la cola") { onAction(LibraryPlaylistAction.QUEUE) }
-            MenuRow(Icons.Default.Add, "Añadir a otra lista") { onAction(LibraryPlaylistAction.COPY) }
+            item { MenuRow(Icons.Default.PlaylistAdd, "Añadir a la cola") { onAction(LibraryPlaylistAction.QUEUE) } }
+            item { MenuRow(Icons.Default.Add, "Añadir a otra lista") { onAction(LibraryPlaylistAction.COPY) } }
             if (url != null) {
-                MenuRow(Icons.Default.GroupAdd, "Colaboradores en Spotify") { onAction(LibraryPlaylistAction.COLLABORATORS) }
-                MenuRow(Icons.Default.Lock, "Privacidad en Spotify") { onAction(LibraryPlaylistAction.PRIVACY) }
+                item { MenuRow(Icons.Default.GroupAdd, "Colaboradores en Spotify") { onAction(LibraryPlaylistAction.COLLABORATORS) } }
+                item { MenuRow(Icons.Default.Lock, "Privacidad en Spotify") { onAction(LibraryPlaylistAction.PRIVACY) } }
             }
-            Spacer(Modifier.height(12.dp))
         }
     }
 }

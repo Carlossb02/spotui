@@ -317,7 +317,7 @@ fun SumUpAlbumScreen(
     Log.d("color", dominentColor.toString())
     val stableSongKeys=remember(filteredSongs){com.music.spotui.ui.utils.stableSongKeys(filteredSongs)}
         val listState = rememberLazyListState()
-        com.music.spotui.ui.components.VisibleSongPreload(listState, remember(filteredSongs) { filteredSongs.mapIndexed { i, song -> stableSongKeys[i] to song } })
+        com.music.spotui.ui.components.VisibleSongPreload(listState, remember(filteredSongs, stableSongKeys) { filteredSongs.mapIndexed { i, song -> (stableSongKeys.getOrNull(i) ?: song.id.toString()) to song } })
     val collapsedTitle = com.music.spotui.ui.components.rememberCollectionTitleState(listState, "album_header")
     val searchReveal = rememberCollectionSearchState(listState, albumName)
     val keyboard = LocalSoftwareKeyboardController.current
@@ -548,7 +548,7 @@ com.music.spotui.ui.components.CollectionActionBar(
                     }
                     }
                 } else {
-                    itemsIndexed(filteredSongs, key = { index, track -> stableSongKeys[index] }) { songIdx, targetSong ->
+                    itemsIndexed(filteredSongs, key = { index, track -> stableSongKeys.getOrNull(index) ?: track.id.toString() }) { songIdx, targetSong ->
 
                         var isLiked by remember(targetSong.id) {
                             mutableStateOf(isSongLiked(context, targetSong.id.toString()))

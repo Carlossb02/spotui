@@ -1,8 +1,5 @@
 package com.music.spotui.ui.components
 
-import android.graphics.RuntimeShader
-import android.os.Build
-import androidx.annotation.RequiresApi
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.interaction.InteractionSource
@@ -17,20 +14,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.layer.GraphicsLayer
-import androidx.compose.ui.graphics.layer.drawLayer
-import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.rememberGraphicsLayer
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInRoot
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import kotlin.math.ceil
 
-/** The collection paints this background once. Each lens reuses its GPU display list. */
+/** Kept for backwards compatibility across collection screens. */
 internal class CollectionGlassBackdrop(val layer: GraphicsLayer) {
     var origin by mutableStateOf<Offset?>(null)
 }
@@ -43,94 +32,71 @@ internal fun rememberCollectionGlassBackdrop(): CollectionGlassBackdrop {
 
 internal val LocalGlassBackdrop = staticCompositionLocalOf<CollectionGlassBackdrop?> { null }
 
+/**
+ * Clean capsule button styling using the tablet dock grey (#202020) solid background
+ * and a multi-tone gradient border derived from the cover/accent color.
+ */
 @Composable
 internal fun Modifier.liquidCollectionGlass(accent: Color, interaction: InteractionSource): Modifier {
-    val backdrop = LocalGlassBackdrop.current
-    val sampleLayer = rememberGraphicsLayer()
-    var origin by remember { mutableStateOf<Offset?>(null) }
     val pressed by interaction.collectIsPressedAsState()
-    val pressure = animateFloatAsState(if (pressed) 1f else 0f, tween(if (pressed) 95 else 210), label = "Glass press")
+    val pressure = animateFloatAsState(if (pressed) 1f else 0f, tween(if (pressed) 95 else 210), label = "Capsule press")
     return clip(RoundedCornerShape(50))
-        .onGloballyPositioned { origin = it.positionInRoot() }
         .drawWithCache {
-            val padding = 8.dp.toPx()
-            val pixelSize = IntSize(ceil(size.width + 2 * padding).toInt(), ceil(size.height + 2 * padding).toInt())
-            val shader = if (Build.VERSION.SDK_INT >= 33) {
-                runCatching { lensShader(size, padding, 1.6.dp.toPx(), accent) }.getOrNull()
-            } else null
-            var lastPressure = Float.NaN
+            val cornerRadius = CornerRadius(size.height / 2f)
             onDrawBehind {
                 val amount = pressure.value
-                val source = backdrop?.origin
-                val destination = origin
-                val hasBackdrop = backdrop != null && source != null && destination != null &&
-                    backdrop.layer.size != IntSize.Zero && drawContext.canvas.nativeCanvas.isHardwareAccelerated
-                if (hasBackdrop && backdrop != null && source != null && destination != null) {
-                    val relative = destination - source
-                    sampleLayer.record(size = pixelSize) {
-                        translate(padding - relative.x, padding - relative.y) { drawLayer(backdrop.layer) }
-                    }
-                    if (shader != null && Build.VERSION.SDK_INT >= 33 && lastPressure != amount) {
-                        shader.setFloatUniform("pressure", amount)
-                        sampleLayer.renderEffect = android.graphics.RenderEffect
-                            .createRuntimeShaderEffect(shader, "backdrop").asComposeRenderEffect()
-                        lastPressure = amount
-                    }
-                    translate(-padding, -padding) { drawLayer(sampleLayer) }
-                }
-                if (shader == null || !hasBackdrop) {
-                    drawRect(accent.copy(alpha = .24f + amount * .13f))
-                    drawRect(Brush.verticalGradient(listOf(Color.White.copy(alpha = .15f + amount * .09f),
-                        Color.Transparent, Color.Black.copy(alpha = .23f))))
-                }
-                val inset = .6.dp.toPx()
+
+                // Solid background matching tablet dock grey (#202020), subtly lightened on press
+                val bgRed = (0x20 / 255f + amount * 0.05f).coerceIn(0f, 1f)
+                val bgGreen = (0x20 / 255f + amount * 0.05f).coerceIn(0f, 1f)
+                val bgBlue = (0x20 / 255f + amount * 0.05f).coerceIn(0f, 1f)
                 drawRoundRect(
-                    brush = Brush.linearGradient(listOf(Color.White.copy(alpha = .61f + amount * .16f),
-                        accent.copy(alpha = .26f), Color.White.copy(alpha = .30f))),
-                    topLeft = Offset(inset, inset),
-                    size = Size((size.width - 2 * inset).coerceAtLeast(0f), (size.height - 2 * inset).coerceAtLeast(0f)),
-                    cornerRadius = CornerRadius(size.height / 2),
-                    style = Stroke(2 * inset),
+                    color = Color(red = bgRed, green = bgGreen, blue = bgBlue, alpha = 1f),
+                    cornerRadius = cornerRadius
+                )
+
+                // Outer multi-tone gradient border derived from cover/accent color
+                val outerStroke = 2.2.dp.toPx()
+                val insetOuter = outerStroke / 2f
+                val outerGradient = Brush.linearGradient(
+                    colors = listOf(
+                        accent.copy(alpha = 0.55f + amount * 0.20f),
+                        accent.copy(alpha = 0.85f + amount * 0.15f),
+                        Color.White.copy(alpha = 0.45f + amount * 0.15f),
+                        accent.copy(alpha = 0.65f + amount * 0.20f),
+                        accent.copy(alpha = 0.90f + amount * 0.10f)
+                    ),
+                    start = Offset(0f, 0f),
+                    end = Offset(size.width, size.height)
+                )
+
+                drawRoundRect(
+                    brush = outerGradient,
+                    topLeft = Offset(insetOuter, insetOuter),
+                    size = Size((size.width - 2 * insetOuter).coerceAtLeast(0f), (size.height - 2 * insetOuter).coerceAtLeast(0f)),
+                    cornerRadius = cornerRadius,
+                    style = Stroke(width = outerStroke)
+                )
+
+                // Inner subtle glow border for soft finish
+                val innerStroke = 1.0.dp.toPx()
+                val insetInner = outerStroke
+                val innerGradient = Brush.linearGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = 0.40f + amount * 0.15f),
+                        accent.copy(alpha = 0.35f),
+                        Color.White.copy(alpha = 0.15f)
+                    ),
+                    start = Offset(size.width * 0.2f, 0f),
+                    end = Offset(size.width * 0.8f, size.height)
+                )
+                drawRoundRect(
+                    brush = innerGradient,
+                    topLeft = Offset(insetInner, insetInner),
+                    size = Size((size.width - 2 * insetInner).coerceAtLeast(0f), (size.height - 2 * insetInner).coerceAtLeast(0f)),
+                    cornerRadius = CornerRadius((size.height - 2 * insetInner).coerceAtLeast(0f) / 2f),
+                    style = Stroke(width = innerStroke)
                 )
             }
         }
 }
-
-@RequiresApi(33)
-private fun lensShader(size: Size, padding: Float, blur: Float, accent: Color): RuntimeShader =
-    RuntimeShader("""
-        uniform shader backdrop;
-        uniform float2 bounds;
-        uniform float pad;
-        uniform float blur;
-        uniform float3 tint;
-        uniform float pressure;
-
-        half4 main(float2 p) {
-            float r = max(bounds.y * 0.5, 1.0);
-            float2 center = float2(pad) + bounds * 0.5;
-            float2 q = p - center;
-            float core = max(0.0, bounds.x * 0.5 - r);
-            float2 v = float2(q.x - clamp(q.x, -core, core), q.y);
-            float edge = smoothstep(0.35, 1.0, length(v) / r);
-            float2 normal = v / max(length(v), 0.01);
-            float2 samplePoint = p - normal * edge * edge * pad * (0.58 + 0.34 * pressure);
-
-            half3 scene = backdrop.eval(samplePoint).rgb * 0.40;
-            scene += backdrop.eval(samplePoint + float2(blur, 0.0)).rgb * 0.15;
-            scene += backdrop.eval(samplePoint - float2(blur, 0.0)).rgb * 0.15;
-            scene += backdrop.eval(samplePoint + float2(0.0, blur)).rgb * 0.15;
-            scene += backdrop.eval(samplePoint - float2(0.0, blur)).rgb * 0.15;
-            float2 light = normalize(float2(-0.64 + 0.95 * pressure, -1.0));
-            float gloss = pow(max(0.0, dot(light, normal)), 4.0) * edge;
-            half3 color = mix(scene * 0.86, half3(tint), 0.22 + 0.08 * pressure);
-            color += half3(0.07 + gloss * (0.18 + 0.10 * pressure));
-            return half4(color, 1.0);
-        }
-    """).apply {
-        setFloatUniform("bounds", size.width, size.height)
-        setFloatUniform("pad", padding)
-        setFloatUniform("blur", blur)
-        setFloatUniform("tint", accent.red, accent.green, accent.blue)
-        setFloatUniform("pressure", 0f)
-    }
