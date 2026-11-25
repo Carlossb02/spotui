@@ -729,9 +729,15 @@ object PodcastVideoSession {
                 return
             }
             if (show) {
+                val wasHidden = !videoVisible
                 videoVisible = true
+                if (wasHidden) firstVideoAlignPending = true
                 updateSurface()
-                player?.let { alignVideoWithAudio(it, initial = true) }
+                player?.let { visual ->
+                    if (wasHidden && !PodcastVideoClockPolicy.readyToReveal(
+                            SongPlayer.getCurrentPosition() - visual.currentPosition)) isLoading = true
+                    alignVideoWithAudio(visual)
+                }
             }
             return // A pending resolution or prepared decoder is reused as-is.
         }
@@ -852,7 +858,7 @@ object PodcastVideoSession {
                         // STATE_READY is not proof that a frame has been drawn.
                         // Keep the loading indicator until the visual decoder
                         // really renders; otherwise the UI is silently black.
-                        alignVideoWithAudio(visualPlayer, true)
+                        alignVideoWithAudio(visualPlayer)
                         watchForFirstFrame(videoId, visualPlayer)
                     }
                     Player.STATE_BUFFERING -> if (bufferingSince == 0L) {
@@ -867,7 +873,7 @@ object PodcastVideoSession {
                 hadReadyFrame = true
                 firstFrameWatchdog?.cancel()
                 firstFrameWatchdog = null
-                isLoading = false
+                alignVideoWithAudio(visualPlayer)
                 error = null
                 if (wasWaiting) Log.i("SpotidroidStartup", "video FIRST_FRAME=${android.os.SystemClock.elapsedRealtime() - videoRequestedAt}ms videoId=$videoId")
                 if (adaptiveActive && automaticQuality) {
@@ -1048,7 +1054,7 @@ object PodcastVideoSession {
     }
 
     /** Called only for the optional video clock. Never seek the audio player. */
-    private fun alignVideoWithAudio(p: ExoPlayer, initial: Boolean = false) {
+    private fun alignVideoWithAudio(p: ExoPlayer) {
         if (p.playbackState == Player.STATE_IDLE || p.playbackState == Player.STATE_ENDED) return
         val audioAt = SongPlayer.getCurrentPosition().coerceAtLeast(0L)
         val drift = audioAt - p.currentPosition
@@ -1071,7 +1077,7 @@ object PodcastVideoSession {
         // READY can fire before PlayerView has an attached Surface. Preserve
         // initial catch-up until the first *visible* frame can be rendered.
         val initialCatchUp = firstVideoAlignPending && visibleTargets.isNotEmpty() &&
-            abs(drift) > 650L
+            (!PodcastVideoClockPolicy.readyToReveal(drift) && (!shouldPlay || abs(drift) > 500L))
         if (firstVideoAlignPending && visibleTargets.isNotEmpty()) {
             firstVideoAlignPending = false
         }
@@ -1079,16 +1085,18 @@ object PodcastVideoSession {
         // Hard seek only for explicit user seeks or massive position drift (>5s)
         val mayRecover = shouldPlay && PodcastVideoClockPolicy.recover(drift, now - lastSyncSeekAt, now - lastReadyTime) &&
             p.playbackState == Player.STATE_READY
-        if (shouldPlay && (initialCatchUp || explicitAudioSeek || mayRecover)) {
+        if (initialCatchUp || (shouldPlay && (explicitAudioSeek || mayRecover))) {
             lastSyncSeekAt = now
             p.seekTo(audioAt)
+            return
         } else if (shouldPlay && p.playbackState == Player.STATE_READY) {
             // Smooth micro-adjustments via playback speed avoid decoder resets and keyframe stalls
-            val targetSpeed = PodcastVideoClockPolicy.speed(drift)
+            val targetSpeed = PodcastVideoClockPolicy.speed(drift, catchingUp = isLoading && videoVisible)
             if (p.playbackParameters.speed != targetSpeed) {
                 p.playbackParameters = androidx.media3.common.PlaybackParameters(targetSpeed)
             }
         }
+        if (hadReadyFrame && PodcastVideoClockPolicy.readyToReveal(drift)) isLoading = false
         if (now - lastSyncReportAt >= 10_000L) {
             lastSyncReportAt = now
             Log.d(tag, "video sync drift=${drift}ms playing=${p.isPlaying} " +
@@ -1244,7 +1252,7 @@ object PodcastVideoSession {
         // A ready player may have waited for this surface. Perform its single
         // initial alignment now; never seek the actual podcast soundtrack.
         if (target != null && firstVideoAlignPending && p.playbackState == Player.STATE_READY) {
-            alignVideoWithAudio(p, initial = true)
+            alignVideoWithAudio(p)
         }
         if (target != null && !hadReadyFrame && p.playbackState == Player.STATE_READY) {
             activeVideoId?.let { watchForFirstFrame(it, p) }
@@ -1322,6 +1330,7 @@ fun PodcastVideoFrame(
         }
         if (active && !compact && error == null && !PodcastVideoSession.fullscreen &&
             PodcastVideoSession.isLoading) {
+            Box(Modifier.matchParentSize().background(Color.Black))
             CircularProgressIndicator(
                 color = Color.White,
                 modifier = Modifier.align(Alignment.Center).size(30.dp)

@@ -18,4 +18,11 @@ class PodcastVideoClockPolicyTest {
         assertTrue(PodcastVideoClockPolicy.speed(500) > 1f)
         assertTrue(PodcastVideoClockPolicy.speed(-500) < 1f)
     }
+    @Test fun initialAlignmentCatchesUpBeforeShowingTheImage() {
+        assertFalse(PodcastVideoClockPolicy.readyToReveal(400))
+        assertFalse(PodcastVideoClockPolicy.readyToReveal(-400))
+        assertTrue(PodcastVideoClockPolicy.readyToReveal(250))
+        assertTrue(PodcastVideoClockPolicy.speed(400, catchingUp = true) > PodcastVideoClockPolicy.speed(400))
+        assertTrue(PodcastVideoClockPolicy.speed(-400, catchingUp = true) < PodcastVideoClockPolicy.speed(-400))
+    }
 }
