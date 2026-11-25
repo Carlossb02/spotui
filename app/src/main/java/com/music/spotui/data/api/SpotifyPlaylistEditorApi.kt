@@ -38,12 +38,7 @@ internal object SpotifyPlaylistEditorApi {
         check(remote.owner?.id == ownerId) { "La cuenta de Spotify ha cambiado." }
         val local = linkedPlaylist(context, id, ownerId, localId)
         val remoteName = name?.takeIf { local == null && it != remote.name }
-        val marker = localId?.let(::playlistLinkMarkers)?.firstOrNull { current ->
-            remote.description.orEmpty().lineSequence().any { it.trim() == current }
-        }
-        val remoteDescription = description?.let {
-            if (marker == null) it else listOf(it, marker).filter(String::isNotBlank).joinToString("\n")
-        }?.takeUnless { it == remote.description.orEmpty() }
+        val remoteDescription = description?.takeUnless { it == remote.description.orEmpty() }
         checkSession(context, session)
         when {
             remoteDescription != null -> Spotify.editPlaylistAttributes(id, remoteName, remoteDescription).getOrThrow()
@@ -82,6 +77,21 @@ internal object SpotifyPlaylistEditorApi {
         check(playlist.owner?.id == ownerId) { "Solo el propietario puede editar esta lista en Spotify." }
         return playlist
     }
+
+    suspend fun isPrivate(context: Context, id: String): Boolean = withContext(Dispatchers.IO) {
+        val session = SpotifySession.spDc(context)
+        check(SpotifyTokenProvider.ensureToken(context)) { "Vuelve a conectar Spotify." }
+        checkSession(context, session)
+        Spotify.playlistIsPrivate(id).getOrThrow().also { checkSession(context, session) }
+    }
+
+    suspend fun setPrivate(context: Context, id: String, ownerId: String, isPrivate: Boolean) =
+        withContext(Dispatchers.IO) {
+            val session = SpotifySession.spDc(context)
+            check(ownedPlaylist(context, id, session).owner?.id == ownerId) { "La cuenta de Spotify ha cambiado." }
+            Spotify.setPlaylistPrivate(id, isPrivate).getOrThrow()
+            checkSession(context, session)
+        }
 
     private suspend fun checkSession(context: Context, session: String) {
         currentCoroutineContext().ensureActive()

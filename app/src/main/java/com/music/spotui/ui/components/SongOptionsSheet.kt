@@ -23,14 +23,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AddCircle
 import androidx.compose.material.icons.outlined.Album
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.Favorite
-import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.PlaylistAdd
@@ -394,9 +393,9 @@ fun SongOptionsSheet(
                 onDismiss()
             }
             SongMenuRow(
-                icon = if (liked) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
+                icon = Icons.Outlined.AddCircleOutline,
                 label = text(if (liked) "Remove from Liked Songs" else "Add to Liked Songs"),
-                iconTint = Color(0xFF1ED760),
+                iconTint = if (liked) Color(0xFF1ED760) else Color(0xFFB3B3B3),
             ) {
                 com.music.spotui.data.api.LibraryContentMemory.register(context, song)
                 if (liked) removeLikedSongId(context, song.id.toString())

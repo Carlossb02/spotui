@@ -75,6 +75,8 @@ object LocalSpotifyMirror {
             if(SpotifySession.spDc(c)!=session)return@withLock
             if(local.spotifyOwnerId.isNotBlank() && local.spotifyOwnerId!=me) {status(local.id,Phase.FAILED,"Esta lista está vinculada a otra cuenta de Spotify");continue}
             val st=state(c,me,local.id)
+            if (local.syncedSpotifyId.isNotBlank() &&
+                SpotifyPendingWrites.desired(c, "playlist_library", local.syncedSpotifyId) == false) continue
             val force = forced.remove(local.id)
             if(!force && System.currentTimeMillis()<st.optLong("retryAt"))continue
             val uris=local.songs.mapNotNull(::exportPlaylistUri)
@@ -210,13 +212,6 @@ object LocalSpotifyMirror {
         guard(context, session)
         val playlist = Spotify.playlist(remoteId).getOrThrow()
         check(playlist.owner?.id == owner) { "La lista no pertenece a esta cuenta de Spotify" }
-        val markers = playlistLinkMarkers(localId)
-        if (markers.none { playlist.description?.contains(it) == true }) {
-            guard(context, session)
-            val description = listOf(playlist.description.orEmpty(), markers.first())
-                .filter(String::isNotBlank).joinToString("\n")
-            Spotify.editPlaylistAttributes(remoteId, newDescription = description).getOrThrow()
-        }
         updateLibraryMembership(context, owner, session, remoteId, saved = true)
         state.put("initializing", false)
         save(context, owner, localId, state)
@@ -229,21 +224,8 @@ object LocalSpotifyMirror {
         playlistId: String,
         saved: Boolean,
     ) {
-        suspend fun isInLibrary(): Boolean {
-            guard(context, session)
-            return SpotifySync.allLibraryPlaylists(context, forceRefresh = true).any { it.id == playlistId }
-        }
-
-        // Read membership before sending: an interrupted attempt may have succeeded,
-        // or the playlist may already have been saved by another device.
-        if (isInLibrary() == saved) return
         guard(context, session)
-        Spotify.setPlaylistInLibrary(owner, playlistId, saved).getOrThrow()
-        repeat(4) { attempt ->
-            if (attempt > 0) delay(400L * attempt)
-            if (isInLibrary() == saved) return
-        }
-        error("Spotify aún no confirma el cambio en tu biblioteca. La lista se conserva y se reintentará.")
+        SpotifySync.writePlaylistMembership(context, session, owner, playlistId, saved)
     }
 
     private suspend fun applyLocal(c:Context,expected:LocalPlaylist,updated:LocalPlaylist) {

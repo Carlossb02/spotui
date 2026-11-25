@@ -169,6 +169,7 @@ object PodcastProvider {
         fun normalize(raw: String): String = Normalizer.normalize(raw, Normalizer.Form.NFD)
             .replace(Regex("""\p{M}+"""), "")
             .lowercase(Locale.ROOT)
+            .replace(Regex("""\b(\d+)\s*vs\.?\s*(\d+)\b"""), "$1 vs $2")
             .replace(Regex("""[^a-z0-9]+"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim()
@@ -724,6 +725,36 @@ object PodcastProvider {
 
             distinctShows to distinctEpisodes
         }
+
+    private val spotifyShowMatches = com.music.spotui.util.ExpiringLruCache<String, PodcastModel>(128, 30 * 60_000L)
+
+    /** Resolve only Spotify shows with a strongly matching YouTube podcast identity. */
+    suspend fun matchSpotifyShows(
+        query: String, shows: List<com.metrolist.spotify.models.SpotifyShow>, existing: List<PodcastModel>,
+    ): List<PodcastModel> = kotlinx.coroutines.coroutineScope {
+        val candidates = shows.filter { it.id.isNotBlank() && podcastNameScore(query, it.name) >= 70 }
+            .distinctBy { it.id }.take(3)
+        candidates.map { show ->
+            async(Dispatchers.IO) {
+                fun match(results: List<PodcastModel>): PodcastModel? {
+                    val ranked = results.filter { podcastNameScore(show.name, it.name) >= 85 }
+                        .distinctBy { it.id }.map {
+                            it to (podcastNameScore(show.name, it.name) +
+                                if (podcastNameScore(show.publisher, it.publisher) >= 85) 20 else 0)
+                        }.sortedByDescending { it.second }
+                    return ranked.firstOrNull()?.takeUnless { first ->
+                        ranked.getOrNull(1)?.second == first.second
+                    }?.first
+                }
+                spotifyShowMatches.get(show.id) ?: match(existing)
+                    ?: withTimeoutOrNull(4_000L) {
+                        val results = YouTube.search(show.name, YouTube.SearchFilter.FILTER_PODCAST)
+                            .getOrNull()?.items.orEmpty().mapNotNull(::itemToShow)
+                        match(results)?.also { spotifyShowMatches.put(show.id, it) }
+                    }
+            }
+        }.mapNotNull { it.await() }
+    }
 
     suspend fun getShow(
         showId: String,

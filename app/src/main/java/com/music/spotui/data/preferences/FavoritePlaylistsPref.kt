@@ -69,6 +69,11 @@ object FavoritePlaylistsPref {
         idOf(it.spotifyId) == idOf(id)
     }
 
+    @Synchronized
+    internal fun removeShortcut(context: Context, id: String) {
+        if (isFavorite(context, id)) toggle(context, id, "", "", "")
+    }
+
     /** Return true when added, false when removed. */
     @Synchronized
     fun toggle(context: Context, id: String, name: String, cover: String, owner: String): Boolean {

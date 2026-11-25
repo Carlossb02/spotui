@@ -1136,6 +1136,54 @@ object Spotify {
     suspend fun renamePlaylist(playlistId: String, name: String): Result<Unit> =
         editPlaylistAttributes(playlistId, newName = name)
 
+    /** The Web Player's base access permission, independent of profile publication. */
+    suspend fun playlistIsPrivate(playlistId: String): Result<Boolean> = runCatching {
+        val token = accessToken ?: throw SpotifyException(401, "Vuelve a conectar Spotify.")
+        when (playlistBasePermission(playlistId, token).str("permissionLevel")) {
+            "BLOCKED" -> true
+            "VIEWER", "CONTRIBUTOR" -> false
+            else -> throw SpotifyException(502, "Spotify no devolvió la privacidad de la lista.")
+        }
+    }
+
+    suspend fun setPlaylistPrivate(playlistId: String, isPrivate: Boolean): Result<Unit> = runCatching {
+        val token = accessToken ?: throw SpotifyException(401, "Vuelve a conectar Spotify.")
+        val desired = if (isPrivate) "BLOCKED" else "VIEWER"
+        val current = playlistBasePermission(playlistId, token)
+        if (current.str("permissionLevel") == desired) return@runCatching
+        val update = buildJsonObject {
+            current.forEach { (key, value) -> put(key, value) }
+            put("permissionLevel", desired)
+        }
+        val response = playlistWriteClient.post(playlistPermissionUrl(playlistId)) {
+            header("Authorization", "Bearer $token")
+            setBody(TextContent(update.toString(), ContentType.Application.Json))
+        }
+        if (response.status.value !in 200..299) {
+            throw SpotifyException(response.status.value, "Spotify rechazó el cambio de privacidad (${response.status.value}).")
+        }
+        repeat(3) { attempt ->
+            if (attempt > 0) kotlinx.coroutines.delay(350L * attempt)
+            if (playlistBasePermission(playlistId, token).str("permissionLevel") == desired) return@runCatching
+        }
+        throw SpotifyException(502, "Spotify aún no confirma el cambio de privacidad.")
+    }
+
+    private fun playlistPermissionUrl(playlistId: String): String {
+        require(playlistId.matches(Regex("[A-Za-z0-9]{22}")))
+        return "https://spclient.wg.spotify.com/playlist/$playlistId/permission/base"
+    }
+
+    private suspend fun playlistBasePermission(playlistId: String, token: String): JsonObject {
+        val response = playlistWriteClient.get(playlistPermissionUrl(playlistId)) {
+            header("Authorization", "Bearer $token")
+        }
+        if (response.status.value !in 200..299) {
+            throw SpotifyException(response.status.value, "No se pudo leer la privacidad en Spotify (${response.status.value}).")
+        }
+        return json.parseToJsonElement(response.bodyAsText()).jsonObject
+    }
+
     /**
      * Removes tracks from a Spotify playlist via GQL mutation.
      * Requires the playlist-scoped [uid] for each item
@@ -1384,12 +1432,13 @@ object Spotify {
     // Catalog search + a show's episode list via the stable REST Web API. Uses
     // the same web bearer token as track/artist reads; episodes play through the
     // hidden Spotify web player (SpotifyWebPlayer.playEpisode).
-    suspend fun searchPodcasts(query: String, limit: Int = 20): Result<com.metrolist.spotify.models.SpotifyPodcastSearchResult> =
+    suspend fun searchPodcasts(query: String, limit: Int = 20, market: String? = null): Result<com.metrolist.spotify.models.SpotifyPodcastSearchResult> =
         runCatching {
             authenticatedGet<com.metrolist.spotify.models.SpotifyPodcastSearchResult>("search") {
                 parameter("q", query)
                 parameter("type", "show,episode")
                 parameter("limit", limit)
+                if (market != null) parameter("market", market)
             }
         }
 
