@@ -171,7 +171,7 @@ private fun CollectionStoryPager(
     val durationCache = remember { ExpiringLruCache<String, Long>(8, 4 * 60_000L) }
     val artistPhotos = remember { ExpiringLruCache<String, String>(100, 30 * 60_000L) }
     val canvasCache = remember { ExpiringLruCache<String, String>(12, 5 * 60_000L) }
-    var canvasUrl by remember { mutableStateOf<String?>(null) }
+    var canvas by remember { mutableStateOf<Pair<Int, String>?>(null) }
     var hasVideo by remember { mutableStateOf(false) }
     var audioFallback by remember { mutableStateOf<MediaSource?>(null) }
     var status by remember { mutableIntStateOf(Player.STATE_IDLE) }
@@ -273,8 +273,7 @@ private fun CollectionStoryPager(
     LaunchedEffect(muted) { player.volume = if (muted) 0f else 1f }
     LaunchedEffect(page, preparedPage, playPreview) { player.playWhenReady = playPreview }
     LaunchedEffect(page, foreground) {
-        canvasUrl = null
-        if (foreground) canvasUrl = canvasFor(active)
+        canvas = if (foreground) canvasFor(active)?.let { page to it } else null
     }
     LaunchedEffect(page) { artistMenu = false }
     LaunchedEffect(page, failure) {
@@ -390,16 +389,22 @@ private fun CollectionStoryPager(
             val song = clips[index % clips.size]
             val selected = index == page
             val artwork = song.coverUri.ifBlank { cover }
-            val video = canvasUrl.takeIf { selected }
+            val video = canvas?.takeIf { selected && it.first == index }?.second
+            var canvasFrame by remember(index, video) { mutableStateOf(false) }
+            val showEpisodeVideo = selected && hasVideo && preparedPage == index
+            var episodeFrame by remember(index, showEpisodeVideo) { mutableStateOf(false) }
             val shareLink = remember(song) { storyLink(song) }
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Box(Modifier.widthIn(max = 460.dp).fillMaxWidth().fillMaxHeight().clip(RoundedCornerShape(22.dp)).background(Color(0xFF191820))) {
                 if (video != null) {
                     CanvasVideo(video, Modifier.fillMaxSize(), playing = playPreview, textureSurface = true,
-                        onError = { canvasUrl = null })
-                } else {
+                        onError = { if (canvas == (index to video)) canvas = null },
+                        onFirstFrame = { canvasFrame = true },
+                        onSurfaceDetached = { canvasFrame = false })
+                }
+                if (!canvasFrame) {
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(
-                        accent.copy(alpha = .8f), Color(0xFF292431), Color(0xFF15131B),
+                        accent, Color(0xFF292431), Color(0xFF15131B),
                     ))))
                 }
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(
@@ -422,10 +427,13 @@ private fun CollectionStoryPager(
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        when {
-                            selected && hasVideo -> StoryVideo(player, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
-                            video == null && artwork.isNotBlank() -> GlideImage(artwork, null,
-                                Modifier.fillMaxWidth(.82f).aspectRatio(1f).clip(RoundedCornerShape(19.dp)),
+                        if (showEpisodeVideo) {
+                            StoryVideo(player, Modifier.fillMaxWidth().aspectRatio(16f / 9f)) { episodeFrame = true }
+                        }
+                        if (!canvasFrame && !episodeFrame) {
+                            GlideImage(artwork.takeIf(String::isNotBlank), null,
+                                Modifier.fillMaxWidth(.82f).aspectRatio(1f).clip(RoundedCornerShape(19.dp))
+                                    .background(Color(0xFF292431)),
                                 contentScale = ContentScale.Crop)
                         }
                         if (selected && !failure && status != Player.STATE_READY && status != Player.STATE_ENDED) {
@@ -633,14 +641,21 @@ private suspend fun resolveStoryContent(timeoutMs: Long, resolve: suspend () -> 
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-private fun StoryVideo(player: Player, modifier: Modifier) {
+private fun StoryVideo(player: Player, modifier: Modifier, onFirstFrame: () -> Unit) {
     val context = LocalContext.current
     val view = remember(context) {
         android.view.LayoutInflater.from(context).inflate(com.music.spotui.R.layout.story_video_view, null) as PlayerView
     }
     DisposableEffect(view, player) {
+        val listener = object : Player.Listener {
+            override fun onRenderedFirstFrame() = onFirstFrame()
+        }
+        player.addListener(listener)
         view.player = player
-        onDispose { view.player = null }
+        onDispose {
+            player.removeListener(listener)
+            view.player = null
+        }
     }
     AndroidView(factory = { view }, modifier = modifier)
 }

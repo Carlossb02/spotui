@@ -2737,10 +2737,13 @@ fun PlayerMenuRow(icon:ImageVector,label:String,subtitle:String?=null,iconTint:C
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 internal fun CanvasVideo(url: String, modifier: Modifier = Modifier, playing: Boolean = true,
-    textureSurface: Boolean = false, onError: (() -> Unit)? = null) {
+    textureSurface: Boolean = false, onError: (() -> Unit)? = null,
+    onFirstFrame: (() -> Unit)? = null, onSurfaceDetached: (() -> Unit)? = null) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val currentOnError by androidx.compose.runtime.rememberUpdatedState(onError)
+    val currentOnFirstFrame by androidx.compose.runtime.rememberUpdatedState(onFirstFrame)
+    val currentOnSurfaceDetached by androidx.compose.runtime.rememberUpdatedState(onSurfaceDetached)
     val shouldPlay by androidx.compose.runtime.rememberUpdatedState(playing)
 
     // Canvas is decorative; decoding an additional Opus/AAC audio track at volume
@@ -2784,6 +2787,7 @@ internal fun CanvasVideo(url: String, modifier: Modifier = Modifier, playing: Bo
     DisposableEffect(exo, lifecycleOwner) {
         var released = false
         val listener = object : androidx.media3.common.Player.Listener {
+            override fun onRenderedFirstFrame() { currentOnFirstFrame?.invoke() }
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 currentOnError?.invoke()
             }
@@ -2797,6 +2801,7 @@ internal fun CanvasVideo(url: String, modifier: Modifier = Modifier, playing: Bo
                     // disappears. The media decoder should not race Surface teardown.
                     exo.pause()
                     playerView.player = null
+                    currentOnSurfaceDetached?.invoke()
                 }
                 androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
                     // ON_RESUME may be dispatched before MainActivity updates
@@ -2821,7 +2826,9 @@ internal fun CanvasVideo(url: String, modifier: Modifier = Modifier, playing: Bo
         }
     }
     LaunchedEffect(exo, playing) { exo.playWhenReady = playing }
-    androidx.compose.ui.viewinterop.AndroidView(modifier = modifier, factory = { playerView })
+    androidx.compose.runtime.key(playerView) {
+        androidx.compose.ui.viewinterop.AndroidView(modifier = modifier, factory = { playerView })
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
