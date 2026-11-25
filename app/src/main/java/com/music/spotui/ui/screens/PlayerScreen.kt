@@ -2736,10 +2736,11 @@ fun PlayerMenuRow(icon:ImageVector,label:String,subtitle:String?=null,iconTint:C
  */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-private fun CanvasVideo(url: String, modifier: Modifier = Modifier, onError: (() -> Unit)? = null) {
+internal fun CanvasVideo(url: String, modifier: Modifier = Modifier, playing: Boolean = true, onError: (() -> Unit)? = null) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val currentOnError by androidx.compose.runtime.rememberUpdatedState(onError)
+    val shouldPlay by androidx.compose.runtime.rememberUpdatedState(playing)
 
     // Canvas is decorative; decoding an additional Opus/AAC audio track at volume
     // zero still allocates a codec and buffer queues. Disable audio at the track
@@ -2759,7 +2760,7 @@ private fun CanvasVideo(url: String, modifier: Modifier = Modifier, onError: (()
                 setMediaItem(androidx.media3.common.MediaItem.fromUri(url))
                 repeatMode = androidx.media3.common.Player.REPEAT_MODE_ONE
                 volume = 0f
-                playWhenReady = true
+                playWhenReady = playing
                 prepare()
             }
     }
@@ -2797,7 +2798,7 @@ private fun CanvasVideo(url: String, modifier: Modifier = Modifier, onError: (()
                     // ON_RESUME may be dispatched before MainActivity updates
                     // UiVisibility; restore the surface based on lifecycle itself.
                     playerView.player = exo
-                    exo.play()
+                    exo.playWhenReady = shouldPlay
                 }
                 else -> Unit
             }
@@ -2815,6 +2816,7 @@ private fun CanvasVideo(url: String, modifier: Modifier = Modifier, onError: (()
             exo.release()
         }
     }
+    LaunchedEffect(exo, playing) { exo.playWhenReady = playing }
     androidx.compose.ui.viewinterop.AndroidView(modifier = modifier, factory = { playerView })
 }
 

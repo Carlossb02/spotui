@@ -7,6 +7,7 @@ import com.metrolist.innertube.models.EpisodeItem
 import com.metrolist.innertube.models.PlaylistItem
 import com.metrolist.innertube.models.PodcastItem
 import com.metrolist.innertube.models.YTItem
+import com.metrolist.spotify.models.SpotifyShow
 import com.music.spotui.data.entity.PodcastModel
 import com.music.spotui.data.entity.SongsModel
 import kotlinx.coroutines.CancellationException
@@ -35,7 +36,7 @@ object PodcastProvider {
     private const val YOUTUBE_PODCAST_PREFIX = "yt_podcast:"
     private const val YOUTUBE_EPISODE_PREFIX = "yt_ep:"
     private const val ITUNES_PREFIX = "itunes:"
-    private const val LEGACY_SPOTIFY_SHOW_PREFIX = "spotify:show:"
+    private const val SPOTIFY_SHOW_PREFIX = "spotify:show:"
 
     // YouTube Music pide la página de un programa con "MPSP" + id de playlist.
     private const val PODCAST_BROWSE_PREFIX = "MPSP"
@@ -700,23 +701,17 @@ object PodcastProvider {
                 YouTube.SearchFilter.FILTER_EPISODE
             )
 
-            for (filter in filters) {
-                try {
-                    val result = YouTube.search(query, filter)
+            val pages = coroutineScope {
+                filters.map { filter -> async {
+                    YouTube.search(query, filter)
                         .onFailure { Log.e(TAG, "Search FAILED: $query", it) }
-                        .getOrNull() ?: continue
-
-                    for (item in result.items) {
-                        if (item is EpisodeItem) {
-                            episodes.add(episodeToSong(item))
-                        } else {
-                            itemToShow(item)?.let { shows.add(it) }
-                        }
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Log.e(TAG, "Search crashed: query=$query, filter=$filter", e)
+                        .getOrNull()?.items.orEmpty()
+                } }.awaitAll()
+            }
+            for (items in pages) {
+                for (item in items) {
+                    if (item is EpisodeItem) episodes.add(episodeToSong(item))
+                    else itemToShow(item)?.let(shows::add)
                 }
             }
 
@@ -728,34 +723,35 @@ object PodcastProvider {
 
     private val spotifyShowMatches = com.music.spotui.util.ExpiringLruCache<String, PodcastModel>(128, 30 * 60_000L)
 
-    /** Resolve only Spotify shows with a strongly matching YouTube podcast identity. */
-    suspend fun matchSpotifyShows(
-        query: String, shows: List<com.metrolist.spotify.models.SpotifyShow>, existing: List<PodcastModel>,
-    ): List<PodcastModel> = kotlinx.coroutines.coroutineScope {
-        val candidates = shows.filter { it.id.isNotBlank() && podcastNameScore(query, it.name) >= 70 }
-            .distinctBy { it.id }.take(3)
-        candidates.map { show ->
-            async(Dispatchers.IO) {
-                fun match(results: List<PodcastModel>): PodcastModel? {
-                    val ranked = results.filter { podcastNameScore(show.name, it.name) >= 85 }
-                        .distinctBy { it.id }.map {
-                            it to (podcastNameScore(show.name, it.name) +
-                                if (podcastNameScore(show.publisher, it.publisher) >= 85) 20 else 0)
-                        }.sortedByDescending { it.second }
-                    return ranked.firstOrNull()?.takeUnless { first ->
-                        ranked.getOrNull(1)?.second == first.second
-                    }?.first
-                }
-                spotifyShowMatches.get(show.id) ?: match(existing)
-                    ?: withTimeoutOrNull(4_000L) {
-                        val results = YouTube.search(show.name, YouTube.SearchFilter.FILTER_PODCAST)
-                            .getOrNull()?.items.orEmpty().mapNotNull(::itemToShow)
-                        match(results)?.also { spotifyShowMatches.put(show.id, it) }
-                    }
-            }
-        }.mapNotNull { it.await() }
+    private fun verifiedYouTubeShow(show: SpotifyShow, candidates: List<PodcastModel>): PodcastModel? =
+        candidates.filter {
+            PodcastDiscoveryPolicy.showTitleMatches(show.name, it.name) &&
+                PodcastDiscoveryPolicy.publisherMatches(show.publisher, it.publisher)
+        }.distinctBy { podcastBrowseId(it.id) }.singleOrNull()
+
+    /** Keep the Spotify show even when YouTube has only individual videos of its episodes. */
+    internal suspend fun discoverSpotifyShows(
+        query: String, shows: List<SpotifyShow>, existing: List<PodcastModel>,
+    ): List<PodcastModel> = coroutineScope {
+        shows.filter { PodcastDiscoveryPolicy.validShow(it) && PodcastDiscoveryPolicy.relevantShow(query, it.name) }
+            .distinctBy { it.id }
+            .sortedByDescending { PodcastDiscoveryPolicy.showTitleMatches(query, it.name) }
+            .take(10).mapIndexed { index, show -> async {
+                SpotifyPodcastEpisodes.remember(show)
+                val direct = spotifyShowMatches.get(show.id) ?: verifiedYouTubeShow(show, existing)
+                val resolved = direct ?: if (index < 3 && !query.equals(show.name, ignoreCase = true)) {
+                        withTimeoutOrNull(2_000L) {
+                            val items = YouTube.search(show.name, YouTube.SearchFilter.FILTER_PODCAST)
+                                .getOrNull()?.items.orEmpty().mapNotNull(::itemToShow)
+                            verifiedYouTubeShow(show, items)
+                        }
+                    } else null
+                resolved?.also { spotifyShowMatches.put(show.id, it) } ?: SpotifyPodcastEpisodes.asModel(show)
+            } }.awaitAll()
     }
 
+    private suspend fun spotifyShow(showId: String): SpotifyShow? =
+        SpotifyPodcastEpisodes.show(showId.removePrefix(SPOTIFY_SHOW_PREFIX))
     suspend fun getShow(
         showId: String,
         showName: String = ""
@@ -765,9 +761,9 @@ object PodcastProvider {
             return@withContext null
         }
 
-        // Old versions saved some Spotify show IDs. Resolve by name on YouTube instead.
-        if (showId.startsWith(LEGACY_SPOTIFY_SHOW_PREFIX)) {
-            return@withContext showName.takeIf { it.isNotBlank() }
+        if (showId.startsWith(SPOTIFY_SHOW_PREFIX)) {
+            return@withContext spotifyShow(showId)?.let(SpotifyPodcastEpisodes::asModel)
+                ?: showName.takeIf { it.isNotBlank() }
                 ?.let { withTimeoutOrNull(15_000L) { resolveCuratedPodcast(it) } }
         }
 
@@ -833,8 +829,26 @@ object PodcastProvider {
             }
         }
 
-        if (showId.startsWith(LEGACY_SPOTIFY_SHOW_PREFIX)) {
-            val youtubeShow = showName.takeIf { it.isNotBlank() }
+        if (showId.startsWith(SPOTIFY_SHOW_PREFIX)) {
+            val show = spotifyShow(showId)
+            if (show != null) {
+                var foundEpisodes = false
+                SpotifyPodcastEpisodes.pages(show, publishedSince).collect { episodes ->
+                    if (episodes.isNotEmpty()) {
+                        foundEpisodes = true
+                        rememberEpisodes(showId, show.name, episodes)
+                        if (publishedSince == null) episodeMemoryCache[showId] = System.currentTimeMillis() to episodes
+                        emit(episodes)
+                    }
+                }
+                if (foundEpisodes) return@flow
+            }
+            val youtubeShow = if (show != null) {
+                val items = withTimeoutOrNull(4_000L) {
+                    YouTube.search(show.name, YouTube.SearchFilter.FILTER_PODCAST).getOrNull()?.items.orEmpty()
+                }.orEmpty()
+                verifiedYouTubeShow(show, items.mapNotNull(::itemToShow))
+            } else showName.takeIf { it.isNotBlank() }
                 ?.let { withTimeoutOrNull(15_000L) { resolveCuratedPodcast(it) } }
             if (youtubeShow != null) {
                 getShowEpisodesFlow(youtubeShow.id, youtubeShow.name, publishedSince, forceRefresh).collect { emit(it) }

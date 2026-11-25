@@ -136,8 +136,11 @@ fun setIgnoreBatteryOptimization(c: Context, v: Boolean) = prefs(c).edit().putBo
 
 fun getUpdateRepoUrl(c: Context): String {
     val stored = prefs(c).getString(KEY_UPDATE_REPO_URL, DEFAULT_UPDATE_REPO_URL).orEmpty()
+    val repository = stored.trim().trimEnd('/').removeSuffix("/releases/latest")
+        .removeSuffix("/releases").removeSuffix(".git")
     return if (stored.isBlank() || !stored.contains("Carlossb02", ignoreCase = true) ||
-        stored.trim().trimEnd('/').equals(LEGACY_UPDATE_REPO_URL, ignoreCase = true)
+        repository.equals(LEGACY_UPDATE_REPO_URL, ignoreCase = true) ||
+        repository.equals(DEFAULT_UPDATE_REPO_URL, ignoreCase = true)
     ) DEFAULT_UPDATE_REPO_URL else stored
 }
 
