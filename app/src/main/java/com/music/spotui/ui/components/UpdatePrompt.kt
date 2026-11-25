@@ -4,6 +4,10 @@ import com.music.spotui.util.uiLocalized
 
 import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
+import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,6 +18,7 @@ import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -21,6 +26,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -36,6 +42,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import com.music.spotui.data.update.UpdateChecker
+import com.music.spotui.data.update.UpdateInstaller
+import java.io.File
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
@@ -65,7 +76,41 @@ import androidx.compose.material.icons.filled.Close
 @Composable
 fun UpdatePrompt() {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var update by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
+    var download by remember { mutableStateOf<Job?>(null) }
+    var progress by remember { mutableStateOf<Int?>(null) }
+    var downloadedApk by remember { mutableStateOf<File?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun install(apk: File) {
+        runCatching { UpdateInstaller.launch(context, apk) }.onFailure {
+            Log.w("UpdatePrompt", "Could not open package installer", it)
+            error = "No se pudo abrir el instalador de Android."
+        }
+    }
+
+    val installerPermission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (context.packageManager.canRequestPackageInstalls()) {
+            downloadedApk?.let(::install)
+        } else {
+            error = "Autoriza a Spotidroid a instalar aplicaciones y vuelve a pulsar Instalar."
+        }
+    }
+
+    fun requestInstall(apk: File) {
+        if (context.packageManager.canRequestPackageInstalls()) {
+            install(apk)
+        } else {
+            runCatching {
+                installerPermission.launch(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.fromParts("package", context.packageName, null)))
+            }.onFailure {
+                Log.w("UpdatePrompt", "Could not open install permission", it)
+                error = "No se pudo abrir el permiso de instalación."
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         update = UpdateChecker.check(context)
@@ -74,12 +119,12 @@ fun UpdatePrompt() {
     val info = update ?: return
 
     AlertDialog(
-        onDismissRequest = { update = null },
+        onDismissRequest = { if (download == null) update = null },
         properties = DialogProperties(usePlatformDefaultWidth = false),
         containerColor = Color(0xFF1A1A1A),
         titleContentColor = Color.White,
         title = {
-            Text("Update available — ${info.version}")
+            Text("Actualización disponible · ${info.version}")
         },
         text = {
             Column(
@@ -95,29 +140,57 @@ fun UpdatePrompt() {
                         color = Color(0xFFB3B3B3),
                     )
                 }
+                if (download != null) {
+                    val percent = progress
+                    Text(percent?.let { "Descargando · $it %" } ?: "Preparando descarga…",
+                        color = Color.White, modifier = Modifier.padding(top = 12.dp))
+                    if (percent == null) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    else LinearProgressIndicator(progress = { percent / 100f }, modifier = Modifier.fillMaxWidth())
+                }
+                (error ?: if (info.downloadUrl == null) "Esta versión todavía no tiene una APK en GitHub." else null)
+                    ?.let { Text(it, color = Color(0xFFFFB4AB), modifier = Modifier.padding(top = 12.dp)) }
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                runCatching {
-                    context.startActivity(
-                        Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl))
-                    )
+            TextButton(enabled = info.downloadUrl != null && download == null, onClick = {
+                error = null
+                val apk = downloadedApk
+                if (apk != null) {
+                    requestInstall(apk)
+                } else {
+                    progress = null
+                    download = scope.launch {
+                        val job = coroutineContext[Job]
+                        try {
+                            val file = UpdateInstaller.download(context, info) { progress = it }
+                            downloadedApk = file
+                            requestInstall(file)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Exception) {
+                            Log.w("UpdatePrompt", "APK download or validation failed", failure)
+                            error = "No se pudo descargar o verificar la APK. Puedes volver a intentarlo."
+                        } finally {
+                            if (download == job) download = null
+                        }
+                    }
                 }
-                update = null
             }) {
-                Text(uiLocalized("Update"), color = Color(0xFF1DB954))
+                Text(if (downloadedApk == null) "Descargar" else "Instalar")
             }
         },
         dismissButton = {
-            TextButton(onClick = {
+            TextButton(enabled = download == null, onClick = {
                 UpdateChecker.skipRelease(context, info)
                 update = null
             }) {
                 Text(uiLocalized("Don't show again"), color = Color(0xFFB3B3B3))
             }
-            TextButton(onClick = { update = null }) {
-                Text(uiLocalized("Dismiss"), color = Color.White)
+            TextButton(onClick = {
+                val running = download
+                if (running != null) running.cancel() else update = null
+            }) {
+                Text(if (download == null) uiLocalized("Dismiss") else "Cancelar descarga", color = Color.White)
             }
         },
     )

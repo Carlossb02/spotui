@@ -19,7 +19,8 @@ object UpdateChecker {
 
     data class UpdateInfo(
         val version: String,
-        val downloadUrl: String,
+        val downloadUrl: String?,
+        val sha256: String?,
         val fingerprint: String,
         val releaseBody: String,
     )
@@ -34,10 +35,15 @@ object UpdateChecker {
         val sources = if (configured.equals(DEFAULT_UPDATE_REPO_URL, ignoreCase = true)) {
             listOf(configured, LEGACY_UPDATE_REPO_URL)
         } else listOf(configured)
+        var withoutApk: UpdateInfo? = null
         val info = sources.firstNotNullOfOrNull { source ->
-            runCatching { fetchLatestRelease(source) }.getOrNull()
-        } ?: return@withContext null
-        if (!isNewer(info.version, BuildConfig.VERSION_NAME)) return@withContext null
+            val release = runCatching { fetchLatestRelease(source) }.getOrNull()
+                ?.takeIf { isNewer(it.version, BuildConfig.VERSION_NAME) }
+            if (release?.downloadUrl != null) release else {
+                if (withoutApk == null) withoutApk = release
+                null
+            }
+        } ?: withoutApk ?: return@withContext null
         val skipped = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_SKIP, null)
         if (skipped == info.fingerprint) return@withContext null
@@ -55,10 +61,8 @@ object UpdateChecker {
             .removeSuffix("/releases")
             .removeSuffix("/releases/latest")
             .trimEnd('/')
-        val cleanRepoUrl = "https://github.com/$repoPath"
         val apiLatest = "https://api.github.com/repos/$repoPath/releases/latest"
         val apiReleases = "https://api.github.com/repos/$repoPath/releases"
-        val releasesPage = "$cleanRepoUrl/releases/latest"
 
         val request = Request.Builder()
             .url(apiLatest)
@@ -90,8 +94,6 @@ object UpdateChecker {
         val version = extractVersion(tag)
             ?: return null
         val releaseBody = j.optString("body", "")
-        val htmlUrl = j.optString("html_url", releasesPage)
-            .ifBlank { releasesPage }
         val assets = j.optJSONArray("assets")
         val apks = (0 until (assets?.length() ?: 0))
             .asSequence()
@@ -99,13 +101,14 @@ object UpdateChecker {
             .filter { it.optString("name").endsWith(".apk", ignoreCase = true) }
             .filter { it.optString("browser_download_url").isNotBlank() }
             .toList()
-        val apkUrl = (apks.firstOrNull { it.optString("name").startsWith("Spotidroid", ignoreCase = true) }
+        val apk = apks.firstOrNull { it.optString("name").startsWith("Spotidroid", ignoreCase = true) }
             ?: apks.firstOrNull { it.optString("name").startsWith("Spotui", ignoreCase = true) }
-            ?: apks.firstOrNull())
-            ?.optString("browser_download_url")
+            ?: apks.firstOrNull()
         return UpdateInfo(
             version = version,
-            downloadUrl = apkUrl?.ifBlank { null } ?: htmlUrl,
+            downloadUrl = apk?.getString("browser_download_url"),
+            sha256 = apk?.optString("digest")?.removePrefix("sha256:")
+                ?.takeIf { it.matches(Regex("[a-fA-F0-9]{64}")) },
             fingerprint = "${j.optLong("id")}:${j.optString("updated_at")}:$version",
             releaseBody = releaseBody,
         )

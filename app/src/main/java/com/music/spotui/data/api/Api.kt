@@ -363,6 +363,10 @@ class Api @Inject constructor(
             send(Response.Success(SearchResults()))
             return@channelFlow
         }
+        if (includePodcasts) {
+            currentResults = currentResults.copy(shows = com.music.spotui.providers.SpanishPodcastChart.search(query))
+            if (currentResults.shows.isNotEmpty()) send(Response.Loading(currentResults))
+        }
         val spotifyAvailable = SpotifyTokenProvider.ensureToken(context)
         if (!spotifyAvailable && !includePodcasts) {
             send(Response.Error("Spotify not authenticated — set sp_dc cookie"))
@@ -414,7 +418,7 @@ class Api @Inject constructor(
                     val ytEpisodes = youtubeResults?.second.orEmpty()
                     resultLock.withLock {
                         currentResults = currentResults.copy(
-                            shows = (currentResults.shows + ytShows).distinctBy { it.id },
+                            shows = mergePodcastShows(currentResults.shows, ytShows),
                             episodes = (currentResults.episodes + ytEpisodes).distinctBy { it.id },
                         )
                         send(Response.Loading(currentResults))
@@ -442,7 +446,7 @@ class Api @Inject constructor(
                             }.orEmpty()
                         }
                     if (matches.isNotEmpty()) resultLock.withLock {
-                        currentResults = currentResults.copy(shows = (currentResults.shows + matches).distinctBy { it.id })
+                        currentResults = currentResults.copy(shows = mergePodcastShows(currentResults.shows, matches))
                         send(Response.Loading(currentResults))
                     }
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -457,6 +461,18 @@ class Api @Inject constructor(
         }
 
         send(Response.Success(currentResults))
+    }
+
+    private fun mergePodcastShows(current: List<PodcastModel>, incoming: List<PodcastModel>): List<PodcastModel> {
+        val policy = com.music.spotui.providers.PodcastDiscoveryPolicy
+        return incoming.fold(current) { shows, candidate ->
+            if (shows.any { existing ->
+                    existing.id == candidate.id ||
+                        (policy.showTitleMatches(existing.name, candidate.name) &&
+                            policy.publisherMatches(existing.publisher, candidate.publisher))
+                }
+            ) shows else shows + candidate
+        }
     }
 
     /** A podcast show's episodes, as playable [SongsModel]. Emits progressively as continuation pages load. */

@@ -750,8 +750,10 @@ object PodcastProvider {
             } }.awaitAll()
     }
 
-    private suspend fun spotifyShow(showId: String): SpotifyShow? =
-        SpotifyPodcastEpisodes.show(showId.removePrefix(SPOTIFY_SHOW_PREFIX))
+    private suspend fun spotifyShow(showId: String): SpotifyShow? {
+        val id = showId.removePrefix(SPOTIFY_SHOW_PREFIX)
+        return SpanishPodcastChart.show(id) ?: SpotifyPodcastEpisodes.show(id)
+    }
     suspend fun getShow(
         showId: String,
         showName: String = ""
@@ -1096,6 +1098,7 @@ object PodcastProvider {
 
     fun getYouTubePodcastsFeedFlow(forceRefresh: Boolean = false): kotlinx.coroutines.flow.Flow<com.music.spotui.data.entity.PodcastFeedModel> = channelFlow {
         if (forceRefresh) showSearchCache.clear()
+        val chartSections = SpanishPodcastChart.homeSections()
         val spanishPodcastCategories = listOf(
             "Podcasts populares en España" to listOf(
                 "The Wild Project", "La Ruina", "Nadie Sabe Nada", "Terrores Nocturnos",
@@ -1124,7 +1127,9 @@ object PodcastProvider {
             )
         )
 
-        val queries = spanishPodcastCategories.flatMap { it.second }.distinct()
+        val chartShows = chartSections.values.flatten()
+        fun onChart(name: String) = chartShows.any { PodcastDiscoveryPolicy.showTitleMatches(name, it.name) }
+        val queries = spanishPodcastCategories.flatMap { it.second }.distinct().filterNot(::onChart)
         // Thread-safe snapshots. Query order, not network completion order, drives UI ordering.
         val resolved = java.util.concurrent.ConcurrentHashMap<String, PodcastModel>()
         if (!forceRefresh) {
@@ -1132,10 +1137,12 @@ object PodcastProvider {
         }
 
         fun snapshot(): com.music.spotui.data.entity.PodcastFeedModel {
-            val sections = spanishPodcastCategories.map { (title, names) ->
+            val curated = spanishPodcastCategories.toMap()
+            val sections = (chartSections.keys + curated.keys).map { title ->
+                val shows = chartSections[title].orEmpty() + curated[title].orEmpty().mapNotNull { resolved[it] }
                 com.music.spotui.data.entity.PodcastSectionModel(
                     title = title,
-                    shows = names.mapNotNull { resolved[it] }.distinctBy { it.id }
+                    shows = shows.distinctBy { it.id }
                 )
             }
             return com.music.spotui.data.entity.PodcastFeedModel(sections = sections)
