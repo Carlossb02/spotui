@@ -8,12 +8,16 @@ import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
 @HiltAndroidApp
 class MyApplication : Application(){
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var warmup: Job? = null
+    @Volatile private var warmed = false
 
     companion object {
         // For non-DI singletons (LyricsApi) that need a Context to refresh the token.
@@ -25,9 +29,10 @@ class MyApplication : Application(){
     override fun onCreate() {
         super.onCreate()
         instance = this
-        com.music.spotui.data.api.SpotifyPendingWrites.install(this)
-        com.music.spotui.data.api.LocalSpotifyMirror.install(this)
-        com.music.spotui.sync.GoogleDeviceSync.install(this)
+        // Remove jobs persisted by old APKs, including the retired periodic job.
+        val scheduler = getSystemService(android.app.job.JobScheduler::class.java)
+        listOf(231702, 231703, com.music.spotui.data.api.SpotifyPendingWrites.JOB_ID)
+            .forEach { scheduler?.cancel(it) }
         // Surface Spotify REST/GQL logs to logcat for diagnosis.
         com.metrolist.spotify.Spotify.logger = { level, msg ->
             android.util.Log.d("SpotifyREST", "[$level] $msg")
@@ -45,26 +50,27 @@ class MyApplication : Application(){
             gl = locale.country.takeIf { it.isNotBlank() } ?: "US",
             hl = locale.language.takeIf { it.isNotBlank() } ?: "en",
         )
-        appScope.launch {
-            YouTube.visitorData = YouTube.visitorData().getOrNull() ?: YouTube.visitorData
-        }
         // YouTube playback runs anonymously; age-gated official audio falls back
         // to matching normal YouTube uploads instead of requiring sign-in.
         YouTube.cookie = null
-        com.music.spotui.data.api.FollowingReleaseFeed.get(this)
+    }
 
-        // Prepare the disk cache on IO before a tap can initialize it on Main.
-        appScope.launch {
-            kotlinx.coroutines.delay(800L)
-            com.music.spotui.di.SongPlayer.warmUp(this@MyApplication)
-        }
-
-        // Pre-warm the YouTube playback pipeline so the first tap doesn't pay for
-        // cold-starting the player.js parser and BotGuard WebView (~2-4s combined).
-        appScope.launch {
-            kotlinx.coroutines.delay(1_500L)
+    fun activityVisible() {
+        com.music.spotui.sync.GoogleDeviceSync.install(this)
+        com.music.spotui.sync.GoogleDeviceSync.onForeground()
+        com.music.spotui.data.api.SpotifyPendingWrites.setVisible(this, true)
+        if (warmed || warmup?.isActive == true) return
+        warmup = appScope.launch {
+            delay(800L)
             com.music.spotui.di.SongPlayer.awaitAudioStartup()
-            runCatching { com.metrolist.innertube.NewPipeExtractor.init() }
+            YouTube.visitorData = YouTube.visitorData().getOrNull() ?: YouTube.visitorData
+            warmed = true
         }
+    }
+
+    fun activityHidden() {
+        warmup?.cancel()
+        com.music.spotui.data.api.SpotifyPendingWrites.setVisible(this, false)
+        com.music.spotui.sync.GoogleDeviceSync.onBackground()
     }
 }

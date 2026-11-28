@@ -3,6 +3,7 @@ package com.music.spotui.ui.screens
 import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -13,11 +14,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -52,10 +55,22 @@ internal fun FollowingPodcastEpisodesContent(
         if(!homeViewModel.followedEpisodes.value.loading)
             homeViewModel.refreshFollowedReleases(kind=ReleaseKind.PODCASTS)
     }
-    var ascending by remember {mutableStateOf(context.getSharedPreferences("app_sort_preferences",0).getBoolean("following_podcasts_ascending",false))}
-    val episodes=remember(feed.items,ascending) {
-        if(ascending)feed.items.sortedBy {it.publishedAt} else feed.items.sortedByDescending {it.publishedAt}
+    var selectedShows by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
+    var filterOpen by rememberSaveable { mutableStateOf(false) }
+    val showIds = remember(shows) { shows.map { it.id }.toSet() }
+    val activeFilter = remember(showIds, selectedShows) { selectedShows.filter { it in showIds }.toSet() }
+    val episodes = remember(feed.items, activeFilter) {
+        feed.items.filter { activeFilter.isEmpty() || it.showId in activeFilter }.sortedByDescending { it.publishedAt }
     }
+    if (filterOpen && shows.isNotEmpty()) PodcastFilterSheet(
+        shows = shows,
+        initialSelection = activeFilter,
+        onDismiss = { filterOpen = false },
+        onApply = {
+            selectedShows = ArrayList(it)
+            filterOpen = false
+        },
+    )
     var menu by remember {mutableStateOf<SongsModel?>(null)}
     var savedIn by remember {mutableStateOf<SongsModel?>(null)}
     menu?.let {song->SongOptionsSheet(song=song,navController=navController,context=context,onDismiss={menu=null})}
@@ -111,18 +126,23 @@ internal fun FollowingPodcastEpisodesContent(
             item {
                 Text(uiLocalized("Latest episodes"),color=Color.White,fontSize=28.sp,fontWeight=FontWeight.Bold,
                     modifier=Modifier.padding(20.dp,18.dp,20.dp,12.dp))
-                Row(Modifier.fillMaxWidth().padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically) {
-                    TextButton(onClick={ascending=!ascending;context.getSharedPreferences("app_sort_preferences",0).edit()
-                        .putBoolean("following_podcasts_ascending",ascending).apply()},modifier=Modifier.weight(1f)) {
-                        Icon(if(ascending)Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
-                            uiLocalized("Change order"),tint=Color.White,modifier=Modifier.size(19.dp))
+                if (shows.isNotEmpty()) {
+                    val label = uiLocalized("Filter by podcast")
+                    OutlinedButton(
+                        onClick = { filterOpen = true },
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp, if (activeFilter.isEmpty()) Color(0xFF777777) else PodcastNewsColor,
+                        ),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                    ) {
+                        Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text(uiLocalized(if(ascending)"Oldest first · Last month" else "Newest first · Last month"),
-                            color=Color.White,fontWeight=FontWeight.Bold)
+                        Text(if (activeFilter.isEmpty()) label else "$label (${activeFilter.size})")
                     }
                 }
                 feed.error?.let {Text(uiLocalized(it),color=Color(0xFFB3B3B3),modifier=Modifier.padding(20.dp,8.dp))}
-                if(!feed.loading && feed.error==null && episodes.isEmpty())Text(uiLocalized("No episodes published in the last month."),
+                if(!feed.loading && feed.error==null && episodes.isEmpty())Text(uiLocalized(if (activeFilter.isEmpty()) "No episodes published in the last month." else "No recent episodes for the selected podcasts."),
                     color=Color(0xFFB3B3B3),modifier=Modifier.padding(24.dp))
             }
             itemsIndexed(episodes,key={_,item->item.song.url.substringBefore('|')}) { index,item ->
@@ -131,6 +151,66 @@ internal fun FollowingPodcastEpisodesContent(
                     onShow={navController.navigate(showRoute(item.showId,item.song.album))})
             }
         }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PodcastFilterSheet(
+    shows: List<com.music.spotui.data.entity.PodcastModel>,
+    initialSelection: Set<String>,
+    onDismiss: () -> Unit,
+    onApply: (Set<String>) -> Unit,
+) {
+    var draft by remember(initialSelection) { mutableStateOf(initialSelection) }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF212121),
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Text(
+            uiLocalized("Filter by podcast"), color = Color.White,
+            style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+        )
+        LazyColumn(
+            Modifier.weight(1f, fill = false).fillMaxWidth(),
+            contentPadding = PaddingValues(vertical = 8.dp),
+        ) {
+            items(shows, key = { it.id }) { show ->
+                val selected = show.id in draft
+                Row(
+                    Modifier.fillMaxWidth().toggleable(selected, role = Role.Checkbox) {
+                        draft = if (it) draft + show.id else draft - show.id
+                    }.padding(horizontal = 24.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(show.name, modifier = Modifier.weight(1f), color = Color.White)
+                    Checkbox(
+                        checked = selected, onCheckedChange = null,
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = PodcastNewsColor, checkmarkColor = Color.Black,
+                            uncheckedColor = Color(0xFFAAAAAA),
+                        ),
+                    )
+                }
+            }
+        }
+        HorizontalDivider(color = Color(0xFF3D3D3D))
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
+        ) {
+            TextButton(onClick = { draft = emptySet() }, enabled = draft.isNotEmpty()) {
+                Text(uiLocalized("Clear filter"))
+            }
+            Button(
+                onClick = { onApply(draft) },
+                colors = ButtonDefaults.buttonColors(containerColor = PodcastNewsColor, contentColor = Color.Black),
+            ) {
+                Text(uiLocalized("Apply filter"), fontWeight = FontWeight.Bold)
+            }
         }
     }
 }

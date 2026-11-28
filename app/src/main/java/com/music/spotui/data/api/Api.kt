@@ -105,6 +105,14 @@ class Api @Inject constructor(
         }
     }
 
+    internal fun previewTrack(album: com.metrolist.spotify.models.SpotifyAlbum): SongsModel? {
+        val track = album.tracks?.items?.firstOrNull { it.id.isNotBlank() && it.name.isNotBlank() } ?: return null
+        val release = com.metrolist.spotify.models.SpotifySimpleAlbum(
+            id = album.id, name = album.name, images = album.images, artists = album.artists,
+        )
+        return track.copy(album = track.album ?: release, artists = track.artists.ifEmpty { album.artists }).toSongModel()
+    }
+
     private fun SpotifyTrack.toSongModel(): SongsModel = try {
         if(explicit)ExplicitContentStore.remember(context,id,true)
         val trackId = id.takeIf { it.isNotBlank() } ?: (uri?.takeIf { it.isNotBlank() } ?: "local_${name.hashCode()}")

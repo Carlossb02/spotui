@@ -4145,6 +4145,8 @@ object SongPlayer {
             return
         }
         recordAudibleState(false)
+        foregroundPlaybackJob?.cancel()
+        foregroundPlaybackJob = null
         autofillJob?.cancel()
         autofillJob = null
         videoMetadataWarmupJob?.cancel()
@@ -4164,6 +4166,21 @@ object SongPlayer {
         currentRequest = ""
         stablePositionQuery = null
         stablePositionMs = 0L
+    }
+
+    internal fun cancelWorkAfterTaskDismissal() {
+        cancelSleepTimer()
+        prefetchTargets = emptySet()
+        prefetchJobs.values.forEach { it.cancel() }
+        streamResolutions.cancelAll()
+        val downloads = synchronized(downloadLock) {
+            downloadBatches.values.toList() + downloadJobs.values.toList()
+        }
+        downloads.forEach { it.cancel() }
+        val connections = activeDownloadConnections.values.toList()
+        if (connections.isNotEmpty()) scope.launch(Dispatchers.IO) {
+            connections.forEach { it.disconnect() }
+        }
     }
 
     fun togglePlay() {

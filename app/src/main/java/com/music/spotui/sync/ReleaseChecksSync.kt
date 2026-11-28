@@ -4,10 +4,12 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.google.firebase.database.*
 import com.music.spotui.data.preferences.RELEASE_NEWS_PREFS
+import com.music.spotui.data.preferences.mergeReleaseMarker
 
 /** Four monotonic integers, sent only when a read/reset changes. No polling or media. */
 internal class ReleaseChecksSync(context: Context, private val reference: DatabaseReference) {
     private val prefs = context.getSharedPreferences(RELEASE_NEWS_PREFS, 0)
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private val known = mutableMapOf<String, Long>()
     private val pending = mutableSetOf<String>()
     private var ready = false
@@ -23,7 +25,7 @@ internal class ReleaseChecksSync(context: Context, private val reference: Databa
             keys.forEach { key ->
                 val remote = snapshot.child(key).getValue(Long::class.java) ?: 0L
                 known[key] = maxOf(known[key] ?: 0, remote)
-                if (enabled(key) && remote > prefs.getLong(key, 0)) prefs.edit().putLong(key, remote).apply()
+                if (enabled(key)) mergeReleaseMarker(prefs, key, remote)
             }
             ready = true
             keys.forEach(::publish)
@@ -34,6 +36,8 @@ internal class ReleaseChecksSync(context: Context, private val reference: Databa
         }
     }
     init { prefs.registerOnSharedPreferenceChangeListener(changes); reference.addValueEventListener(listener) }
+    fun refresh() { main.post { keys.forEach(::publish) } }
+
     private fun publish(key: String) {
         val local = prefs.getLong(key, 0)
         if (closed || !ready || !enabled(key) || local <= (known[key] ?: 0) || !pending.add(key)) return
@@ -54,6 +58,7 @@ internal class ReleaseChecksSync(context: Context, private val reference: Databa
                 }
                 val remote = (snapshot?.value as? Number)?.toLong() ?: if (committed) local else 0L
                 known[key] = maxOf(known[key] ?: 0, remote)
+                if (enabled(key)) mergeReleaseMarker(prefs, key, remote)
                 if (remote >= local) publish(key)
             }
         }, false)

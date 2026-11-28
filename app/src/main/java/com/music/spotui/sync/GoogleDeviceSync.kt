@@ -61,8 +61,6 @@ object GoogleDeviceSync {
     @Synchronized fun install(app:Context) {
         if(installed)return
         installed=true;context=app.applicationContext
-        GoogleSyncJobService.cancelLegacy(context) // Remove persisted polls from older versions immediately.
-        SyncRuntime.install(context)
         SyncOptions.install(context)
         ConnectionState.install(context);OwnLibraryChanges.install(context)
         scope.launch {
@@ -92,7 +90,7 @@ object GoogleDeviceSync {
             if(runtimeActive)watchAccess(user.uid,user.email.orEmpty(),user.photoUrl?.toString().orEmpty())
             else mutable.update {it.copy(configured=true,email=user.email.orEmpty(),photoUrl=user.photoUrl?.toString().orEmpty(),uid=user.uid,phase="Sincronización en pausa")}
         }
-        else GoogleSyncJobService.cancel(context)
+
     }
     suspend fun signIn(activity:Activity) {
         mutable.update {it.copy(error=null)}
@@ -171,7 +169,6 @@ object GoogleDeviceSync {
         // An old in-flight request must not block a newly selected account/token.
         if(rejectedToken==null || rejectedToken!=accessToken || !status.value.authorized)return
         mutable.update {it.copy(driveBlocked=true,error=message,phase="Conexión con Drive pendiente")}
-        GoogleSyncJobService.cancel(context)
     }
     fun retryDriveConnection() {
         if(!status.value.authorized || !status.value.driveBlocked)return
@@ -181,7 +178,7 @@ object GoogleDeviceSync {
     suspend fun signOut()=withContext(Dispatchers.IO) {
         context.getSharedPreferences("google_device_sync_config",0).edit().putBoolean("enabled",false).commit()
         accessToken=null;tokenAt=0L
-        stopAccessWatch();session?.close();session=null;disconnectDatabase();GoogleSyncJobService.cancel(context);auth?.signOut();CloudHistory.projection=null
+        stopAccessWatch();session?.close();session=null;disconnectDatabase();auth?.signOut();CloudHistory.projection=null
         notifySyncedHistoryChanged();mutable.value=Status(configured=config!=null)
     }
     /** A negative answer is durable local state, never a grant of access. */
@@ -249,7 +246,7 @@ object GoogleDeviceSync {
             stopAccessWatch()
             session?.close();session=null;disconnectDatabase()
             accessToken=null;tokenAt=0L
-            GoogleSyncJobService.cancel(context);CloudHistory.projection=null
+            CloudHistory.projection=null
             notifySyncedHistoryChanged()
             mutable.update {it.copy(authorized=false,accessChecked=checked,phase=if(checked)"Cuenta sin autorización" else "Acceso sin comprobar",pending=0,filesPending=0,progress=null,devices=emptyList(),needsDrive=false,error=null)}
         } else {
@@ -274,7 +271,7 @@ object GoogleDeviceSync {
         if(session?.uid==uid){mutable.update { it.copy(email=email,photoUrl=photoUrl) };return}
         session?.close()
         mutable.value=Status(configured=true,email=email,photoUrl=photoUrl,authorized=true,accessChecked=true,uid=uid,phase="Conectando con Google")
-        session=Session(uid,config!!).also { it.start() };GoogleSyncJobService.schedule(context)
+        session=Session(uid,config!!).also { it.start() }
     }
     internal fun runtimeChanged(active:Boolean) {scope.launch {synchronized(this@GoogleDeviceSync) {
         runtimeActive=active
@@ -283,20 +280,13 @@ object GoogleDeviceSync {
             if(session==null)restoreAccount()
         } else {
             stopAccessWatch();session?.close();session=null;disconnectDatabase()
-            GoogleSyncJobService.cancel(context)
             mutable.update {it.copy(devices=it.devices.map {d->d.copy(online=false)},phase="Sincronización en pausa")}
         }
     }}}
     fun onBackground(){uiForeground=false;SyncRuntime.visible(false)}
     fun onPlaybackActivityChanged(){SyncRuntime.playbackChanged();if(!com.music.spotui.di.SongPlayer.isPreparingTrack())requestSync()}
-    @Volatile private var lastScheduleAt=0L
     internal fun canSyncPlayer(actor:String)=runtimeActive && mutable.value.authorized && SyncOptions.enabled(SyncOptions.Category.PLAYER) && hasKnownSyncPeer(mutable.value.devices,actor)
-    fun hasPendingWork():Boolean=runtimeActive && mutable.value.authorized && !mutable.value.needsDrive && !mutable.value.driveBlocked && session?.hasPendingWork()==true
-    fun requestSync(){
-        session?.wake?.trySend(Unit)
-        val now=android.os.SystemClock.elapsedRealtime()
-        if(installed && hasPendingWork() && (!ConnectionState.online.value || session?.hasConnection()!=true) && now-lastScheduleAt>30_000){lastScheduleAt=now;GoogleSyncJobService.schedule(context)}
-    }
+    fun requestSync() { session?.wake?.trySend(Unit) }
     fun optionsChanged(){session?.optionsChanged();requestSync()}
     fun localDeviceId():String = if(installed)context.getSharedPreferences("google_device_sync_config",0).getString("device","").orEmpty() else ""
     fun libraryOpened(){if(runtimeActive && mutable.value.authorized)session?.libraryOpened()}
@@ -311,11 +301,6 @@ object GoogleDeviceSync {
         }
     }}}
     fun retry(){mutable.update { current -> current.copy(error=null) };requestSync()}
-    suspend fun awaitIdle():Boolean {
-        requestSync()
-        repeat(100){delay(500);if(!hasPendingWork() || session==null || session?.blockedByRules()==true || status.value.needsDrive || status.value.driveBlocked || status.value.let { it.phase=="Sincronizado" && it.pending==0 && it.filesPending==0 })return true}
-        return false
-    }
     private class Session(val uid:String,cfg:GoogleSyncConfig) {
         val wake=Channel<Unit>(Channel.CONFLATED)
         private val work=CoroutineScope(SupervisorJob()+Dispatchers.IO)
@@ -381,7 +366,7 @@ object GoogleDeviceSync {
         @Volatile private var offset=0L
         @Volatile private var nextSendAt=0L
         @Volatile private var rulesBlocked=false
-        @Volatile private var retryNeeded=false
+
         private val tracking=state.optJSONObject("historyTracking")?:JSONObject()
         private val history=CloudHistory(context,assets,actor,tracking)
         init {
@@ -392,7 +377,7 @@ object GoogleDeviceSync {
             state.optJSONObject("legacyKeys")?.let {rows->rows.keys().forEach {legacyKeys[it]=rows.getString(it)}}
             state.optJSONObject("replicas")?.let {rows->rows.keys().forEach {remoteReplicas[it]=rows.getJSONObject(it)}}
             state.optJSONObject("consumed")?.let {rows->rows.keys().forEach {consumedReplicas[it]=rows.getString(it)}}
-            retryNeeded=pending.keys.any(SyncOptions::allows)
+
             state.keys().asSequence().toList().forEach(state::remove)
         }
         private fun stamp():SyncStamp {
@@ -432,11 +417,13 @@ object GoogleDeviceSync {
             ref.addValueEventListener(listener);listeners+=ref to listener
         }
         fun start() {
+            releaseChecks = ReleaseChecksSync(context, root.child("playback").child("releaseChecks"))
             valueListener(firebase.getReference(".info/serverTimeOffset")){offset=(it.value as? Number)?.toLong()?:0L}
             valueListener(firebase.getReference(".info/connected")){ s->
                 connected=s.getValue(Boolean::class.java)==true
                 if(!connected)mutable.update {it.copy(devices=it.devices.map {d->d.copy(online=false)})}
                 if(connected){
+                    releaseChecks?.refresh()
                     nextSendAt=0L
                     work.launch {
                         try {
@@ -480,15 +467,15 @@ object GoogleDeviceSync {
                     try {
                         while(true){val event=events.poll()?:break;event()}
                         cycle()
-                    }catch(c:CancellationException){throw c}catch(t:Exception){fail(t);GoogleSyncJobService.schedule(context)}
+                    }catch(c:CancellationException){throw c}catch(t:Exception){fail(t);work.launch {delay(30_000);wake.trySend(Unit)}}
                 }
             }
 
             discoveryJob=work.launch {
                 while(isActive) {
-                    delay(2_000)
                     val interval=driveDiscoveryInterval(uiForeground,visibleLibraries.isNotEmpty())
-                    if(dataSyncEnabled() && hasSyncPeer(mutable.value.devices,actor) && System.currentTimeMillis()-discoveryAt>=interval)
+                    delay(interval)
+                    if(uiForeground && dataSyncEnabled() && hasSyncPeer(mutable.value.devices,actor) && System.currentTimeMillis()-discoveryAt>=interval)
                         post {discoveryNeeded=true}
                 }
             }
@@ -497,10 +484,6 @@ object GoogleDeviceSync {
         private fun updatePeerConnection() {
             val peers=runtimeActive && connected && hasSyncPeer(mutable.value.devices,actor)
             val knownPeers=runtimeActive && connected && hasKnownSyncPeer(mutable.value.devices,actor)
-            // Subscribe as soon as this authorized session connects, independently of device presence.
-            if (connected && releaseChecks == null) {
-                releaseChecks = ReleaseChecksSync(context, root.child("playback").child("releaseChecks"))
-            }
             val enabled=SyncOptions.enabled(SyncOptions.Category.PLAYER)
             if(peers!=hadPeers) {
                 hadPeers=peers;discoveryWake?.cancel()
@@ -566,9 +549,9 @@ object GoogleDeviceSync {
             val pendingCount=pending.keys.count(SyncOptions::allows)
             val missing=0
             val awaitingReplica=dataSyncEnabled() && remoteReplicas.any {it.key!=actor && consumedReplicas[it.key]!=it.value.optString("rev")}
-            retryNeeded=pendingCount>0 || awaitingReplica || catalogueNeeded && dataSyncEnabled()
+
             mutable.update { current -> current.copy(pending=pendingCount,filesPending=missing,phase=when { rulesBlocked->"Conexión no disponible";mutable.value.driveBlocked->"Conexión con Drive pendiente";mutable.value.needsDrive->"Permiso de Drive pendiente"; !ConnectionState.online.value->"Estás sin conexión";!ready->"Conectando con Google";pendingCount>0 || missing>0 || awaitingReplica || driveJob?.isActive==true->"Sincronizando";else->"Sincronizado" },lastSync=if(!rulesBlocked && !mutable.value.driveBlocked && !mutable.value.needsDrive && !awaitingReplica && ConnectionState.online.value && ready && pendingCount==0 && missing==0 && current.phase!="Sincronizado")System.currentTimeMillis()else current.lastSync) }
-            if(ConnectionState.online.value && ready){syncDrive()}else if(retryNeeded)GoogleSyncJobService.schedule(context)
+            if(ConnectionState.online.value && ready){syncDrive()}
         }
         private fun dataSyncEnabled()=SyncOptions.Category.entries.any {it!=SyncOptions.Category.PLAYER && SyncOptions.enabled(it)}
         private fun syncDrive() {
@@ -629,9 +612,9 @@ object GoogleDeviceSync {
             mutable.update {it.copy(phase="Conexión no disponible",error="El servicio de sincronización no permite esta conexión. [SYNC_RULES]")}
         }
         fun blockedByRules()=rulesBlocked
-        fun hasConnection()=connected
-        fun hasPendingWork()= !closed && !rulesBlocked && retryNeeded
-        fun driveGranted() {nextSendAt=0L;wake.trySend(Unit);GoogleSyncJobService.schedule(context)}
+
+
+        fun driveGranted() {nextSendAt=0L;wake.trySend(Unit)}
         fun libraryOpened() {
             post {
                 if(!dataSyncEnabled())return@post
@@ -644,6 +627,7 @@ object GoogleDeviceSync {
             }
         }
         fun optionsChanged() {
+            releaseChecks?.refresh()
             post {updatePeerConnection();discoveryNeeded=true}
             nextSendAt=0L
             post {consumedReplicas.clear()}
