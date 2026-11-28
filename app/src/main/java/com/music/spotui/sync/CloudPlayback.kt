@@ -112,7 +112,7 @@ object CloudPlayback {
         private val controls=PlaybackControlCoalescer()
         fun now()=System.currentTimeMillis()+offset
         fun isApplying() = applying
-        fun remote()=current?.takeIf { GoogleDeviceSync.canSyncPlayer(actor) && connected && !rulesBlocked && SyncOptions.enabled(SyncOptions.Category.PLAYER) && it.owner !in mutable.value.disabledDevices && !applying && it.owner!=actor && playbackOwnerLive(it, GoogleDeviceSync.status.value.devices) }
+        fun remote()=current?.takeIf { GoogleDeviceSync.canSyncPlayer(actor) && connected && !rulesBlocked && SyncOptions.enabled(SyncOptions.Category.PLAYER) && it.owner !in mutable.value.disabledDevices && !applying && !SongPlayer.isResolvingOrPlaying() && it.owner!=actor && playbackOwnerLive(it, GoogleDeviceSync.status.value.devices) }
         private class PlaybackPermissionDenied(path: String) :
             IllegalStateException("Firebase no permite acceder a " + path + " para esta cuenta.")
 
@@ -145,7 +145,6 @@ object CloudPlayback {
             listen(root.database.getReference(".info/connected")){
                 connected=it.getValue(Boolean::class.java)==true
                 if(connected) {
-                    if(current?.let {it.owner!=actor && shouldRestorePlayback(it, com.music.spotui.data.preferences.lastPlaybackActivity(context))}==true && SongPlayer.isResolvingOrPlaying())locally {SongPlayer.pause()}
                     mirror();queuePointer?.let(::loadQueue)
                 }
                 publishStatus();drainCommand()
@@ -160,9 +159,6 @@ object CloudPlayback {
                 current=next
                 if (next?.queuePointer?.isNotBlank() == true) loadQueue(JSONObject(next.queuePointer))
                 else queuePointer?.let(::loadQueue)
-                if(connected && SyncOptions.enabled(SyncOptions.Category.PLAYER) && next!=null && next.owner!=actor &&
-                    shouldRestorePlayback(next, com.music.spotui.data.preferences.lastPlaybackActivity(context)) &&
-                    (was?.owner==actor || SongPlayer.isResolvingOrPlaying()))locally {SongPlayer.pause()}
                 publishStatus();mirror();acceptTransfer();drainCommand()
                 playbackChanged()
             }
@@ -251,7 +247,6 @@ object CloudPlayback {
         fun onOptionsChanged() {scope.launch {
             publishJob?.cancel();queueEdit?.cancel();if(!SyncOptions.enabled(SyncOptions.Category.PLAYER))queueLoadJob?.cancel()
             if(SyncOptions.enabled(SyncOptions.Category.PLAYER)) {
-                if(current?.let {it.owner!=actor && shouldRestorePlayback(it, com.music.spotui.data.preferences.lastPlaybackActivity(context))}==true && SongPlayer.isResolvingOrPlaying())locally {SongPlayer.pause()}
                 mirror();acceptTransfer();drainCommand();onDriveAvailable()
             } else {
                 commands.clear()
@@ -314,7 +309,7 @@ object CloudPlayback {
         }
         private fun publishStatus() {
             mutable.update { it.copy(localId=actor,ownerId=current?.owner.orEmpty(),ownerName=current?.name.orEmpty(),
-                remote=connected && !rulesBlocked && SyncOptions.enabled(SyncOptions.Category.PLAYER) && current?.owner?.let { id->id!=actor && id !in it.disabledDevices }==true,connected=connected,
+                remote=remote()!=null,connected=connected,
                 volume=current?.volume?:-1f,
                 sleepEnd=current?.sleepEnd?.takeIf {end->end>0}?.minus(offset)?:0L,
                 transferring=if(current?.owner==it.transferring && current?.startToken.isNullOrBlank())""else it.transferring) }
@@ -330,6 +325,7 @@ object CloudPlayback {
             val newer = shouldRestorePlayback(frame, localAt)
             val songs=queue?.takeIf {queueId==frame.queueId}
             if(frame.owner!=actor) {
+                if (SongPlayer.isResolvingOrPlaying()) return
                 if (frame.updated < localAt || !newer && frame.updated != mirroredAt) return
                 val live = playbackOwnerLive(frame, GoogleDeviceSync.status.value.devices)
                 val visible = playbackResumeFrame(frame, live, now())

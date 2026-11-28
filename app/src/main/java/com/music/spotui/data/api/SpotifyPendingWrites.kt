@@ -1,8 +1,5 @@
 package com.music.spotui.data.api
 
-import android.app.job.JobInfo
-import android.app.job.JobScheduler
-import android.content.ComponentName
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.ConnectivityManager
@@ -18,11 +15,12 @@ import java.io.File
 
 /** Durable, account-scoped outbox. Local actions survive loss of network, cache cleaning and process death. */
 internal object SpotifyPendingWrites {
-    private const val JOB_ID = 0x535057
+    internal const val JOB_ID = 0x535057
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val drainGate = Mutex()
     private val journals = mutableMapOf<String, SpotifyWriteJournal>()
-    private var installed = false
+    private var work: Job? = null
+    private val signals = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
     private var sessionListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
     private var networkListener: ConnectivityManager.NetworkCallback? = null
     private fun account(context: Context) = SpotifySession.spDc(context).takeIf { it.isNotBlank() }?.let { cookie ->
@@ -54,46 +52,58 @@ internal object SpotifyPendingWrites {
         val owner = account(app) ?: return@withContext false
         try {
             journal(app, owner).enqueue(kind, target, track, saved)
-            schedule(app)
             kick(app)
             true
         } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { Log.w("SpotifyOutbox", "Could not retain library change", failure); false }
     }
-    fun install(context: Context) {
+    @Synchronized fun setVisible(context: Context, visible: Boolean) {
         val app = context.applicationContext
-        synchronized(this) {
-            if (installed) return
-            installed = true
-            sessionListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key -> if (key == "sp_dc") kick(app) }
-            app.getSharedPreferences("spotify_session", Context.MODE_PRIVATE).registerOnSharedPreferenceChangeListener(sessionListener)
-            val callback = object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) { kick(app) }
-                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-                    if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) kick(app)
+        val connectivity = app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val preferences = app.getSharedPreferences("spotify_session", Context.MODE_PRIVATE)
+        LocalSpotifyMirror.setVisible(app, visible)
+        if (!visible) {
+            work?.cancel()
+            work = null
+            networkListener?.let { runCatching { connectivity.unregisterNetworkCallback(it) } }
+            networkListener = null
+            sessionListener?.let(preferences::unregisterOnSharedPreferenceChangeListener)
+            sessionListener = null
+            return
+        }
+        if (work != null) return
+        sessionListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == "sp_dc") kick(app)
+        }.also(preferences::registerOnSharedPreferenceChangeListener)
+        networkListener = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) { kick(app) }
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) kick(app)
+            }
+        }.also { runCatching { connectivity.registerDefaultNetworkCallback(it) } }
+        work = scope.launch {
+            for (signal in signals) {
+                val complete = try {
+                    drain(app)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    Log.w("SpotifyOutbox", "Will retry pending changes", failure)
+                    false
+                }
+                if (!complete) {
+                    delay(30_000)
+                    signals.trySend(Unit)
                 }
             }
-            networkListener = callback
-            runCatching { (app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).registerDefaultNetworkCallback(callback) }
         }
         kick(app)
     }
+
     fun kick(context: Context) {
         LocalSpotifyMirror.kick(context)
-        scope.launch {
-            try { if (!drain(context.applicationContext)) schedule(context.applicationContext) } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { Log.w("SpotifyOutbox", "Will retry pending changes", failure); schedule(context.applicationContext) }
-        }
+        signals.trySend(Unit)
     }
-    private fun schedule(context: Context) {
-        runCatching {
-            val scheduler = context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as JobScheduler
-            // Do not replace an existing backoff window after each connectivity callback.
-            if (scheduler.getPendingJob(JOB_ID) == null) scheduler.schedule(JobInfo.Builder(JOB_ID,
-                ComponentName(context, com.music.spotui.sync.SpotifySyncJobService::class.java))
-                .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-                .setBackoffCriteria(30_000L, JobInfo.BACKOFF_POLICY_EXPONENTIAL)
-                .setPersisted(true).build())
-        }.onFailure { Log.w("SpotifyOutbox", "Background retry unavailable; will retry on next launch", it) }
-    }
+
     suspend fun drain(context: Context): Boolean = drainGate.withLock {
         val owner = account(context) ?: return@withLock true
         val store = journal(context, owner)

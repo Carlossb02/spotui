@@ -26,7 +26,7 @@ object LocalSpotifyMirror {
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
     private val gate=Mutex()
     private val wake=Channel<Unit>(Channel.CONFLATED)
-    private var installed=false
+    private var work: Job? = null
     private var listener: SharedPreferences.OnSharedPreferenceChangeListener?=null
     private val forced=java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val checked=java.util.concurrent.ConcurrentHashMap<String,Long>()
@@ -42,18 +42,35 @@ object LocalSpotifyMirror {
     private fun save(c:Context,owner:String,id:String,s:JSONObject) {check(prefs(c).edit().putString(owner+":"+id,s.toString()).commit()) {"No se pudo guardar el progreso de sincronización"}}
     private fun rows(s:JSONObject,key:String):List<String>? = s.optJSONArray(key)?.let {a->(0 until a.length()).map {a.getString(it)}}
     fun spotifyId(c:Context,id:String):String? = LocalPlaylistPref.getLocalPlaylist(c,id)?.spotifyPlaylistId?.takeIf {it.isNotBlank()}
-    fun install(context:Context) {
-        val app=context.applicationContext
-        synchronized(this) {if(installed)return;installed=true}
-        listener=SharedPreferences.OnSharedPreferenceChangeListener {_,_->kick(app)}.also {l->
-            app.getSharedPreferences("LocalPlaylists",0).registerOnSharedPreferenceChangeListener(l)
-            app.getSharedPreferences("spotify_session",0).registerOnSharedPreferenceChangeListener(l)
+    @Synchronized internal fun setVisible(context: Context, visible: Boolean) {
+        val app = context.applicationContext
+        val lists = app.getSharedPreferences("LocalPlaylists",0)
+        val session = app.getSharedPreferences("spotify_session",0)
+        if (!visible) {
+            work?.cancel()
+            work = null
+            listener?.let {
+                lists.unregisterOnSharedPreferenceChangeListener(it)
+                session.unregisterOnSharedPreferenceChangeListener(it)
+            }
+            listener = null
+            return
         }
-        scope.launch {delay(8_000);kick(app);for(signal in wake) {delay(600);runCatching {drain(app)}.onFailure {if(it is CancellationException)throw it}}}
-        scope.launch {while(isActive) {delay(300_000);val info=android.app.ActivityManager.RunningAppProcessInfo();android.app.ActivityManager.getMyMemoryState(info)
-            if(info.importance<=android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND)kick(app)}}
+        if (work != null) return
+        listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> kick(app) }.also {
+            lists.registerOnSharedPreferenceChangeListener(it)
+            session.registerOnSharedPreferenceChangeListener(it)
+        }
+        work = scope.launch {
+            for (signal in wake) {
+                delay(600)
+                runCatching { drain(app) }.onFailure { if (it is CancellationException) throw it }
+            }
+        }
+        kick(app)
     }
-    fun kick(context:Context) {if(!installed)install(context);wake.trySend(Unit)}
+
+    fun kick(context: Context) { wake.trySend(Unit) }
     fun refresh(context:Context,id:String) {forced.add(id);kick(context)}
     fun retry(context:Context,id:String) {forced.add(id);kick(context)}
     fun onCreated(context:Context,id:String)=retry(context,id)

@@ -27,6 +27,7 @@ internal data class FollowingFeedState<T>(val items: List<T> = emptyList(), val 
 internal class FollowingReleaseFeed(private val context: Context, private val scope: CoroutineScope) {
     companion object {
         @Volatile private var shared:FollowingReleaseFeed?=null
+        fun stopRefresh() { shared?.cancelRefresh() }
         @Synchronized fun get(context:Context):FollowingReleaseFeed = shared ?: FollowingReleaseFeed(
             context.applicationContext,CoroutineScope(SupervisorJob()+Dispatchers.IO)).also {feed->
             shared=feed
@@ -56,6 +57,7 @@ internal class FollowingReleaseFeed(private val context: Context, private val sc
 
     @Synchronized
     fun refresh(shows: List<PodcastModel>, artists: List<ArtistsModel>, force: Boolean = false, kind:ReleaseKind?=null) {
+        if (!com.music.spotui.ui.notification.ManualPlaybackRun.opened) return
         val now = System.currentTimeMillis()
         val forcePodcasts=force && (kind==null || kind==ReleaseKind.PODCASTS)
         val forceMusic=force && (kind==null || kind==ReleaseKind.MUSIC)
@@ -73,6 +75,16 @@ internal class FollowingReleaseFeed(private val context: Context, private val sc
             musicKey = nextMusic; musicAttempt = now; musicJob?.cancel()
             musicJob = scope.launch(Dispatchers.IO) { loadMusic(artists, now, forceMusic) }
         }
+    }
+
+    @Synchronized
+    private fun cancelRefresh() {
+        podcastJob?.cancel()
+        musicJob?.cancel()
+        podcastAttempt = 0
+        musicAttempt = 0
+        podcastState.update { it.copy(loading = false) }
+        musicState.update { it.copy(loading = false) }
     }
 
     private fun episode(o: JSONObject) = FollowedEpisode(SongsModel(o.getInt("id"),o.getString("title"),o.getString("album"),

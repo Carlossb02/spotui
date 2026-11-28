@@ -5,9 +5,10 @@ import org.junit.Test
 
 class SyncTrafficPolicyTest {
     @Test fun cachedProcessAloneIsNotOnline(){assertFalse(syncRuntimeAvailable(false,false,false))}
-    @Test fun visibleUiIsOnline(){assertTrue(syncRuntimeAvailable(true,false,false))}
-    @Test fun backgroundPlaybackIsOnline(){assertTrue(syncRuntimeAvailable(false,true,false))}
-    @Test fun activePerceptibleServiceIsOnline(){assertTrue(syncRuntimeAvailable(false,false,true))}
+    @Test fun visibleUiIsOnline(){assertTrue(syncRuntimeAvailable(true,false,true))}
+    @Test fun backgroundPlaybackIsOnline(){assertTrue(syncRuntimeAvailable(false,true,true))}
+    @Test fun hiddenIdleAppIsOffline(){assertFalse(syncRuntimeAvailable(false,false,true))}
+    @Test fun coldServiceCannotStartSync(){assertFalse(syncRuntimeAvailable(false,true,false))}
     @Test fun ownPresenceIsNotAPeer(){assertFalse(hasSyncPeer(listOf(GoogleDeviceSync.Device("Me",true,1,"me")),"me"))}
     @Test fun offlinePeersNeverEnablePlaybackSync(){assertFalse(hasSyncPeer(listOf(GoogleDeviceSync.Device("Other",false,1,"other")),"me"))}
     @Test fun anOnlineOtherDeviceEnablesPlaybackSync(){assertTrue(hasSyncPeer(listOf(GoogleDeviceSync.Device("Other",true,1,"other")),"me"))}

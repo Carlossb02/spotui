@@ -83,6 +83,9 @@ class PlaybackService : MediaLibraryService() {
     private val carBrowseScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var notificationRefreshJob: kotlinx.coroutines.Job? = null
     private var taskRemovalCheckJob: kotlinx.coroutines.Job? = null
+    private var initialized = false
+    private var startedForPlayback = false
+    private var closing = false
     private var ownsPlaybackForeground = false
 
     companion object {
@@ -202,6 +205,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun updateOwnedPlaybackNotification(session: MediaSession) {
+        if (closing || !ManualPlaybackRun.opened) return
         val active = playbackShouldOwnForeground()
         val hasTrack = currentSongState.songUrl.value.isNotBlank() ||
             currentSongState.queue.value.isNotEmpty() || SpotifyWebPlayer.isPlaying
@@ -227,6 +231,10 @@ class PlaybackService : MediaLibraryService() {
                     android.util.Log.i("SpotidroidLifecycle", "media_fgs_active=true")
                 }
                 ownsPlaybackForeground = true
+                if (!startedForPlayback) {
+                    startService(Intent(this, PlaybackService::class.java))
+                    startedForPlayback = true
+                }
             } catch (error: Exception) {
                 // Background starts may be restricted by the OS. Preserve playback
                 // and report the real exception rather than crashing our process.
@@ -361,6 +369,7 @@ class PlaybackService : MediaLibraryService() {
                     "ready=${SongPlayer.exoPlayer?.playWhenReady}")
             }
             if (!showingWeb) currentSongState.updatePlayingState(isPlaying)
+            com.music.spotui.sync.GoogleDeviceSync.onPlaybackActivityChanged()
         }
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -434,6 +443,12 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onCreate() {
         super.onCreate()
+        if (ManualPlaybackRun.opened) initializeSession()
+    }
+
+    private fun initializeSession() {
+        if (initialized || closing) return
+        initialized = true
         PlaybackLifecycleDiagnostics.reportPreviousExit(this)
         PlaybackLifecycleDiagnostics.record(this, "service_created")
         SongPlayer.ensureCreated(this)
@@ -477,9 +492,8 @@ class PlaybackService : MediaLibraryService() {
 
         // Let the player advance the in-app queue itself during a crossfade.
         SongPlayer.bindState(currentSongState)
-        // Android Auto/media buttons may start this service with no Activity at all.
-        // Restore the *paused* queue here so controls work after process recreation.
-        if (currentSongState.queue.value.isEmpty()) {
+        // Restore once in the session owner. Reopening the UI must never restore over live audio.
+        val restoredSong = if (currentSongState.queue.value.isEmpty() && !SongPlayer.isResolvingOrPlaying()) {
             com.music.spotui.data.preferences.loadLastPlayback(applicationContext)?.let { (savedSong, positionMs) ->
                 val savedQueue = com.music.spotui.data.preferences.loadLastQueue(applicationContext)
                 val restoredQueue = savedQueue.ifEmpty { listOf(savedSong) }
@@ -488,8 +502,9 @@ class PlaybackService : MediaLibraryService() {
                 currentSongState.updateSongState(savedSong.coverUri, savedSong.title,
                     savedSong.singer, false, savedSong.id, idx, savedSong.album)
                 SongPlayer.setRestorePoint(savedSong.url, positionMs)
+                savedSong
             }
-        }
+        } else null
         SongPlayer.ensureCreated(this)
         val base = SongPlayer.exoPlayer ?: return
         base.addListener(playerListener)
@@ -602,6 +617,11 @@ class PlaybackService : MediaLibraryService() {
             musicFilter,
             androidx.core.content.ContextCompat.RECEIVER_EXPORTED
         )
+        if (restoredSong != null && ManualPlaybackRun.visible &&
+            com.music.spotui.data.preferences.isAutoPlayEnabled(applicationContext) &&
+            com.music.spotui.data.api.SpotifySession.spDc(applicationContext).isNotBlank()) {
+            SongPlayer.playSong(restoredSong.url, applicationContext, "song/${restoredSong.id}")
+        }
     }
 
     /** Point the media session at whichever engine is currently producing audio. */
@@ -935,8 +955,11 @@ class PlaybackService : MediaLibraryService() {
         if (forward) SongPlayer.next(applicationContext) else SongPlayer.previous(applicationContext)
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? =
-        mediaSession
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? {
+        if (!ManualPlaybackRun.opened || closing) return null
+        initializeSession()
+        return mediaSession
+    }
 
 
 
@@ -1067,6 +1090,7 @@ class PlaybackService : MediaLibraryService() {
                     // Never kill the whole Android process (it can corrupt ongoing
                     // writes and bypass service/session cleanup).
                     SongPlayer.stop()
+                    startedForPlayback = false
                     pauseAllPlayersAndStopSelf()
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                 }
@@ -1607,6 +1631,12 @@ class PlaybackService : MediaLibraryService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent == null || !ManualPlaybackRun.opened || closing) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        initializeSession()
+        startedForPlayback = true
         PlaybackLifecycleDiagnostics.record(this, "service_start action=${intent?.action} flags=$flags")
         // Buttons are explicit PendingIntents to this existing service, not implicit
         // media broadcasts which HyperOS may defer when the UI is backgrounded.
@@ -1614,17 +1644,17 @@ class PlaybackService : MediaLibraryService() {
             ACTION_NOTIFICATION_TOGGLE -> {
                 SongPlayer.togglePlay()
                 scheduleMediaNotificationRefresh()
-                return START_STICKY
+                return START_NOT_STICKY
             }
             ACTION_NOTIFICATION_PREVIOUS -> {
                 SongPlayer.previous(applicationContext)
                 scheduleMediaNotificationRefresh()
-                return START_STICKY
+                return START_NOT_STICKY
             }
             ACTION_NOTIFICATION_NEXT -> {
                 SongPlayer.next(applicationContext)
                 scheduleMediaNotificationRefresh()
-                return START_STICKY
+                return START_NOT_STICKY
             }
             ACTION_NOTIFICATION_CLOSE -> {
                 taskRemovalCheckJob?.cancel()
@@ -1633,11 +1663,13 @@ class PlaybackService : MediaLibraryService() {
                 currentSongState.updatePlayingState(false)
                 (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                     .cancel(PLAYBACK_NOTIFICATION_ID)
+                startedForPlayback = false
                 pauseAllPlayersAndStopSelf()
                 return START_NOT_STICKY
             }
         }
-        return super.onStartCommand(intent, flags, startId)
+        super.onStartCommand(intent, flags, startId)
+        return START_NOT_STICKY
     }
 
     override fun onTrimMemory(level: Int) {
@@ -1654,13 +1686,6 @@ class PlaybackService : MediaLibraryService() {
         super.onTrimMemory(level)
     }
 
-    /**
-     * HyperOS can invoke onTaskRemoved during Recents reparenting while Spotidroid's
-     * Activity still exists. An immediate SongPlayer.stop() here previously killed
-     * audio just by opening Google. Only act once Android's OWN task list confirms
-     * that the Spotidroid task has actually disappeared, twice, after a grace period.
-     * If the query is unavailable/ambiguous, favor uninterrupted playback.
-     */
     private fun hasSpotidroidTaskInRecents(): Boolean? = runCatching {
         val manager = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
         manager.appTasks.any { task ->
@@ -1688,25 +1713,50 @@ class PlaybackService : MediaLibraryService() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        saveLivePlaybackCheckpoint()
-        // MediaSessionService is deliberately independent of the Activity task.
-        // A user switching applications (or clearing Recents) must not silently
-        // stop active playback or throw away an in-flight YouTube resolution.
-        // Media3's base implementation handles idle service shutdown.
-        val ongoing = isPlaybackOngoing() || playbackShouldOwnForeground() ||
-            SongPlayer.isPreparingTrack() || SpotifyWebPlayer.isPlaying
-        PlaybackLifecycleDiagnostics.record(this,
-            "task_removed ongoing=$ongoing; preserving_service_owned_playback")
-        if (!ongoing) {
-            super.onTaskRemoved(rootIntent)
-        } else {
-            mediaSession?.let { session ->
-                runCatching { updateOwnedPlaybackNotification(session) }
-            }
+        if (!initialized || closing) return
+        taskRemovalCheckJob?.cancel()
+        val generation = ManualPlaybackRun.foregroundGeneration
+        val initiallyPresent = hasSpotidroidTaskInRecents()
+        taskRemovalCheckJob = serviceScope.launch {
+            // HyperOS can report a task-removal callback during a Recents reparenting.
+            // Give the system's task list a chance to settle before treating it as a dismissal.
+            kotlinx.coroutines.delay(if (initiallyPresent == false) 180L else 650L)
+            if (ManualPlaybackRun.foregroundGeneration != generation ||
+                hasSpotidroidTaskInRecents() == true) return@launch
+            stopAfterTaskDismissal()
         }
     }
 
+    private fun stopAfterTaskDismissal() {
+        if (closing) return
+        closing = true
+        saveLivePlaybackCheckpoint()
+        ManualPlaybackRun.close()
+        (application as com.music.spotui.MyApplication).activityHidden()
+        com.music.spotui.ui.screens.PodcastVideoSession.stop()
+        SpotifyWebPlayer.pause()
+        SongPlayer.stop()
+        SongPlayer.cancelWorkAfterTaskDismissal()
+        com.music.spotui.data.api.FollowingReleaseFeed.stopRefresh()
+        currentSongState.updatePlayingState(false)
+        PlaybackLifecycleDiagnostics.record(this, "task_removed stopped_by_user")
+        // External controllers can keep a bound service alive. Release the session now.
+        mediaSession?.release()
+        mediaSession = null
+        SpotifyWebPlayer.release()
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        ownsPlaybackForeground = false
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(PLAYBACK_NOTIFICATION_ID)
+        stopSelf()
+    }
+
     override fun onDestroy() {
+        if (!initialized) {
+            serviceScope.cancel()
+            carBrowseScope.cancel()
+            super.onDestroy()
+            return
+        }
         saveLivePlaybackCheckpoint()
         PlaybackLifecycleDiagnostics.record(this, "service_destroy " +
             "fgs=${isPlaybackOngoing()} playing=${SongPlayer.isPlaying()} " +
@@ -1739,6 +1789,7 @@ class PlaybackService : MediaLibraryService() {
         mediaSession?.release()
         mediaSession = null
         SongPlayer.release() // release AudioTrack, decoders and timers on service stop
+        com.music.spotui.sync.GoogleDeviceSync.onPlaybackActivityChanged()
         super.onDestroy()
     }
 }

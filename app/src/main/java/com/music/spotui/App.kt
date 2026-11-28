@@ -69,29 +69,8 @@ fun App() {
         ?.url?.takeIf { it.startsWith("yt_ep:") }
         ?.removePrefix("yt_ep:")?.substringBefore('|')
         ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
-    val foregroundLifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    androidx.compose.runtime.DisposableEffect(foregroundLifecycle) {
-        val observer=androidx.lifecycle.LifecycleEventObserver {_,event->
-            if(event==androidx.lifecycle.Lifecycle.Event.ON_START)com.music.spotui.sync.GoogleDeviceSync.onForeground()
-            if(event==androidx.lifecycle.Lifecycle.Event.ON_STOP)com.music.spotui.sync.GoogleDeviceSync.onBackground()
-        }
-        foregroundLifecycle.lifecycle.addObserver(observer)
-        onDispose {foregroundLifecycle.lifecycle.removeObserver(observer);com.music.spotui.sync.GoogleDeviceSync.onBackground()}
-    }
     LaunchedEffect(currentPodcastId) {
         com.music.spotui.ui.screens.PodcastVideoSession.stopIfDifferent(currentPodcastId)
-    }
-    // One lightweight audio/video clock for the application, independent of any
-    // particular player layout. Does not write Compose state every frame.
-    LaunchedEffect(foregroundLifecycle) {
-        while (true) {
-            com.music.spotui.ui.screens.PodcastVideoSession.sync(
-                foregroundLifecycle.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
-            )
-            kotlinx.coroutines.delay(
-                if (com.music.spotui.ui.screens.PodcastVideoSession.activeVideoId != null) 750L else 1500L
-            )
-        }
     }
     val playerState by playerViewModel.currentSongTitle
     var lastRoute by remember { mutableStateOf<String?>(null) }

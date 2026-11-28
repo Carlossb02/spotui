@@ -69,37 +69,6 @@ fun MyNavHost(
         if (SpotifySession.spDc(context).isBlank()) Routes.Login.route else Routes.Home.route
     }
 
-    // Restore the last session: put the track back into the mini player (paused)
-    // and arm the player to resume from the saved position on the first play tap.
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(150L)
-        if (playerViewModel.currentSongTitle.value.isBlank()) {
-            val restored = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                val playback = com.music.spotui.data.preferences.loadLastPlayback(context)
-                val queue = com.music.spotui.data.preferences.loadLastQueue(context)
-                com.music.spotui.data.preferences.loadOriginalQueue(context)
-                playback to queue
-            }
-            if (playerViewModel.currentSongTitle.value.isNotBlank()) return@LaunchedEffect
-            restored.first?.let { (song, positionMs) ->
-                val savedQueue = restored.second
-                val queue = if (savedQueue.isNotEmpty()) savedQueue else listOf(song)
-                val idx = com.music.spotui.data.preferences.loadLastQueueIndex(context, queue, song.id)
-                playerViewModel.updateQueue(queue, isManualEdit = true)
-                playerViewModel.updateSongState(
-                    song.coverUri, song.title, song.singer, false, song.id, idx, song.album)
-                com.music.spotui.di.SongPlayer.setRestorePoint(song.url, positionMs)
-                // Auto-play on startup: resume playing immediately if enabled.
-                if (SpotifySession.spDc(context).isNotBlank() &&
-                    com.music.spotui.data.preferences.isAutoPlayEnabled(context)) {
-                    playerViewModel.updateSongState(
-                        song.coverUri, song.title, song.singer, true, song.id, idx, song.album)
-                    com.music.spotui.di.SongPlayer.playSong(song.url, context, "song/${song.id}")
-                }
-            }
-        }
-    }
-
     NavHost(
         modifier = Modifier.fillMaxSize(),
         navController = navHostController,

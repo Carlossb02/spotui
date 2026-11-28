@@ -42,6 +42,9 @@ import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
@@ -184,12 +187,6 @@ class MainActivity : ComponentActivity() {
             notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        // Connect a MediaController to bind PlaybackService. MediaSessionService
-        // automatically promotes itself to a foreground service when playback begins.
-        val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
-        controllerFuture = MediaController.Builder(this, token).buildAsync()
-
-
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
@@ -252,9 +249,11 @@ class MainActivity : ComponentActivity() {
                 }
                 // Poll only for play/video state changes, not video frames.
                 LaunchedEffect(PodcastVideoSession.activeVideoId) {
-                    while (PodcastVideoSession.activeVideoId != null) {
-                        refreshPodcastPipParams()
-                        delay(1_500L)
+                    lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                        while (PodcastVideoSession.activeVideoId != null) {
+                            refreshPodcastPipParams()
+                            delay(1_500L)
+                        }
                     }
                 }
 
@@ -283,7 +282,7 @@ class MainActivity : ComponentActivity() {
         }, 2000L)
 
         // Perform background auto-backup if a backup directory is configured (deferred to avoid blocking cold-start).
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             kotlinx.coroutines.delay(3000L)
             com.music.spotui.util.BackupHelper.performAutoBackup(applicationContext)
         }
@@ -300,7 +299,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        com.music.spotui.ui.notification.ManualPlaybackRun.show()
+        (application as MyApplication).activityVisible()
+        if (controllerFuture == null) {
+            val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
+            controllerFuture = MediaController.Builder(this, token).buildAsync()
+        }
         com.music.spotui.ui.visibility.UiVisibility.update(true)
+        PodcastVideoSession.sync(true)
         com.music.spotui.ui.notification.PlaybackLifecycleDiagnostics.reportPreviousExit(this)
         com.music.spotui.ui.notification.PlaybackLifecycleDiagnostics.record(this, "activity_started")
     }
@@ -322,6 +328,9 @@ class MainActivity : ComponentActivity() {
         // Free optional UI-only video decoders while Google or another app is
         // foreground. The audio ExoPlayer belongs to PlaybackService and stays alive.
         com.music.spotui.ui.visibility.UiVisibility.update(false)
+        com.music.spotui.ui.notification.ManualPlaybackRun.hide()
+        (application as MyApplication).activityHidden()
+        PodcastVideoSession.sync(false)
         com.music.spotui.ui.notification.PlaybackLifecycleDiagnostics.record(this, "activity_stopped")
         super.onStop()
     }
